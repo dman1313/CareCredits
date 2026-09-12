@@ -34,10 +34,3 @@ CareCredits is built using a modern microservices architecture with three core c
 
 All services are containerized using Docker. Use `docker-compose up` to deploy the full stack in a production-like environment.
 
-## Contributing
-
-We welcome contributions! Please read the contribution guidelines in CONTRIBUTING.md.
-
-## License
-
-This project is licensed under the MIT License.
