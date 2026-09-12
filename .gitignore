@@ -1,75 +1,63 @@
 .aider*
-# Python                                                                                 
-__pycache__/                                                                             
-*.pyc                                                                                    
-*.pyo                                                                                    
-*.pyd                                                                                    
-.Python
+# Aider specific
+.aider*
+.aider.chat.history.md
 
-env/                                                                                     
-build/                                                                                   
-develop-eggs/                                                                            
-dist/                                                                                    
-downloads/                                                                               
-eggs/                                                                                    
-.eggs/                                                                                   
-lib/                                                                                     
-lib64/                                                                                   
-parts/                                                                                   
-sdist/                                                                                   
-var/                                                                                     
-wheels/                                                                                  
-pip-log.txt                                                                              
-pip-delete-this-directory.txt                                                            
-.pytest_cache/                                                                           
-.coverage                                                                                
-.coverage.*                                                                              
-.cache                                                                                   
-.pytest_cache/                                                                           
-.tox/                                                                                    
-.coverage                                                                                
-.coverage.*                                                                              
-.mypy_cache/                                                                             
-.pytest_cache/                                                                           
-.DS_Store                                                                                
-                                                                                         
-# PostgreSQL                                                                             
-*.sql                                                                                    
-*.backup                                                                                 
-*.dump                                                                                   
-data/                                                                                    
-pg_log/                                                                                  
-pg_tmp/                                                                                  
-pg_xlog/                                                                                 
-postmaster.pid                                                                           
-*.log                                                                                    
-                                                                                         
-# TypeScript                                                                             
-node_modules/                                                                            
-*.tsbuildinfo                                                                            
-dist/                                                                                    
-build/                                                                                   
-out/                                                                                     
-*.js                                                                                     
-*.js.map                                                                                 
-*.d.ts                                                                                   
-*.map                                                                                    
-*.log                                                                                    
-*.tmp                                                                                    
-*.temp                                                                                   
-*.swp                                                                                    
-*.swo                                                                                    
-*.lock                                                                                   
-*.json                                                                                   
-*.yml                                                                                    
-*.yaml                                                                                   
-*.env                                                                                    
-*.env.local                                                                              
-*.env.development                                                                        
-*.env.test                                                                               
-*.env.production                                                                         
-*.env.staging                                                                            
-*.env.development.local                                                                  
-*.env.test.local                                                                         
-*.env.production.local                                                                   
-*.env.staging.local    
+# Dependencies (Node & Python)
+node_modules/
+.pnpm-store/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# Build Outputs
+build/
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Logs & Temp
+*.log
+logs/
+*.tmp
+*.temp
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+.tox/
+.mypy_cache/
+
+# Environment Variables (Belangrijk!)
+.env
+.env.local
+.env.*.local
+
+# Database (PostgreSQL local files)
+data/
+pg_log/
+pg_tmp/
+*.sql
+*.backup
+*.dump
+
+# TypeScript/JS generated maps (optioneel, vaak wel handig om te ignoren)
+*.js.map
+*.d.ts
