@@ -30,7 +30,5 @@ CareCredits is built using a modern microservices architecture with three core c
 3. Start the services using Docker Compose or run them individually.
 4. Access the frontend at `http://localhost:3000`.
 
-## Deployment
 
-All services are containerized using Docker. Use `docker-compose up` to deploy the full stack in a production-like environment.
 
