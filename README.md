@@ -24,11 +24,9 @@ CareCredits is built using a modern microservices architecture with three core c
 
 1. Clone the repository.
 2. Set up the environment for each service:
-   - Frontend: Install Node.js and run `npm install && npm run dev`
+   - Frontend: Install Node.js and pnpm, then navigate to the `frontend` folder and run `pnpm install && pnpm dev`
    - Backend: Install Python 3.9+, create a virtual environment, and run `pip install -r requirements.txt`
    - Scraper API: Install dependencies and configure Tavily API key in `.env`
 3. Start the services using Docker Compose or run them individually.
 4. Access the frontend at `http://localhost:3000`.
-
-
 
