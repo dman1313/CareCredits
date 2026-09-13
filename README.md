@@ -29,4 +29,3 @@ CareCredits is built using a modern microservices architecture with three core c
    - Scraper API: Install dependencies and configure Tavily API key in `.env`
 3. Start the services using Docker Compose or run them individually.
 4. Access the frontend at `http://localhost:3000`.
-
