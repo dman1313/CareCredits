@@ -1,19 +1,23 @@
-FROM node:20-alpine
+FROM node:20-alpine AS base
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
-ENV NODE_ENV=development
+FROM base AS deps
 WORKDIR /app
 
-RUN npm install -g pnpm
-
 # Copy package files
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-# Create pnpm config to allow build scripts
-RUN mkdir -p .pnpm
-RUN echo "strict-peer-dependencies = false" > .pnpm/config.toml
+# Install dependencies with cache mount
+# Build-scripts (esbuild, sharp, workerd, unrs-resolver) zijn toegestaan
+# via "pnpm.onlyBuiltDependencies" in package.json
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
+    pnpm install --frozen-lockfile
 
-# Install dependencies (this will approve builds automatically)
-RUN pnpm install
+FROM base AS final
+WORKDIR /app
+
+# Copy node_modules from deps stage
+COPY --from=deps /app/node_modules ./node_modules
 
 # Copy project files
 COPY . .

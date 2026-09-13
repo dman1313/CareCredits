@@ -51,16 +51,12 @@ services:
       - "3000:3000"
     volumes:
       - ./frontend:/app
-      - ./frontend/node_modules:/app/node_modules
+      - /app/node_modules
     depends_on:
       - fastapi
     networks:
       - backend_network
-    command: >
-      sh -c "
-      pnpm install &&
-      pnpm run dev
-      "
+    command: pnpm run dev
 
 volumes:
   postgres_data:
