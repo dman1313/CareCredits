@@ -1,61 +1,75 @@
-# CareCredit
+# CareCredits
 
-A centralized CPD (Continuing Professional Development) portal for Malaysian doctors to discover, register for, and track medical training. Featuring a searchable dashboard to filter courses by location, fee, difficulty, and CPD points, the app simplifies annual license renewal.
+A hackathon prototype for helping Malaysian doctors discover CPD learning opportunities and, eventually, track their learning. The project owner specifies that this is a **Tavily hackathon project and must make real Tavily API calls**. The official event rules still need to be linked and checked.
 
-## Overview
+## Tavily's role
 
-CareCredit is built using a modern containerized architecture with three core components:
+1. FastAPI sends a course search to Tavily Search.
+2. It deduplicates returned URLs and sends up to five to Tavily Extract.
+3. It returns titles, source URLs, snippets, extracted text, retrieval time, and extraction status.
+4. Later work will turn these sources into reviewed, structured event records for the dashboard.
 
-1. **Frontend (TypeScript)**: A responsive web application built with Next.js, React, and Tailwind CSS, providing an intuitive interface for doctors to browse and manage CPD courses.
-2. **Backend (Python)**: A RESTful API built with FastAPI that manages user data, course registrations, and CPD tracking. The backend connects to a PostgreSQL database for persistent storage.
-3. **Scraper API Service (Python)**: A dedicated microservice that gathers up-to-date information about medical training courses, including details like course descriptions, dates, locations, and CPD points.
+This implements the previously proposed scraper inside FastAPI; there is no separate scraper microservice yet. Results are **unverified sources**, not confirmed accredited events. Missing details must not be invented, and finding an event does not prove attendance or earn credits.
 
-## Prerequisites
+Official API references: [Search](https://docs.tavily.com/documentation/api-reference/endpoint/search) and [Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract).
 
-Before you begin, make sure you have the following installed on your machine:
+## Current status
 
-- [Docker](https://docs.docker.com/get-docker/)
-- [Docker Compose](https://docs.docker.com/compose/install/) (usually included with Docker Desktop)
-- **Git**: For version control and cloning the repository.
+- Next.js/React/Tailwind dashboard: prototype with hardcoded examples, including non-Malaysian events and illustrative compliance numbers. These are not validated Malaysian requirements.
+- FastAPI/SQLAlchemy: basic user endpoints plus protected `POST /discovery/search` using Tavily Search and Extract.
+- PostgreSQL: configured through Docker Compose; SQLite is the local backend fallback.
+- Not yet implemented: dashboard connection to discovery, event parsing/persistence, accreditation verification, registrations, certificate processing, or real CPD accounting.
+- Nebius was mentioned in earlier planning. Its required role is unresolved; no Nebius integration is claimed.
 
-> **Note for Local Development:** If you plan to run the frontend locally without Docker, you will need [Node.js 20+](https://nodejs.org/) and [pnpm](https://pnpm.io/installation) installed.
+Read [the SDD](docs/SDD.md) and [the coding-agent handoff](docs/CODING_AGENT_HANDOFF.md).
 
-## Quick Start
+## Configure the API key
 
-### 1. Clone the repository
+Use Python 3.11+ and Docker Compose. From the repository root:
 
-```bash
-git clone https://github.com/dman1313/CareCredits.git
-cd carecredit
+```sh
+python3 scripts/setup_tavily.py
 ```
 
-### 2. Create local variables
-```bash
-cp .env.example .env
-```
+The script asks for your **Tavily API key with hidden input**, creates or updates the ignored root `.env`, and generates a separate `DISCOVERY_API_TOKEN` if missing. Obtain your key from the [Tavily dashboard](https://app.tavily.com/).
 
-Edit the .env file and ensure the following variables are set correctly:
-- Database: POSTGRES_DB, POSTGRES_USER,POSTGRES_PASSWORD
-- Backend: SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
-- Ports: Ensure POSTGRES_PORT (default 5432) does not conflict with local services.
+This is developer setup: doctors should not supply API keys. Never put either secret in frontend code, `NEXT_PUBLIC_*` variables, chat, screenshots, or Git. For deployment, use server-side secret settings. Configuration alone does not verify that a key works.
 
-### 3. Build and run with docker
+Before starting Docker, review the database and other placeholder credentials in `.env`. Keep POSTGRES_* and DB_* database values consistent; DB_PORT is the container's PostgreSQL port, normally 5432.
 
-Use Docker Compose to build and start all services (PostgreSQL, FastAPI Backend, and Next.js Frontend)
-
-```bash
+```sh
 docker compose up --build
 ```
 
-This command will:
-1. Build the Docker images for the backend and frontend.
-2. Start the PostgreSQL database.
-3. Initialize the database schema using init.sql.
-4. Start the FastAPI backend.
-5. Start the Next.js frontend.
+- Frontend: http://localhost:3000
+- Backend interactive API docs: http://localhost:8000/docs
 
-### 4. Acces the App
+Compose loads `.env` into the backend. For a direct Python launch, install `backend/requirements.txt` in a virtual environment and run from the root:
 
-- Frontend: Open http://localhost:3000 in your browser.
-- Backend API Docs: Open http://localhost:8000/docs to view the Swagger UI.
-- Database: Connect via localhost on port 5432 using the credentials from your .env file.
+```sh
+python -m uvicorn main:app --app-dir backend --env-file .env --port 8000
+```
+
+## Try real discovery
+
+In the local API docs, click **Authorize** and enter the `DISCOVERY_API_TOKEN` from your local `.env` (not the Tavily key). Execute `POST /discovery/search`:
+
+```json
+{"query": "cardiology workshops Kuala Lumpur 2026", "max_results": 5}
+```
+
+Each request makes one basic Search call and, if suitable URLs are returned, one basic Extract call for up to five pages. This consumes Tavily credits; no automatic retries or background crawling are enabled.
+
+Results contain `provider`, `query`, `retrieved_at`, `sources`, and `warnings`. Each source has `url`, `title`, `snippet`, `raw_content`, `extraction_status`, and `verification_status: "unverified"`. Extraction failures retain snippets and report warnings. An empty successful search returns an empty list; configuration/provider failures are explicit errors, never sample results.
+
+The endpoint uses a separate bearer token and Compose exposes the backend only on loopback. Do not expose that token to a public browser; add authenticated user access and rate limits before connecting a public UI.
+
+## Verification
+
+With backend dependencies installed:
+
+```sh
+python -m unittest discover -s backend/tests -v
+```
+
+Tests mock Tavily and do not spend credits. A live API call, full Docker startup, and frontend discovery flow must be verified separately. Do not present mocks as evidence of live Tavily usage.
