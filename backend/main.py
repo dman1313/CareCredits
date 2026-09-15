@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from database import Base, engine, get_db
 from models import User
 from schemas import UserCreate, UserResponse
+from discovery import router as discovery_router
 
 
 # Create tables on startup
@@ -20,6 +21,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan
 )
+app.include_router(discovery_router)
 
 app.add_middleware(
     CORSMiddleware,
