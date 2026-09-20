@@ -8,26 +8,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field, constr
 
 
-router = APIRouter(prefix="/discovery", tags=["Tavily discovery"])
-bearer = HTTPBearer(auto_error=False)
-
-
-class DiscoveryRequest(BaseModel):
-    query: constr(strip_whitespace=True, min_length=3, max_length=300)
-    max_results: int = Field(default=5, ge=1, le=5)
-
-
-def authorize(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
-    token = os.getenv("DISCOVERY_API_TOKEN", "").strip()
-    if not token:
-        raise HTTPException(503, "Set DISCOVERY_API_TOKEN on the server before using discovery.")
-    if not credentials or not secrets.compare_digest(credentials.credentials, token):
-        raise HTTPException(401, "Discovery authorization required.", headers={"WWW-Authenticate": "Bearer"})
+class ProviderError(Exception):
+    def __init__(self, status_code, detail):
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(detail)
 
 
 def tavily_post(endpoint, payload, key):
@@ -46,14 +33,14 @@ def tavily_post(endpoint, payload, key):
     except HTTPError as error:
         # Never expose provider response bodies, request headers, or API keys.
         if error.code in (401, 403):
-            raise HTTPException(503, "Tavily rejected the server API key.") from None
+            raise ProviderError(503, "Tavily rejected the server API key.") from None
         if error.code in (429, 432, 433):
-            raise HTTPException(429, "Tavily rate or credit limit reached. Try again later.") from None
-        raise HTTPException(502, "Tavily request failed.") from None
+            raise ProviderError(429, "Tavily rate or credit limit reached. Try again later.") from None
+        raise ProviderError(502, "Tavily request failed.") from None
     except (TimeoutError, URLError):
-        raise HTTPException(504, "Tavily is unavailable or timed out.") from None
+        raise ProviderError(504, "Tavily is unavailable or timed out.") from None
     except (ValueError, UnicodeError):
-        raise HTTPException(502, "Tavily returned an invalid response.") from None
+        raise ProviderError(502, "Tavily returned an invalid response.") from None
 
 
 def source_url(value):
@@ -80,7 +67,7 @@ def source_url(value):
 def discover(query, max_results=5):
     key = os.getenv("TAVILY_API_KEY", "").strip()
     if not key:
-        raise HTTPException(503, "Tavily is not configured. Run python scripts/setup_tavily.py locally.")
+        raise ProviderError(503, "Tavily is not configured. Run python scripts/setup_tavily.py locally.")
     search = tavily_post("search", {
         "query": "Malaysia medical CPD courses conferences webinars " + query,
         "topic": "general", "search_depth": "basic", "max_results": max_results,
@@ -113,7 +100,7 @@ def discover(query, max_results=5):
                     sources[url]["extraction_status"] = "success"
             if any(item["extraction_status"] == "failed" for item in sources.values()):
                 warnings.append("Some pages could not be extracted; their search snippets are retained.")
-        except HTTPException as error:
+        except ProviderError as error:
             warnings.append(error.detail + " Search snippets are retained; extraction is incomplete.")
     return {
         "provider": "tavily", "query": query,
@@ -122,6 +109,3 @@ def discover(query, max_results=5):
     }
 
 
-@router.post("/search", dependencies=[Depends(authorize)])
-def search_sources(request: DiscoveryRequest):
-    return discover(request.query, request.max_results)

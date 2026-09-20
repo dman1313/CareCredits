@@ -1,6 +1,6 @@
 # CareCredits — spec-driven development specification
 
-Version: 0.2 · 2026-09-15 · Status: implementation specification; most features remain planned.
+Version: 0.3 · 2026-09-19 · Status: implementation specification; portal and three-service split exist on this branch; live Tavily/model demonstration is still pending.
 
 This document expands the initial Tavily discovery specification using the owner's supplied meeting summary. It defines the full Malaysia MVP and the contracts needed to build it. It does not claim that the described application is already implemented.
 
@@ -138,27 +138,27 @@ Statuses describe this branch: **existing** means implemented code, not live-pro
 
 | ID | Requirement | Acceptance criterion | Status |
 | --- | --- | --- | --- |
-| AUTH-01 | Doctor sign-in/out | Selected provider session is validated server-side; logout invalidates local session; unauthenticated personal requests return 401 | Planned |
-| AUTH-02 | Ownership isolation | A doctor cannot read or change another doctor's profile, registrations, attendance, notes or totals by changing IDs | Planned |
-| GEO-01 | Malaysia location | City/state entry works without GPS; exact coordinates are optional; non-Malaysian in-person events cannot publish | Planned |
-| GEO-02 | Nearby search | Use distance only when user and venue coordinates exist; otherwise use city/state and show distance unavailable | Planned |
-| DISC-01 | Real Tavily Search | Bounded request uses Search for Malaysian medical training sources | Existing in backend; migrate |
-| DISC-02 | Real Tavily Extract | Extract at most five unique returned URLs; empty Search results skip Extract | Existing in backend; migrate |
-| DISC-03 | Provenance | Preserve URL, retrieval time, source text and extraction outcome through candidate/publication flow | Existing raw response; storage planned |
-| DISC-04 | Failure honesty | Partial extraction keeps evidence and warnings; provider failure is never fabricated success | Existing raw response; jobs planned |
+| AUTH-01 | Doctor sign-in/out | Selected provider session is validated server-side; logout invalidates local session; unauthenticated personal requests return 401 | Existing email/password sessions on this branch; third-party OAuth remains OPEN-04 |
+| AUTH-02 | Ownership isolation | A doctor cannot read or change another doctor's profile, registrations, attendance, notes or totals by changing IDs | Existing; covered by portal isolation tests |
+| GEO-01 | Malaysia location | City/state entry works without GPS; exact coordinates are optional; non-Malaysian in-person events cannot publish | Existing city/state profile and catalogue filters; extraction rejects non-MY country |
+| GEO-02 | Nearby search | Use distance only when user and venue coordinates exist; otherwise use city/state and show distance unavailable | Existing; distance is approximate and omitted when venue coordinates are missing |
+| DISC-01 | Real Tavily Search | Bounded request uses Search for Malaysian medical training sources | Existing in scraper; live call unverified |
+| DISC-02 | Real Tavily Extract | Extract at most five unique returned URLs; empty Search results skip Extract | Existing in scraper; live call unverified |
+| DISC-03 | Provenance | Preserve URL, retrieval time, source text and extraction outcome through candidate/publication flow | Existing on candidates; source text is operator-only |
+| DISC-04 | Failure honesty | Partial extraction keeps evidence and warnings; provider failure is never fabricated success | Existing job statuses and warnings |
 | DISC-05 | Bounded work | Query 3–300 trimmed characters; 1–5 search results; 30 seconds per Tavily call; no automatic paid retries | Existing; retain |
-| AI-01 | Open-weight extraction | Approved open-weight model produces validated candidates with field-level excerpts and model/version metadata | Planned |
-| EVT-01 | Required training fields | Details show title, provider, session dates, delivery mode/location, CPD points, prerequisites, difficulty and fees; unknowns are explicit | Planned |
-| EVT-02 | Event identity and updates | Same source/session does not duplicate; different sessions on one page remain distinct; ambiguous matches require review | Planned |
-| EVT-03 | Claim verification | Advertised points, publication and accreditation verification remain separate; verified claims have evidence/reviewer/time | Planned |
-| FIND-01 | Catalogue filters | Combine text, date, city/state or radius, mode, points, difficulty and fee filters with pagination; clearing filters resets results | Planned |
-| REG-01 | Sign-up record | Explicit user action records external sign-up once per doctor/session; opening provider link does not create a record | Planned |
-| ATT-01 | Attendance record | User can mark eligible past/started session attended and correct it; future sessions cannot be marked attended | Planned |
-| PROG-01 | Personal progress | Selected-year counts and recorded points derive from attendance; corrections cannot double count; unknown/unapproved values are excluded and disclosed | Planned |
-| UI-01 | Full portal | Sign-in, discovery, detail, signed-up/attended lists and progress have loading, empty, error and retry states | Planned |
-| SEC-01 | Private secret setup | Hidden input saves ignored owner-readable `.env`; no key reaches frontend or logs | Existing Tavily setup; service split planned |
-| SEC-02 | Operator/service access | Doctor cannot start jobs or publish; scraper token cannot access personal data; missing integration configuration fails explicitly | Existing operator token; role split planned |
-| OPS-01 | Controlled ingestion | Durable leased jobs, bounded workers, pagination, usage metadata and an explicit run budget; doctor search never calls Tavily | Planned |
+| AI-01 | Open-weight extraction | Approved open-weight model produces validated candidates with field-level excerpts and model/version metadata | Adapter existing; model choice and live run remain OPEN-03 / DEMO-01 |
+| EVT-01 | Required training fields | Details show title, provider, session dates, delivery mode/location, CPD points, prerequisites, difficulty and fees; unknowns are explicit | Existing in catalogue and detail UI |
+| EVT-02 | Event identity and updates | Same source/session does not duplicate; different sessions on one page remain distinct; ambiguous matches require review | Partial: source_key deduplicates; no separate Training/Session tables |
+| EVT-03 | Claim verification | Advertised points, publication and accreditation verification remain separate; verified claims have evidence/reviewer/time | Partial: publication requires source excerpts and stays `unverified` |
+| FIND-01 | Catalogue filters | Combine text, date, city/state or radius, mode, points, difficulty and fee filters with pagination; clearing filters resets results | Existing SQL filters on indexed columns; unknown dates/fees/points need `include_unknown` |
+| REG-01 | Sign-up record | Explicit user action records external sign-up once per doctor/session; opening provider link does not create a record | Existing boolean sign-up; cancelled status not modelled |
+| ATT-01 | Attendance record | User can mark eligible past/started session attended and correct it; future sessions cannot be marked attended | Existing; optimistic versioning on save |
+| PROG-01 | Personal progress | Selected-year counts and recorded points derive from attendance; corrections cannot double count; unknown/unapproved values are excluded and disclosed | Existing year dashboard with excluded-count disclosure |
+| UI-01 | Full portal | Sign-in, discovery, detail, signed-up/attended lists and progress have loading, empty, error and retry states | Existing Next.js portal, including labelled demo fixtures |
+| SEC-01 | Private secret setup | Hidden input saves ignored owner-readable `.env`; no key reaches frontend or logs | Existing `scripts/setup_integrations.py`; Tavily/model keys stay on scraper |
+| SEC-02 | Operator/service access | Doctor cannot start jobs or publish; scraper token cannot access personal data; missing integration configuration fails explicitly | Existing operator role and scraper bearer token |
+| OPS-01 | Controlled ingestion | Durable leased jobs, bounded workers, pagination, usage metadata and an explicit run budget; doctor search never calls Tavily | Existing claim/heartbeat/complete plus explicit interrupted-job retry |
 | DEMO-01 | Real demonstration | Show one live Search/Extract run, one eligible model run, published results and personal tracking flow; separate live from fixture evidence | Pending |
 
 ## 8. Behavioural rules and defaults
@@ -216,6 +216,7 @@ All routes in this section are **planned** except the transitional route in sect
 | GET `/api/v1/me/progress?year=YYYY` | Doctor | Counts, recorded CPD subtotal, excluded-record count/reasons; no compliance verdict |
 | POST `/api/v1/admin/ingestion-jobs` | Operator | `{query,max_results}`; require Idempotency-Key; return 202 + job_id/status |
 | GET `/api/v1/admin/ingestion-jobs/{id}` | Operator | State, counts, warnings and usage; no credentials |
+| POST `/api/v1/admin/ingestion-jobs/{id}/retry` | Operator | Re-queue an `interrupted` job only; 409 otherwise; never auto-replays paid calls |
 | GET `/api/v1/admin/candidates` | Operator | Paginated review queue |
 | POST `/api/v1/admin/candidates/{id}/review` | Operator | publish/reject/hold, reason, version and evidence-backed corrections |
 | POST `/internal/v1/jobs/claim` | Scraper | Atomically lease one queued job; 204 if none; return lease_token and bounded job payload |
@@ -237,11 +238,11 @@ Defaults: one active worker, five source pages per job, maximum ten manually sta
 
 ## 11. Existing implementation and evidence
 
-At this revision, the branch implements synchronous `POST /discovery/search` with `Authorization: Bearer <DISCOVERY_API_TOKEN>` and body `{"query":"cardiology Kuala Lumpur 2026","max_results":5}`.
+This branch implements the three-service target: FastAPI owns PostgreSQL, the scraper owns Tavily plus model extraction, and the Next.js portal talks only to `/api/v1`. The transitional `POST /discovery/search` adapter was moved to `scraper/tavily.py` and the synchronous operator endpoint was removed rather than given a job-shaped response.
 
-It returns `provider`, `query`, UTC `retrieved_at`, `sources` and `warnings`. Source fields are `url`, `title`, `snippet`, nullable `raw_content`, `extraction_status` and `verification_status: "unverified"`. Search failure returns an error; extraction failure retains snippets with warnings. Current errors are 401/422/503/429/502/504 using FastAPI's existing error format, not the target error envelope.
+Doctor journeys use httponly session cookies, CSRF origin/`X-Care-Client` checks, catalogue filters, personal sign-up/attendance records, year progress, and an optional public profile. Operators create idempotent ingestion jobs; the scraper claims a 120-second lease; candidates require source excerpts before publish. Interrupted jobs stay interrupted until `POST /api/v1/admin/ingestion-jobs/{id}/retry`.
 
-Ten mocked adapter/setup tests and a local HTTP smoke check passed in the preceding implementation. The smoke check covered health/OpenAPI, authorization, validation and missing key. No live Tavily call, model call, three-service deployment, doctor sign-in, event persistence, nearby UI or tracking flow has been verified. The dashboard still uses hardcoded example data, including non-Malaysian events. Merely updating this document changes none of that implementation status.
+Mocked tests cover Tavily bounds, extraction validation, two-user isolation, filter semantics, nearby city fallback, unknown-value inclusion, and explicit job retry. They do not spend API credits. No live Tavily or open-weight model run has been recorded (DEMO-01). Identity is local email/password until OPEN-04 is resolved. Target `{error:{code,message,request_id}}` envelopes, candidate `hold`, and cancelled `signup_status` are still unimplemented. Demo fixtures load only when `DEMO_MODE=true` outside production and are labelled fictional.
 
 ## 12. Security, privacy and operational requirements
 
@@ -278,14 +279,14 @@ Mock tests run without secrets. Live tests are separate, explicitly use configur
 
 | Task | Dependencies | Deliverable and definition of done |
 | --- | --- | --- |
-| BUILD-01 | None | Obtain official rules; resolve Nebius, identity provider and eligible open-weight model; document decisions without claiming unverified compliance |
-| BUILD-02 | None | Split Python scraper from backend; add containers, narrow secrets, durable job schema/contracts; pass T-02/T-03/T-05 service tests |
-| BUILD-03 | BUILD-01 identity choice | Sign-in and ownership enforcement; remove/restrict unauthenticated user endpoints; pass T-01 |
-| BUILD-04 | BUILD-01 model choice, BUILD-02 | Implement extraction schema, model adapter, evidence, evaluation and candidate review; pass T-04 |
-| BUILD-05 | BUILD-02, BUILD-04 | Persist/publish sessions, deduplicate and expose filtered catalogue; pass T-05/T-06 |
-| BUILD-06 | BUILD-03, BUILD-05 | Implement personal records, state/version rules and progress; pass T-07 |
-| BUILD-07 | BUILD-03, BUILD-05, BUILD-06 | Connect frontend journeys; remove or label prototype fixtures; pass T-08/T-09 |
-| BUILD-08 | BUILD-01–07 | Run three-service deployment, live integration and complete demo; record T-10 evidence and known limitations |
+| BUILD-01 | None | Blocked on OPEN-01–04. Obtain official rules; resolve Nebius, identity provider and eligible open-weight model; document decisions without claiming unverified compliance |
+| BUILD-02 | None | Existing on branch. Split Python scraper from backend; add containers, narrow secrets, durable job schema/contracts; mocked T-02/T-03 pass; interrupted-job retry added; concurrent-worker stress not live |
+| BUILD-03 | BUILD-01 identity choice | Existing local sessions and isolation tests; OAuth still OPEN-04. Unauthenticated user endpoints removed |
+| BUILD-04 | BUILD-01 model choice, BUILD-02 | Adapter and evidence gate exist; T-04 20-page fixture evaluation not run |
+| BUILD-05 | BUILD-02, BUILD-04 | Existing publish + SQL catalogue filters on indexed columns; evidence remains in JSON. Training/Session are not separate tables yet |
+| BUILD-06 | BUILD-03, BUILD-05 | Existing records and progress; cancelled signup_status and change-history entity still missing |
+| BUILD-07 | BUILD-03, BUILD-05, BUILD-06 | Existing portal; demo fixtures labelled; T-08/T-09 not fully exercised in a browser/security pass |
+| BUILD-08 | BUILD-01–07 | Not started. Run three-service deployment, live integration and complete demo; record T-10 evidence and known limitations |
 
 Do not estimate a delivery date until team size and remaining hackathon time are known. If time is short, propose reducing optional polish or tracking detail; do not silently drop the three-service, Tavily, open-weight, Malaysia or personal-tracking decisions.
 
@@ -320,6 +321,6 @@ Release gate: confirmed meeting requirements have working implementations and li
 - Product source: owner's meeting summary supplied in this task; DEC-01–08 preserve its decisions.
 - [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)
 - [Tavily Extract API](https://docs.tavily.com/documentation/api-reference/endpoint/extract)
-- Repository evidence: `backend/discovery.py`, `backend/main.py`, `backend/auth.py`, `backend/models.py`, `frontend/app/page.tsx`, `docker-compose.yml`.
+- Repository evidence: `backend/main.py`, `backend/portal_models.py`, `scraper/tavily.py`, `scraper/extraction.py`, `frontend/app/page.tsx`, `docker-compose.yml`.
 
-v0.1 established Tavily discovery inside the backend. v0.2 supersedes that target with the confirmed three-service design, adds open-weight extraction, defines the complete doctor portal and tracking rules, and preserves the distinction between existing code and planned requirements. Tavily API contracts were checked during the preceding implementation; this revision does not independently verify hackathon rules or Malaysian regulatory requirements.
+v0.1 established Tavily discovery inside the backend. v0.2 supersedes that target with the confirmed three-service design, adds open-weight extraction, defines the complete doctor portal and tracking rules, and preserves the distinction between existing code and planned requirements. Tavily API contracts were checked during the preceding implementation; this revision does not independently verify hackathon rules or Malaysian regulatory requirements. v0.3 records the uncommitted portal/scraper implementation on `feat/gp-portal`, updates requirement statuses, and notes remaining DEMO-01 / OPEN-* work.

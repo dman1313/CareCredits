@@ -61,3 +61,10 @@ pg_tmp/
 # TypeScript/JS generated maps (optioneel, vaak wel handig om te ignoren)
 *.js.map
 *.d.ts
+
+# Local portal databases and runtime artifacts
+.data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

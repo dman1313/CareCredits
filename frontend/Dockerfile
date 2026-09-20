@@ -1,27 +1,19 @@
-FROM node:20-alpine AS base
-RUN corepack enable && corepack prepare pnpm@latest --activate
-
-FROM base AS deps
+FROM node:22-slim AS build
 WORKDIR /app
-
-# Copy package files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-
-# Install dependencies with cache mount
-# Build-scripts (esbuild, sharp, workerd, unrs-resolver) zijn toegestaan
-# via "pnpm.onlyBuiltDependencies" in package.json
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile
-
-FROM base AS final
-WORKDIR /app
-
-# Copy node_modules from deps stage
-COPY --from=deps /app/node_modules ./node_modules
-
-# Copy project files
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
 COPY . .
-
+ARG BACKEND_URL=http://backend:8000
+ENV BACKEND_URL=$BACKEND_URL
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+COPY --from=build --chown=node:node /app/.next/standalone ./
+COPY --from=build --chown=node:node /app/.next/static ./.next/static
+COPY --from=build --chown=node:node /app/public ./public
+USER node
 EXPOSE 3000
-
-CMD ["pnpm", "run", "dev"]
+CMD ["node", "server.js"]

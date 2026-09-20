@@ -1,0 +1,150 @@
+"""Portal schema v2. Catalogue filters are stored as columns; evidence stays in data JSON."""
+import time
+import uuid
+from sqlalchemy import Column, String, Float, Boolean, Integer, JSON, ForeignKey, UniqueConstraint
+from database import Base
+
+SCHEMA_VERSION = 2
+
+
+def uid():
+    return uuid.uuid4().hex
+
+
+class Account(Base):
+    __tablename__ = 'accounts'
+    id = Column(String, primary_key=True, default=uid)
+    email = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
+    password_hash = Column(String, nullable=False)
+    city = Column(String, default='Kuala Lumpur', nullable=False)
+    role = Column(String, default='doctor', nullable=False)
+    public_enabled = Column(Boolean, default=False, nullable=False)
+    public_slug = Column(String, unique=True, default=uid, nullable=False)
+    bio = Column(String, default='', nullable=False)
+
+
+class LoginSession(Base):
+    __tablename__ = 'login_sessions'
+    token_hash = Column(String, primary_key=True)
+    account_id = Column(String, ForeignKey('accounts.id'), nullable=False, index=True)
+    expires_at = Column(Float, nullable=False)
+
+
+class Course(Base):
+    __tablename__ = 'courses'
+    id = Column(String, primary_key=True, default=uid)
+    source_key = Column(String, unique=True, nullable=False)
+    data = Column(JSON, nullable=False)
+    demo = Column(Boolean, default=False, nullable=False)
+    updated_at = Column(Float, default=time.time, nullable=False)
+    title = Column(String, default='', nullable=False)
+    provider = Column(String, default='', nullable=False)
+    description = Column(String, default='', nullable=False)
+    start_date = Column(String, nullable=True, index=True)
+    city = Column(String, nullable=True, index=True)
+    state = Column(String, nullable=True, index=True)
+    country = Column(String, default='MY', nullable=False)
+    mode = Column(String, default='online', nullable=False, index=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    fee = Column(Float, nullable=True)
+    currency = Column(String, nullable=True)
+    points = Column(Float, nullable=True)
+    credit_label = Column(String, nullable=True)
+    difficulty = Column(String, nullable=True, index=True)
+
+
+FILTER_FIELDS = (
+    'title', 'provider', 'description', 'start_date', 'city', 'state', 'country', 'mode',
+    'latitude', 'longitude', 'fee', 'currency', 'points', 'credit_label', 'difficulty',
+)
+
+
+def fill_course(course, data, demo=None):
+    payload = dict(data)
+    start = payload.get('start_date')
+    if hasattr(start, 'isoformat'):
+        payload['start_date'] = start.isoformat()
+    course.data = payload
+    course.title = (payload.get('title') or '')[:200]
+    course.provider = (payload.get('provider') or '')[:200]
+    course.description = (payload.get('description') or '')[:3000]
+    course.start_date = payload.get('start_date')
+    course.city = payload.get('city')
+    course.state = payload.get('state')
+    course.country = payload.get('country') or 'MY'
+    course.mode = payload.get('mode') or 'online'
+    course.latitude = payload.get('latitude')
+    course.longitude = payload.get('longitude')
+    course.fee = payload.get('fee')
+    course.currency = payload.get('currency')
+    course.points = payload.get('points')
+    course.credit_label = payload.get('credit_label')
+    course.difficulty = payload.get('difficulty')
+    if demo is not None:
+        course.demo = demo
+    course.updated_at = time.time()
+    return course
+
+
+class Record(Base):
+    __tablename__ = 'doctor_records'
+    __table_args__ = (UniqueConstraint('account_id', 'course_id'),)
+    id = Column(String, primary_key=True, default=uid)
+    account_id = Column(String, ForeignKey('accounts.id'), nullable=False, index=True)
+    course_id = Column(String, ForeignKey('courses.id'), nullable=False)
+    signed_up = Column(Boolean, default=False, nullable=False)
+    attended = Column(Boolean, default=False, nullable=False)
+    attended_on = Column(String, nullable=True)
+    points = Column(Float, nullable=True)
+    credit_label = Column(String, default='CPD', nullable=False)
+    notes = Column(String, default='', nullable=False)
+    public = Column(Boolean, default=False, nullable=False)
+    version = Column(Integer, default=1, nullable=False)
+
+
+class Job(Base):
+    __tablename__ = 'ingestion_jobs'
+    id = Column(String, primary_key=True, default=uid)
+    account_id = Column(String, ForeignKey('accounts.id'), nullable=False)
+    request_key = Column(String, unique=True, nullable=False)
+    query = Column(String, nullable=False)
+    status = Column(String, default='queued', nullable=False, index=True)
+    created_at = Column(Float, default=time.time, nullable=False)
+    lease_token = Column(String, nullable=True)
+    lease_until = Column(Float, nullable=True)
+    started_at = Column(Float, nullable=True)
+    result = Column(JSON, nullable=True)
+
+
+class Candidate(Base):
+    __tablename__ = 'course_candidates'
+    __table_args__ = (UniqueConstraint('job_id', 'source_key'),)
+    id = Column(String, primary_key=True, default=uid)
+    job_id = Column(String, ForeignKey('ingestion_jobs.id'), nullable=False)
+    source_key = Column(String, nullable=False)
+    data = Column(JSON, nullable=False)
+    status = Column(String, default='pending', nullable=False)
+    reviewed_by = Column(String, nullable=True)
+
+
+class Audit(Base):
+    __tablename__ = 'portal_audit'
+    id = Column(String, primary_key=True, default=uid)
+    account_id = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    entity_id = Column(String, nullable=False)
+    changed = Column(JSON, nullable=False)
+    created_at = Column(Float, default=time.time, nullable=False)
+
+
+class Throttle(Base):
+    __tablename__ = 'request_throttle'
+    key = Column(String, primary_key=True)
+    count = Column(Integer, default=0, nullable=False)
+
+
+class SchemaVersion(Base):
+    __tablename__ = 'portal_schema_version'
+    version = Column(Integer, primary_key=True)

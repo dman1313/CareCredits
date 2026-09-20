@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Care Credits — APC Renewal Dashboard",
-  description: "Track CPD points, monitor compliance, and prepare for APC renewal.",
+  title: "CareCredits — Your learning, in one place",
+  description: "Find Malaysian GP training, keep personal CPD records and share selected learning.",
   other: {
     "codex-preview": "development",
   },
