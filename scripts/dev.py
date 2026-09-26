@@ -17,13 +17,25 @@ def main():
     common={**os.environ,'NEXT_TELEMETRY_DISABLED':'1','PYTHONPATH':str(root)+os.pathsep+str(root/'backend')}
     # Scope provider and DB secrets explicitly to their owning process.
     for key in list(common):
-        if key.startswith(('MODEL_','TAVILY_')) or key in ('DATABASE_URL','POSTGRES_PASSWORD','SCRAPER_SERVICE_TOKEN'):
+        if key.startswith(('MODEL_','TAVILY_','TYPESAFE_','JEV_','DAILY_','SCRAPE_','FIREHOSE_')) or key in ('DATABASE_URL','POSTGRES_PASSWORD','SCRAPER_SERVICE_TOKEN'):
             common.pop(key)
     token=settings.get('SCRAPER_SERVICE_TOKEN') or secrets.token_urlsafe(32)
     (root/'.data').mkdir(exist_ok=True)
     db_url=os.getenv('DATABASE_URL') or settings.get('DATABASE_URL') or 'sqlite:///'+str(root/'.data'/('demo.db' if args.demo else 'carecredits.db'))
-    backend={**common,'DATABASE_URL':db_url,'APP_ENV':'development','DEMO_MODE':str(args.demo).lower(),'ALLOW_SIGNUP':'true' if args.demo else settings.get('ALLOW_SIGNUP','false'),'SCRAPER_SERVICE_TOKEN':token}
-    scraper={**common,**{k:v for k,v in settings.items() if k.startswith(('MODEL_','TAVILY_'))},'SCRAPER_SERVICE_TOKEN':token,'BACKEND_INTERNAL_URL':'http://127.0.0.1:8000'}
+    backend={**common,'DATABASE_URL':db_url,'APP_ENV':'development','DEMO_MODE':str(args.demo).lower(),'ALLOW_SIGNUP':'true' if args.demo else settings.get('ALLOW_SIGNUP','false'),'SCRAPER_SERVICE_TOKEN':token,'DAILY_SCRAPE_ENABLED':settings.get('DAILY_SCRAPE_ENABLED','true')}
+    for key in ('TYPESAFE_API_KEY','JEV_CONFIDENCE_FLOOR','DAILY_SCRAPE_JOB_CEILING','SCRAPE_TOPICS_FILE'):
+        if settings.get(key):
+            backend[key]=settings[key]
+    if not (backend.get('TYPESAFE_API_KEY') or '').strip():
+        keyfile=Path.home()/'.typesafe'/'key'
+        try:
+            if keyfile.is_file():
+                file_key=keyfile.read_text().strip()
+                if file_key:
+                    backend['TYPESAFE_API_KEY']=file_key
+        except OSError:
+            pass
+    scraper={**common,**{k:v for k,v in settings.items() if k.startswith(('MODEL_','TAVILY_','FIREHOSE_'))},'SCRAPER_SERVICE_TOKEN':token,'BACKEND_INTERNAL_URL':'http://127.0.0.1:8000'}
     processes=[]
     try:
         for command,env,cwd in [([sys.executable,'-m','uvicorn','main:app','--host','127.0.0.1','--port','8000'],backend,root),([sys.executable,'-m','scraper.worker'],scraper,root),(['npm','run','dev','--','--hostname','127.0.0.1'],common,root/'frontend')]:

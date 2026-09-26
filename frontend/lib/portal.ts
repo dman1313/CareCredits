@@ -50,14 +50,22 @@ export type Progress = {
   excluded: number;
 };
 
+export type TavilySource = {
+  url: string;
+  title: string;
+  snippet: string;
+  extraction_status: string;
+  verification_status: string;
+};
+
 export type Job = {
   id: string;
   query: string;
   status: string;
-  result: { warnings?: string[]; candidate_count?: number } | null;
+  result: { warnings?: string[]; candidate_count?: number; sources?: TavilySource[] } | null;
 };
 
-export type Candidate = { id: string; data: Course; status: string };
+export type Candidate = { id: string; data: Course; status: string; reason?: string };
 
 export type WorkspaceTab =
   | 'Overview'

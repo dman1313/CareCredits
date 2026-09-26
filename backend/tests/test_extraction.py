@@ -48,11 +48,53 @@ class ModelTests(unittest.TestCase):
             with self.assertRaises(ExtractionError) as error:extract_training(self.source,client)
             self.assertNotIn('test-secret',str(error.exception))
 
-    def test_missing_model_prevents_paid_tavily_call(self):
-        with patch.dict(os.environ,{'MODEL_API_KEY':''}),patch('scraper.worker.discover') as search:
+    def test_missing_model_still_runs_tavily(self):
+        sources=[{
+            'url':'https://example.org/event','title':'GP course','snippet':'Snippet',
+            'raw_content':'Page text','extraction_status':'success','verification_status':'unverified',
+        }]
+        with patch.dict(os.environ,{'MODEL_API_KEY':''}),patch('scraper.worker.discover',return_value={'sources':sources,'warnings':[]}) as search:
             result=run_job({'query':'GP','lease_token':'test'},lambda:None)
-            self.assertEqual(result['status'],'failed')
-            search.assert_not_called()
+        search.assert_called_once()
+        self.assertEqual(result['status'],'partial')
+        self.assertEqual(result['candidates'],[])
+        self.assertEqual(result['sources'][0]['url'],'https://example.org/event')
+        self.assertNotIn('raw_content',result['sources'][0])
+        self.assertTrue(any('model' in warning.lower() or 'heuristic' in warning.lower() for warning in result['warnings']))
+
+    def test_heuristic_extracts_malaysia_event_without_model(self):
+        from scraper.extraction import heuristic_extract
+        text = (
+            'DD CON 2026 Conference\n'
+            'Organised by Disruptive Doctors in Kuala Lumpur, Malaysia.\n'
+            'Conference dates 2026-09-04. In-person primary care conference.'
+        )
+        rows = heuristic_extract({
+            'url': 'https://disruptive-doctors.com/dd-con-2026',
+            'title': 'DD CON 2026 Conference',
+            'raw_content': text,
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['title'], 'DD CON 2026 Conference')
+        self.assertEqual(rows[0]['city'], 'Kuala Lumpur')
+        self.assertEqual(rows[0]['start_date'], '2026-09-04')
+        self.assertEqual(rows[0]['model_id'], 'heuristic-v1')
+        self.assertIsNone(rows[0]['points'])
+        self.assertEqual(heuristic_extract({
+            'url': 'https://www.instagram.com/reel/abc',
+            'title': 'Instagram',
+            'raw_content': 'Malaysia CME event in Kuala Lumpur conference',
+        }), [])
+        self.assertEqual(heuristic_extract({
+            'url': 'https://www.eventbrite.com/d/malaysia/medical-conferences',
+            'title': 'Medical conferences Events and Things to do in Malaysia',
+            'raw_content': 'Medical conferences Events and Things to do in Malaysia. CPD courses in Kuala Lumpur.',
+        }), [])
+        self.assertEqual(heuristic_extract({
+            'url': 'https://example.org/listing',
+            'title': 'Upcoming Medical Conferences in Malaysia 2026',
+            'raw_content': 'Upcoming Medical Conferences in Malaysia 2026. Browse CPD courses in Kuala Lumpur.',
+        }), [])
 
     def test_empty_search_has_no_model_call(self):
         with patch('scraper.worker.discover',return_value={'sources':[],'warnings':[]}),patch('scraper.worker.extract_training') as model:

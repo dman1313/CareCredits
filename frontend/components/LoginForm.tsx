@@ -29,11 +29,8 @@ export function LoginForm({
       const body = { email, password, name: name || 'Doctor' };
       if (register) {
         await api('/auth/register', { method: 'POST', body: JSON.stringify(body) });
-        setRegister(false);
-        setError('Account created. Sign in to continue.');
-      } else {
-        onLogin(await api('/auth/login', { method: 'POST', body: JSON.stringify(body) }));
       }
+      onLogin(await api('/auth/login', { method: 'POST', body: JSON.stringify(body) }));
     } catch (err) {
       setError((err as Error).message);
     } finally {

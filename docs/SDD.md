@@ -1,6 +1,6 @@
 # CareCredits — spec-driven development specification
 
-Version: 0.3 · 2026-09-19 · Status: implementation specification; portal and three-service split exist on this branch; live Tavily/model demonstration is still pending.
+Version: 0.8 · 2026-09-24 · Status: implementation specification; portal and three-service split exist on this branch; DEC-09–11 and BUILD-10 (digests/suggestions/certificates) are implemented on the working path. Live TypeSafe Jev and open-weight model DEMO-01 still need owner API keys.
 
 This document expands the initial Tavily discovery specification using the owner's supplied meeting summary. It defines the full Malaysia MVP and the contracts needed to build it. It does not claim that the described application is already implemented.
 
@@ -20,28 +20,43 @@ Spelling is normalized to **Tavily** from “Tavalli.” “DiveScript” is int
 | DEC-06 | Doctor sign-in, nearby discovery, sign-up tracking, attendance tracking and learning progress |
 | DEC-07 | Show CPD points, prerequisites, beginner/intermediate/advanced difficulty, and fees |
 | DEC-08 | Use open-weight models for application AI |
+| DEC-09 | Own the Malaysia CPD catalogue: agents scrape public medical training sources on a daily schedule into CareCredits' database; doctors search that catalogue only. Paid Tavily/model calls are operator/agent budget, never per-user search. The product aim is to become the trusted default source of CPD training data |
+| DEC-10 | Keep doctors engaged with their learning: track recorded credits, surface upcoming courses they should consider, email a digest every two weeks with upcoming events and prices plus current credit totals, and offer a printable CareCredits certificate doctors can send to organisations showing CareCredits affiliation and that their tracked credits are up to date on the platform |
+| DEC-11 | Catalogue writes go through CareCredits **API connect endpoints** into the owned PostgreSQL database (no scraper direct DB writes). Before saving, call **Jev** (TypeSafe System One) against retrieved catalogue matches to decide whether an event already exists, is new, or is uncertain; **save new events** only when the judgment is `new` (or after operator review when uncertain). Exact URL/`source_key` matches remain deterministic short-circuits |
 
 An implementation default below is a concrete proposal, not a recorded meeting decision. Defaults can be revised with a documented reason; they must not silently change confirmed requirements. Official hackathon rules, model eligibility, deadline and judging criteria are still unverified. Nebius remains an open dependency decision, not a cancelled requirement.
 
 ## 2. Product goal and success
 
-Help doctors in Malaysia find relevant CPD training and maintain a personal record of activities they have signed up for and attended. The problem hypothesis is that opportunities and records are fragmented; user research has not yet established its frequency or cost.
+Help doctors in Malaysia find relevant CPD training, maintain a personal record of activities they have signed up for and attended, stay informed about upcoming opportunities and their credit totals, and share a printable CareCredits affiliation certificate with organisations when asked.
 
-The MVP succeeds when a doctor can sign in, choose a Malaysian location, find a real source-backed training, inspect its points and practical requirements, open the provider's registration page, record a sign-up, mark attendance, and see the personal dashboard update without duplicating the activity or its points.
+The problem hypothesis is that opportunities and records are fragmented, and doctors lose track of what to take next; user research has not yet established its frequency or cost.
 
-The hackathon demonstration must additionally show a real Tavily Search → Extract run and a real open-weight model extraction run. Saved fixtures may support offline development but cannot substitute for those claims.
+**Hackathon / core portal success:** a doctor can sign in, choose a Malaysian location, find a real source-backed training **from CareCredits' own catalogue**, inspect its points and practical requirements, open the provider's registration page, record a sign-up, mark attendance, and see the personal dashboard update without duplicating the activity or its points. Doctor search must not trigger a live Tavily call.
+
+**Engagement success (DEC-10):** the doctor can see credit progress and suggested upcoming catalogue courses; receive an opted-in email every two weeks summarising upcoming events with prices and current recorded CPD totals; and download/print a CareCredits certificate stating platform affiliation and that their tracked credits are current on CareCredits. The certificate is **not** a regulator licence, MMC attestation, or independent verification of attendance.
+
+Strategic product intent (DEC-09): CareCredits becomes the gold-standard Malaysia CPD dataset by continuously collecting and reviewing public medical training sources into PostgreSQL. Users come for the catalogue quality and freshness; operators control spend by budgeting daily scrape jobs instead of paying on every doctor keystroke.
+
+**Catalogue write path (DEC-11):** the scraper/agent connects to the owned database only through backend API connect endpoints. After extraction, the backend loads likely existing sessions, asks **Jev** whether the candidate already exists, and saves new events into PostgreSQL when Jev returns `new`. Uncertain matches stay in the operator review queue instead of silently merging or duplicating.
+
+The hackathon demonstration must additionally show a real Tavily Search → Extract run and a real open-weight model extraction run. Saved fixtures may support offline development but cannot substitute for those claims. Biweekly email and printable certificates may be demonstrated with fixtures or a single manual send if the mail provider is not yet live.
 
 ### MVP boundary
 
-Include sign-in, profile/location, database-backed discovery and filters, training detail, personal sign-up and attendance records, CPD progress, operator ingestion/review, source evidence, and loading/empty/error states.
+**Core portal (ship first):** sign-in, profile/location, database-backed discovery and filters, training detail, personal sign-up and attendance records, CPD progress, operator ingestion/review, source evidence, and loading/empty/error states.
+
+**Engagement layer (DEC-10 — planned product scope after core portal works):** optional biweekly digest emails, catalogue-based “consider next” course suggestions from the owned database (rule-based on city/mode/upcoming date — not a closed-weight recommendation engine), and printable affiliation certificates.
 
 Implementation defaults:
 
 - Sign-up means **recording that the doctor registered externally**. The app links to the provider; clicking the link alone does not register the doctor. Integrated booking/payment is outside MVP.
 - Attendance is a reversible self-reported record. It is not independently verified completion or regulator-approved credit.
-- Progress initially means signed-up count, attended count, and separately labelled recorded CPD totals. Optional personal notes support reflection; quizzes, competency scoring and an LMS are outside MVP.
+- Progress means signed-up count, attended count, and separately labelled recorded CPD totals. Optional personal notes support reflection; quizzes, competency scoring and an LMS are outside MVP.
 - Online training is included only when a source establishes Malaysian relevance or participation eligibility. Global online training is not included merely because it is reachable from Malaysia.
-- No automatic licence-renewal decision, universal annual target, accreditation guarantee, payment collection, certificate OCR, notifications or personalized AI recommendation engine in MVP.
+- No automatic licence-renewal decision, universal legal annual target, accreditation guarantee, payment collection, or **certificate OCR of third-party documents**. CareCredits **may** issue its own printable affiliation certificate (DEC-10).
+- Email digests are **opt-in**, every **14 days**, and use catalogue + personal progress data only — never a live Tavily call per recipient.
+- “Courses you need to take” means **suggested upcoming catalogue sessions** filtered by the doctor's profile (e.g. city, mode) and recent activity gaps — not a claim that the doctor is non-compliant with any board.
 
 ## 3. Domain vocabulary
 
@@ -57,6 +72,9 @@ Implementation defaults:
 | Recorded points | Points the doctor explicitly records for attendance; distinct from advertised points |
 | Verified | A specific claim reviewed against identified evidence, with reviewer and date |
 | Unknown | Source does not establish a value; stored as null, never zero or a guessed value |
+| Suggested training | Upcoming catalogue session offered to a doctor based on profile filters and gaps — advisory only |
+| Biweekly digest | Opt-in email every 14 days with upcoming events, listed prices, and the doctor's current recorded CPD totals |
+| Affiliation certificate | Printable CareCredits statement that the named doctor is affiliated with the platform and that their tracked credits were current as of the issue date; not a regulator document |
 
 Calling credits CPDs in the UI does not imply that global schemes are equivalent or convertible. A source credit label that is not approved for aggregation remains visible but excluded from the CPD subtotal with an explanation.
 
@@ -70,14 +88,18 @@ Calling credits CPDs in the UI does not imply that global schemes are equivalent
 4. Open training details: provider, time, venue/online mode, prerequisites, difficulty, fees, advertised points, registration link and supporting sources. Unknowns are explicit.
 5. Open the external registration link. Return and choose “Mark as signed up”; the portal records the user's assertion.
 6. After the event, choose “Mark as attended,” optionally record points and notes, then inspect updated progress. Correcting attendance or points recomputes totals.
+7. Opt in to biweekly digests; receive email updates on upcoming catalogue events (with prices where known) and current recorded CPD totals.
+8. Review suggested upcoming courses from the owned catalogue when the portal highlights sessions to consider next.
+9. Download/print a CareCredits affiliation certificate to share with organisations; the document states platform affiliation and tracked-credit currency, not board compliance.
 
 ### Operator
 
 1. Configure server secrets locally or in deployment secret settings.
-2. Submit a bounded Malaysia-specific ingestion job and inspect its status.
-3. Review extracted candidates, ambiguous dates, missing fields, conflicts, duplicates and Malaysia eligibility.
-4. Publish a source-supported session or reject/hold it with a reason. Publication is not accreditation verification.
-5. Refresh a source; review material changes before updating published records.
+2. Maintain the curated set of Malaysia medical training sources / topics that the daily agent scrapes.
+3. Inspect scheduled and manual ingestion jobs, status, usage and source coverage.
+4. Review extracted candidates, ambiguous dates, missing fields, conflicts, duplicates and Malaysia eligibility.
+5. Publish a source-supported session or reject/hold it with a reason. Publication is not accreditation verification.
+6. Refresh a source; review material changes before updating published records. Daily scrapes propose updates; operators still gate publication.
 
 ## 5. Target architecture
 
@@ -85,24 +107,29 @@ Calling credits CPDs in the UI does not imply that global schemes are equivalent
 flowchart LR
   Doctor[Doctor browser] --> Frontend[Frontend service: Next.js / TypeScript]
   Frontend --> Backend[Backend service: Python / FastAPI]
-  Backend --> DB[(PostgreSQL)]
+  Backend --> DB[(PostgreSQL owned catalogue)]
   Frontend --> Identity[Selected sign-in provider]
-  Scraper[Scraper service: Python] -->|claim jobs / submit candidates| Backend
+  Schedule[Daily scrape schedule] -->|enqueue bounded jobs| Backend
+  Digest[Biweekly digest schedule] -->|enqueue digest jobs| Backend
+  Backend --> Mail[Email provider]
+  Operator[Operator] -->|source list, budgets, review, publish| Backend
+  Scraper[Scraper / agent service: Python] -->|claim jobs / connect API / submit candidates| Backend
   Scraper --> Tavily[Tavily Search and Extract]
   Scraper --> Model[Open-weight model inference]
-  Operator[Operator] -->|authorized ingestion and review| Backend
+  Backend --> Jev[Jev TypeSafe System One]
+  MedicalSources[Public medical training sources] --> Tavily
 ```
 
 | Component | Owns | Must not own |
 | --- | --- | --- |
-| Frontend | Sign-in experience, discovery, details, personal portal, accessible UI | Tavily/model keys, operator token, direct database access |
-| Backend | Authentication enforcement, authorization, catalogue, personal records, job state, validation, publication, persistence, progress | Direct Tavily/model calls in the target architecture |
-| Scraper | Tavily adapter, extraction, open-weight model invocation, candidate construction, job execution | Doctor records, unrestricted database credentials, final publication decisions |
-| PostgreSQL | Durable application and ingestion records | Public browser access |
+| Frontend | Sign-in experience, catalogue discovery, details, personal portal, digest preferences, certificate download, accessible UI | Tavily/model keys, operator token, direct database access, live scrape triggers, raw mail credentials, TypeSafe/Jev keys |
+| Backend | Authentication enforcement, authorization, **owned CPD catalogue**, **API connect endpoints** to PostgreSQL, personal records, job state, scrape and digest schedules, validation, publication, persistence, progress, digest composition, certificate issuance, **Jev existence judgments** before save | Direct Tavily/model calls in the target architecture |
+| Scraper / agent | Daily and manual job execution, Tavily adapter, extraction, open-weight model invocation, candidate construction; talks to catalogue only via backend connect/job APIs | Doctor records, **direct PostgreSQL credentials**, final publication decisions, doctor-facing search, email to doctors, TypeSafe/Jev keys (unless explicitly delegated) |
+| PostgreSQL | Durable catalogue, personal, digest, certificate and ingestion records — the system of record users search | Public browser access |
+| Email provider | Delivery of opted-in digests | Catalogue truth or publication decisions |
+| Jev (TypeSafe) | Typed existence / duplicate / uncertain judgments over candidate vs catalogue match state | Generating event text, publishing, or bypassing evidence validation |
 
-PostgreSQL is infrastructure, not a fourth application service. External identity and inference providers are dependencies. Each application service needs its own entry point, container build and health check. Only the backend has PostgreSQL write credentials. The scraper exchanges jobs/results through authenticated internal backend endpoints.
-
-**Default job design:** use PostgreSQL-backed jobs owned by the backend; the scraper polls a claim endpoint. This avoids a separate message-broker service for the hackathon. Claims are atomic, one worker owns a job lease, and completion is idempotent. A crashed worker cannot cause silent loss or double publication.
+PostgreSQL is infrastructure, not a fourth application service. External identity, Tavily, open-weight inference, email, and TypeSafe/Jev are dependencies. Each application service needs its own entry point, container build and health check. **Only the backend has PostgreSQL write credentials.** The scraper connects through authenticated backend API endpoints (claim/complete plus catalogue connect/lookup/save). Completion and save are idempotent. A crashed worker cannot cause silent loss or double publication.
 
 ### Migration from the current branch
 
@@ -112,17 +139,25 @@ The existing backend user-list/create endpoints are unauthenticated, and `backen
 
 ## 6. Tavily and open-weight model pipeline
 
-1. Operator supplies a topic and Malaysia scope; validate the input and create an ingestion job.
-2. Scraper claims the job and calls Tavily Search with bounded results.
+**Owned catalogue rule (DEC-09):** doctors and the public profile always read PostgreSQL. Tavily and the model run only inside scraper jobs started by operators or by the daily schedule. This is how CareCredits controls API credits and builds a durable gold-standard dataset instead of a pass-through search box.
+
+**API connect + Jev existence (DEC-11):** the scraper never opens a database connection. It uses authenticated backend connect endpoints to look up catalogue rows and to save new events. Before insert, the backend asks Jev whether the candidate already exists in the retrieved match set.
+
+1. A daily schedule (and optional operator run) enqueues bounded Malaysia-specific ingestion jobs for curated topics or known medical training sources.
+2. Scraper claims the job and calls Tavily Search with bounded results against those sources / topics.
 3. Canonicalize URLs conservatively, remove fragments, reject invalid/non-web/local URLs, and deduplicate exact source URLs. Do not strip meaningful query parameters.
 4. Call Tavily Extract for the selected pages. Preserve snippets when extraction fails, with explicit failure status; snippet-only candidates remain in review and are not auto-published.
 5. Send successful page text to the configured **open-weight model** to extract schema-conforming candidate sessions. Extract multiple sessions separately when a page describes several events.
 6. Validate dates, values, enum fields and source excerpts deterministically. Model confidence does not prove correctness. Unsupported or malformed fields become null/review findings; do not repair them by inventing facts.
-7. Submit candidates, evidence, model metadata and outcomes to the backend using an idempotent job-completion request.
-8. Backend persists candidates and flags duplicates/conflicts. An operator publishes reviewed, Malaysia-relevant sessions.
-9. Doctor searches use PostgreSQL, not a paid Tavily request on every keystroke.
+7. Scraper/backend **connect** to the owned catalogue via API: lookup by exact `source_key` / canonical URL first. If exact match → treat as **exists** (propose field updates for review; do not create a duplicate). If no exact match, retrieve a small set of near-neighbours (same provider/city/date window or fuzzy title) from PostgreSQL.
+8. Call **Jev** (`POST https://api.typesafe.ai/v1/systemone`, model `jev-latest`) with dense state `{candidate, matches[]}` and a `choice` question whose criteria are `exists` / `new` / `uncertain`. Act on the typed answer and confidence threshold (default: require confidence ≥ 0.7 to auto-apply `exists` or `new`; otherwise force `uncertain`).
+9. **Save new events** through the connect/save API only when the judgment is `new` and evidence validation passes — persist as a candidate awaiting publish, or as a published session when the operator policy allows auto-publish of high-confidence new rows (default: still operator-publish). `exists` links to the matched session and queues a refresh diff. `uncertain` lands in the operator review queue with the Jev probabilities attached.
+10. Doctor searches use PostgreSQL only — never a paid Tavily or Jev request on search, filter, or page load.
+11. Re-scrapes of the same source propose updates; material field changes require operator review before overwriting a published session.
 
-The scraper uses Tavily for search/extraction and the open-weight model for structured interpretation. Disable optional generated search answers in the application flow. Do not claim that Tavily's internal models are open-weight: its proprietary internals are outside the application's model choice and the hackathon rules must resolve whether that matters.
+The scraper uses Tavily for search/extraction and the open-weight model for structured interpretation. **Jev is used for catalogue identity judgments only** (exists vs new vs uncertain), not for generating event fields. Disable optional generated Tavily search answers in the application flow. Do not claim that Tavily's or TypeSafe's internals are open-weight: DEC-08 still governs application extraction AI; DEC-11 adds Jev as an explicit typed-decision dependency for deduplication.
+
+**Default job design:** PostgreSQL-backed jobs owned by the backend; the scraper polls a claim endpoint. Claims are atomic, one worker owns a job lease, and completion/save are idempotent.
 
 ### Model selection contract
 
@@ -155,10 +190,17 @@ Statuses describe this branch: **existing** means implemented code, not live-pro
 | REG-01 | Sign-up record | Explicit user action records external sign-up once per doctor/session; opening provider link does not create a record | Existing boolean sign-up; cancelled status not modelled |
 | ATT-01 | Attendance record | User can mark eligible past/started session attended and correct it; future sessions cannot be marked attended | Existing; optimistic versioning on save |
 | PROG-01 | Personal progress | Selected-year counts and recorded points derive from attendance; corrections cannot double count; unknown/unapproved values are excluded and disclosed | Existing year dashboard with excluded-count disclosure |
+| PROG-02 | Suggested next courses | Portal shows upcoming owned-catalogue sessions filtered by doctor profile (city/mode) and recent gaps; copy is advisory (“consider”), never a compliance verdict | Implemented |
+| NTF-01 | Biweekly digest email | Opted-in doctors receive an email every 14 days with upcoming events, known prices, and current recorded CPD totals; unsubscribe works; no Tavily call per send | Implemented (MAIL_PROVIDER=log default; SMTP optional) |
+| CERT-01 | Printable affiliation certificate | Doctor can download/print a CareCredits PDF/statement naming them, issue date, recorded CPD total for the selected year, and clear non-regulator disclaimer; suitable to share with organisations | Implemented (printable HTML) |
 | UI-01 | Full portal | Sign-in, discovery, detail, signed-up/attended lists and progress have loading, empty, error and retry states | Existing Next.js portal, including labelled demo fixtures |
 | SEC-01 | Private secret setup | Hidden input saves ignored owner-readable `.env`; no key reaches frontend or logs | Existing `scripts/setup_integrations.py`; Tavily/model keys stay on scraper |
 | SEC-02 | Operator/service access | Doctor cannot start jobs or publish; scraper token cannot access personal data; missing integration configuration fails explicitly | Existing operator role and scraper bearer token |
 | OPS-01 | Controlled ingestion | Durable leased jobs, bounded workers, pagination, usage metadata and an explicit run budget; doctor search never calls Tavily | Existing claim/heartbeat/complete plus explicit interrupted-job retry |
+| OPS-02 | Daily owned-catalogue scrape | A schedule enqueues bounded jobs for the curated Malaysia medical source/topic list once per day (timezone Asia/Kuala_Lumpur); usage is attributed to the operator budget; failures stay honest and never auto-replay paid calls | Existing: `backend/schedule.py`, lifespan tick, `POST /api/v1/admin/daily-scrape`, `config/scrape_topics.json` |
+| CAT-01 | API connect to owned DB | Scraper/agent authenticates to backend connect endpoints; only the backend opens PostgreSQL; connect readiness fails closed if the DB is unreachable | Existing: `/internal/v1/catalogue/connect|lookup|decide|save` |
+| JEV-01 | Jev existence judgment | For each validated candidate without an exact `source_key` match, backend queries Jev with candidate + match set; outcomes are `exists`, `new`, or `uncertain` with stored probabilities; doctor search never calls Jev | Existing adapter; live TypeSafe call needs `TYPESAFE_API_KEY` (OPEN-11). Without the key, near matches stay `uncertain` |
+| CAT-02 | Save new events | When judgment is `new` (or operator publishes an uncertain/new candidate), persist the event into the owned catalogue with evidence; never duplicate an exact `source_key` | Existing: `decision=new` publishes a searchable course; uncertain stays held; heuristic extract is used when no open-weight model is configured |
 | DEMO-01 | Real demonstration | Show one live Search/Extract run, one eligible model run, published results and personal tracking flow; separate live from fixture evidence | Pending |
 
 ## 8. Behavioural rules and defaults
@@ -195,6 +237,9 @@ Use migrations and stable IDs. Existing integer user IDs may remain during migra
 | FieldEvidence | session/candidate reference; field_name; source_document_id; verbatim excerpt; reviewed_by/at nullable |
 | Candidate | id; ingestion_job_id; source-local event key; structured payload; schema_version; model metadata; validation findings; review state/reason; resulting session_id nullable |
 | DoctorSession | id; user_id+session_id unique; signup_status; attendance_status; signed_up_at; attended_on; nullable recorded_points; original_credit_label; points_origin; optional personal_notes; version |
+| DigestPreference | user_id unique; opted_in; cadence_days default 14; last_sent_at; unsubscribed_at |
+| DigestSend | id; user_id; sent_at; status; event_count; recorded_points_snapshot; provider_message_id nullable |
+| AffiliationCertificate | id; user_id; year; recorded_points_snapshot; issued_at; document_hash; disclaimer_version |
 | IngestionJob | id; request key; query; limits; status; attempt; lease token/expiry; timestamps; provider outcomes; measured usage if available; sanitized error |
 | AuditEvent | actor; entity/action; timestamp; changed fields; no secrets; doctor history visible only to its owner/admin policy |
 
@@ -214,6 +259,10 @@ All routes in this section are **planned** except the transitional route in sect
 | GET `/api/v1/me/trainings` | Doctor | Filter own signed-up/attended records, paginated |
 | PUT `/api/v1/me/trainings/{session_id}` | Doctor | Upsert signup/attendance, points and notes; version check prevents lost edits |
 | GET `/api/v1/me/progress?year=YYYY` | Doctor | Counts, recorded CPD subtotal, excluded-record count/reasons; no compliance verdict |
+| GET `/api/v1/me/suggestions` | Doctor | Upcoming catalogue sessions to consider (city/mode filters); advisory copy only |
+| GET/PATCH `/api/v1/me/digest` | Doctor | Read/update opt-in for the 14-day digest; unsubscribe sets opted_in false |
+| POST `/api/v1/me/certificates` | Doctor | Issue a printable affiliation certificate for a selected year; returns download URL or PDF bytes |
+| GET `/api/v1/me/certificates/{id}` | Doctor | Download own previously issued certificate |
 | POST `/api/v1/admin/ingestion-jobs` | Operator | `{query,max_results}`; require Idempotency-Key; return 202 + job_id/status |
 | GET `/api/v1/admin/ingestion-jobs/{id}` | Operator | State, counts, warnings and usage; no credentials |
 | POST `/api/v1/admin/ingestion-jobs/{id}/retry` | Operator | Re-queue an `interrupted` job only; 409 otherwise; never auto-replays paid calls |
@@ -222,7 +271,11 @@ All routes in this section are **planned** except the transitional route in sect
 | POST `/internal/v1/jobs/claim` | Scraper | Atomically lease one queued job; 204 if none; return lease_token and bounded job payload |
 | POST `/internal/v1/jobs/{id}/heartbeat` | Scraper | Matching lease token extends lease within job deadline |
 | POST `/internal/v1/jobs/{id}/complete` | Scraper | Matching lease + candidate batch + outcomes; idempotent completion |
-| GET `/health/live` and `/health/ready` | Infrastructure | Liveness independent of paid providers; readiness reports required local configuration/connectivity |
+| GET `/internal/v1/catalogue/connect` | Scraper | Readiness: confirms backend↔PostgreSQL connect for catalogue writes; 503 if DB unavailable; no secrets in body |
+| POST `/internal/v1/catalogue/lookup` | Scraper / Backend | `{candidate}` → exact `source_key` hit and/or near-neighbour sessions for Jev state; never returns other doctors' personal data |
+| POST `/internal/v1/catalogue/decide` | Backend (or scraper via backend) | Runs Jev existence choice over `{candidate, matches}`; returns `{decision, confidence, probabilities, matched_session_id?}`; stores judgment on the candidate |
+| POST `/internal/v1/catalogue/save` | Scraper / Backend | Saves a **new** event when decision is `new` (or operator-approved); 409 on exact duplicate; queues update diff when `exists` |
+| GET `/health/live` and `/health/ready` | Infrastructure | Liveness independent of paid providers; readiness reports required local configuration/connectivity including DB connect |
 
 Catalogue query fields: `q`, `city`, `state`, `latitude`, `longitude`, `radius_km`, `date_from`, `date_to`, `mode`, `difficulty`, `min_points`, `max_fee_myr`, `include_unknown`, `page`, `page_size`. Coordinates must be supplied together; radius requires coordinates. Incompatible/invalid filters return 422. Filtering by points or fees excludes unknowns unless explicitly included.
 
@@ -234,15 +287,19 @@ DoctorSession PUT represents the desired full state and includes the last-read `
 
 States: `queued → running → succeeded | partial | failed`; expired leases become `interrupted`, requiring an explicit operator retry with a new attempt. Do not automatically repeat paid calls after an ambiguous crash. Reusing the same idempotency key and body returns the same job; a different body returns 409. Completion checks lease ownership and stores candidates and terminal status in one transaction.
 
-Defaults: one active worker, five source pages per job, maximum ten manually started jobs per operator per hour, 120-second lease with heartbeat every 30 seconds, five-minute total deadline. Apply per-call timeouts within that deadline. Model input/output caps are set after model selection; missing caps block model job readiness. These bounds limit work, not a guaranteed monetary spend. Record reported usage when available; unknown usage is null. No automatic scheduled crawling in MVP.
+Defaults: one active worker, five source pages per job, maximum ten manually started jobs per operator per hour, 120-second lease with heartbeat every 30 seconds, five-minute total deadline. Apply per-call timeouts within that deadline. Model input/output caps are set after model selection; missing caps block model job readiness. These bounds limit work, not a guaranteed monetary spend. Record reported usage when available; unknown usage is null.
+
+**Daily schedule (DEC-09 / OPS-02):** enqueue one bounded job per curated topic or source family per day in `Asia/Kuala_Lumpur`, with an operator-configurable daily credit/job ceiling. The schedule creates the same job records as manual runs; it does not bypass leases, idempotency, or review. Missed days do not catch up by blasting unpaid backlog — operators choose whether to backfill. No doctor-facing “live scrape this query now” control in MVP.
+
+**Biweekly digest schedule (DEC-10 / NTF-01):** every 14 days in `Asia/Kuala_Lumpur`, the backend selects opted-in doctors whose `last_sent_at` is due, composes a digest from the owned catalogue (upcoming sessions with known/unknown prices labelled) plus that doctor's progress snapshot, and sends through the configured email provider. Failures are logged and retried with a bounded backoff; never call Tavily to personalize a digest. Unsubscribe links must work without signing in.
 
 ## 11. Existing implementation and evidence
 
-This branch implements the three-service target: FastAPI owns PostgreSQL, the scraper owns Tavily plus model extraction, and the Next.js portal talks only to `/api/v1`. The transitional `POST /discovery/search` adapter was moved to `scraper/tavily.py` and the synchronous operator endpoint was removed rather than given a job-shaped response.
+This branch implements the three-service target: FastAPI owns PostgreSQL (or SQLite demo), the scraper owns Tavily plus model extraction, and the Next.js portal talks only to `/api/v1`. The transitional `POST /discovery/search` adapter was moved to `scraper/tavily.py` and the synchronous operator endpoint was removed rather than given a job-shaped response.
 
-Doctor journeys use httponly session cookies, CSRF origin/`X-Care-Client` checks, catalogue filters, personal sign-up/attendance records, year progress, and an optional public profile. Operators create idempotent ingestion jobs; the scraper claims a 120-second lease; candidates require source excerpts before publish. Interrupted jobs stay interrupted until `POST /api/v1/admin/ingestion-jobs/{id}/retry`.
+Doctor journeys use httponly session cookies, CSRF origin/`X-Care-Client` checks, catalogue filters, personal sign-up/attendance records, year progress, catalogue suggestions, opt-in biweekly digests, printable affiliation certificates, and an optional public profile. Operators create idempotent ingestion jobs; the scraper claims a 120-second lease, calls Tavily Search/Extract, and stores source URLs on the job even when model extraction is not configured. Candidates still require source excerpts before publish. Interrupted jobs stay interrupted until `POST /api/v1/admin/ingestion-jobs/{id}/retry`. Daily scrape enqueue (OPS-02) and catalogue connect/lookup/decide/save with Jev (DEC-11) are wired; live TypeSafe and open-weight model DEMO-01 still require owner API keys.
 
-Mocked tests cover Tavily bounds, extraction validation, two-user isolation, filter semantics, nearby city fallback, unknown-value inclusion, and explicit job retry. They do not spend API credits. No live Tavily or open-weight model run has been recorded (DEMO-01). Identity is local email/password until OPEN-04 is resolved. Target `{error:{code,message,request_id}}` envelopes, candidate `hold`, and cancelled `signup_status` are still unimplemented. Demo fixtures load only when `DEMO_MODE=true` outside production and are labelled fictional.
+Mocked tests cover Tavily bounds, extraction validation, two-user isolation, filter semantics, nearby city fallback, unknown-value inclusion, explicit job retry, digest opt-in/unsubscribe/send, suggestions, and certificates. They do not spend API credits. No live open-weight model run has been recorded (DEMO-01). Identity is local email/password until OPEN-04 is resolved. Candidate `hold` now requires a review reason and stays out of the catalogue until publish. Target `{error:{code,message,request_id}}` envelopes and cancelled `signup_status` are still unimplemented. Demo fixtures load only when `DEMO_MODE=true` outside production and are labelled fictional.
 
 ## 12. Security, privacy and operational requirements
 
@@ -287,8 +344,11 @@ Mock tests run without secrets. Live tests are separate, explicitly use configur
 | BUILD-06 | BUILD-03, BUILD-05 | Existing records and progress; cancelled signup_status and change-history entity still missing |
 | BUILD-07 | BUILD-03, BUILD-05, BUILD-06 | Existing portal; demo fixtures labelled; T-08/T-09 not fully exercised in a browser/security pass |
 | BUILD-08 | BUILD-01–07 | Not started. Run three-service deployment, live integration and complete demo; record T-10 evidence and known limitations |
+| BUILD-09 | BUILD-02, BUILD-05, OPEN-05, OPEN-09 | Done. Curated `config/scrape_topics.json` + daily enqueue (OPS-02) with `DAILY_SCRAPE_JOB_CEILING`; doctors search the owned catalogue only |
+| BUILD-10 | BUILD-06, OPEN-10 | Done. Digest preferences + biweekly send (NTF-01), catalogue suggestions (PROG-02), printable affiliation certificate (CERT-01) with non-regulator disclaimer. Default mailer is file log; set MAIL_PROVIDER=smtp for real email |
+| BUILD-11 | BUILD-02, BUILD-05, OPEN-11 | Done except live TypeSafe. Connect/lookup/decide/save exist; exact `source_key` short-circuits; no matches → `new` and publish; near matches without `TYPESAFE_API_KEY` stay `uncertain` |
 
-Do not estimate a delivery date until team size and remaining hackathon time are known. If time is short, propose reducing optional polish or tracking detail; do not silently drop the three-service, Tavily, open-weight, Malaysia or personal-tracking decisions.
+Do not estimate a delivery date until team size and remaining hackathon time are known. If time is short, propose reducing optional polish or tracking detail; do not silently drop the three-service, Tavily, open-weight, Malaysia, personal-tracking, owned-catalogue (DEC-09), engagement (DEC-10) or Jev-gated connect/save (DEC-11) decisions.
 
 ## 15. Demo script and completion gate
 
@@ -307,20 +367,73 @@ Release gate: confirmed meeting requirements have working implementations and li
 | ID | Question | Working position / impact |
 | --- | --- | --- |
 | OPEN-01 | Which hackathon and exact rules? | Owner requirements guide work; official eligibility/submission requirements still need verification |
-| OPEN-02 | Required Nebius role? | Earlier requirement preserved; resolve before final inference/deployment choice |
-| OPEN-03 | Which open-weight model/host/licence? | Required before live AI integration; no closed-weight substitute |
+| OPEN-02 | Required Nebius role? | **Provisional for DEMO-01 (2026-09-20):** Nebius Token Factory used for **inference only**. Application hosting remains local Docker/dev; not yet Nebius-hosted. |
+| OPEN-03 | Which open-weight model/host/licence? | **Provisional DEMO-01 choice (2026-09-20):** Nebius Token Factory host; model `Qwen/Qwen3-30B-A3B-Instruct-2507`; weights https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507 ; licence https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507/blob/main/LICENSE (Apache 2.0 per model card family). Owner still must run `setup_integrations.py`, set keys, and confirm `MODEL_OPEN_WEIGHT_CONFIRMED=true`. |
 | OPEN-04 | Identity provider? | Follow repository intent for third-party sign-in; provider selection unresolved |
-| OPEN-05 | Which providers/accreditation sources? | Reviewed public sources initially; no automatic official eligibility claim |
+| OPEN-05 | Which providers/accreditation sources? | **Working position (2026-09-24):** build a curated Malaysia medical training source list that the daily agent scrapes into the owned catalogue (DEC-09). Start with public conference/CME portals and known associations; no automatic official eligibility claim |
 | OPEN-06 | Does sign-up mean integrated registration? | Default is external registration plus personal record; integration would expand scope |
-| OPEN-07 | What proves attendance and credits? | Self-report MVP; verification/certificate workflow is a later decision |
+| OPEN-07 | What proves attendance and credits? | Self-report MVP. CareCredits may issue an **affiliation certificate** (DEC-10 / CERT-01) stating platform-tracked credits; it is not MMC/regulator proof. Third-party verification remains a later decision |
 | OPEN-08 | Location/geocoding source and approved online scope? | Manual city/state works first; no geocoder vendor chosen |
-| OPEN-09 | Team, deadline, credit budget and hosting? | Required to prioritize work and set deployment limits |
+| OPEN-09 | Team, deadline, credit budget and hosting? | Required to prioritize work and set daily scrape ceilings |
+| OPEN-10 | Email provider for biweekly digests? | Partially resolved: `MAIL_PROVIDER=log` writes digests under `.data/digests/` for local/demo; set `smtp` + SMTP_* for production sends |
+| OPEN-11 | TypeSafe / Jev credentials and confidence floor? | Needed for DEC-11 / JEV-01; store `TYPESAFE_API_KEY` on the backend only; confirm auto-apply confidence threshold (default 0.7) |
 
-## 17. References and change log
+## 17. Recommended next steps (owner-facing)
 
-- Product source: owner's meeting summary supplied in this task; DEC-01–08 preserve its decisions.
+Ordered for a strong hackathon demo without dropping confirmed DEC-01–11 scope.
+
+1. **Lock BUILD-01 answers (OPEN-01–04, OPEN-09).** Without hackathon rules, Nebius role, model choice, identity provider, team/deadline/budget, BUILD-08 cannot be claimed complete.
+2. **Prove DEMO-01 with real credits.** One live Tavily Search→Extract job and one live open-weight extraction on a Malaysia CPD query; keep redacted evidence. Mocked tests stay separate.
+3. **Seed the owned catalogue (DEC-09).** Curate the first Malaysia medical source/topic list, run bounded scrapes, review/publish into PostgreSQL, and keep doctor search on that catalogue only.
+4. **Wire catalogue connect + Jev decide/save (DEC-11 / BUILD-11).** Backend DB connect endpoints; Jev exists/new/uncertain; save new events without duplicates (OPEN-11 key).
+5. **Schedule the daily agent (BUILD-09 / OPS-02)** once the budget ceiling (OPEN-09) is known — so Tavily spend is predictable and the catalogue stays fresh.
+6. **Engagement layer (DEC-10 / BUILD-10).** After core portal works: credit suggestions, biweekly digest (pick OPEN-10 mailer), and printable affiliation certificates with honest disclaimers.
+7. **Finish operator review polish that demo depends on.** Candidate `hold` with a required reason and `scripts/happy_path_review.py` are in place. Remaining polish is optional copy for reject reasons during the live DEMO-01 run.
+8. **Close personal-tracking gaps that judges will poke.** `signup_status` cancelled state, attendance change-history, and honest UI copy that self-report ≠ regulator credit.
+9. **Schema honesty pass.** Either introduce separate Training/Session tables (EVT-02) or document the current flattened model as intentional MVP with known merge limits.
+10. **Identity path.** Keep local email/password for internal demos if needed, but decide OAuth (OPEN-04) before any doctor pilot outside the team.
+11. **Hardening before any shared URL.** CSRF/origin already present; finish browser/security pass (T-08/T-09), narrow CORS, and confirm secrets never reach the client.
+12. **Do not expand MVP** into payments, third-party certificate OCR, auto licence compliance, per-user live Tavily search, or silent closed-weight models.
+
+
+### Owner priority (2026-09-20)
+
+Owner selected **Prioritize live DEMO-01 (real Tavily + model)** as the immediate focus. Other OPEN-* items stay unresolved; do not block the live run on OAuth or schema split. Record redacted evidence for T-10 once the run succeeds.
+
+### Working priority until owner answers
+
+Owner override in effect: DEMO-01 live evidence is the active priority. Operator polish and labelled gaps follow only if they unblock that demo. Do not invent hackathon compliance or Nebius usage.
+
+## 18. Owner questions (to resolve OPEN-*)
+
+Answer these in chat; decisions will be written back into section 16 with dates.
+
+| Ask | Maps to | Why it matters |
+| --- | --- | --- |
+| Which hackathon (name + link) and what is the hard deadline? | OPEN-01, OPEN-09 | Rules and time box every cut |
+| Must we use Nebius for inference, hosting, both, or neither? | OPEN-02 | Locks hosting and model path |
+| Preferred open-weight model + host if you already have one (else “recommend”) | OPEN-03 | Unblocks AI-01 / T-04 / DEMO-01 |
+| Sign-in for demo: keep local email/password, or force OAuth now (Google / other)? | OPEN-04 | AUTH path for judges vs pilots |
+| Who is the primary audience for the next two weeks: judges, MKIS/doctors, or internal only? | product | Changes polish vs compliance tone |
+| Approximate Tavily + inference budget you are willing to spend on demos and on the daily scrape | OPEN-09 | Caps live job size and OPS-02 ceiling |
+| Is external registration + self-report still correct, or do you want integrated booking later? | OPEN-06, OPEN-07 | Protects MVP boundary |
+| Any must-include Malaysian source domains or boards for the curated daily scrape list? | OPEN-05, DEC-09 | Seeds the owned catalogue |
+| Which email provider / from-address for biweekly digests? | OPEN-10, DEC-10 | Unblocks NTF-01 |
+| TypeSafe API key ready, and confidence floor for auto exists/new (default 0.7)? | OPEN-11, DEC-11 | Unblocks Jev catalogue decide/save |
+| Geocoding: stay manual city/state for MVP, or pick a vendor now? | OPEN-08 | Nearby search quality |
+
+## 19. References and change log
+
+
+- Product source: owner's meeting summary supplied in this task; DEC-01–11 preserve its decisions (DEC-09–11 added 2026-09-24).
 - [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)
 - [Tavily Extract API](https://docs.tavily.com/documentation/api-reference/endpoint/extract)
+- [TypeSafe / Jev System One](https://docs.typesafe.ai/llms.txt)
 - Repository evidence: `backend/main.py`, `backend/portal_models.py`, `scraper/tavily.py`, `scraper/extraction.py`, `frontend/app/page.tsx`, `docker-compose.yml`.
 
 v0.1 established Tavily discovery inside the backend. v0.2 supersedes that target with the confirmed three-service design, adds open-weight extraction, defines the complete doctor portal and tracking rules, and preserves the distinction between existing code and planned requirements. Tavily API contracts were checked during the preceding implementation; this revision does not independently verify hackathon rules or Malaysian regulatory requirements. v0.3 records the uncommitted portal/scraper implementation on `feat/gp-portal`, updates requirement statuses, and notes remaining DEMO-01 / OPEN-* work.
+v0.4 adds owner-facing next steps and a question checklist for OPEN-01–09, and renumbers References to section 19.
+v0.5 records DEC-09: agents scrape medical training sources daily into CareCredits' own PostgreSQL catalogue; doctors search that catalogue only so API credits stay under operator budget and CareCredits can become the trusted CPD data source. Adds OPS-02 / BUILD-09; replaces the earlier “no automatic scheduled crawling in MVP” default.
+v0.6 records DEC-10: credit tracking updates, suggested next courses from the owned catalogue, opt-in biweekly emails (upcoming events + prices + credit totals), and printable CareCredits affiliation certificates for organisations — with explicit non-regulator disclaimers. Adds PROG-02, NTF-01, CERT-01, BUILD-10, OPEN-10.
+v0.7 records DEC-11: API connect endpoints to the owned database; Jev existence judgments (`exists` / `new` / `uncertain`); save new events through the backend only. Adds CAT-01, CAT-02, JEV-01, BUILD-11, OPEN-11.
+v0.8 records BUILD-10 delivery: digest preferences + biweekly send loop (log/SMTP), suggestions endpoint, printable affiliation certificates; schema v4.

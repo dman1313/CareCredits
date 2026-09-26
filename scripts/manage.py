@@ -19,7 +19,7 @@ def main():
     args=parser.parse_args()
     initialize()
     if args.command=='migrate':
-            print('Portal schema v2 is ready. Catalogue filter columns are in place.');return
+            print('Portal schema v3 is ready. Catalogue filters and candidate review reasons are in place.');return
     email=input('Account email: ').strip().lower()
     if '@' not in email or '.' not in email.split('@')[-1]:raise SystemExit('Invalid email.')
     password=getpass.getpass('Password (12–128 characters, hidden): ')

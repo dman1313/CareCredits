@@ -1,10 +1,10 @@
-"""Portal schema v2. Catalogue filters are stored as columns; evidence stays in data JSON."""
+"""Portal schema v4. Digests, certificates, and catalogue filters."""
 import time
 import uuid
 from sqlalchemy import Column, String, Float, Boolean, Integer, JSON, ForeignKey, UniqueConstraint
 from database import Base
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 
 def uid():
@@ -127,6 +127,7 @@ class Candidate(Base):
     data = Column(JSON, nullable=False)
     status = Column(String, default='pending', nullable=False)
     reviewed_by = Column(String, nullable=True)
+    review_reason = Column(String, default='', nullable=False)
 
 
 class Audit(Base):
@@ -143,6 +144,38 @@ class Throttle(Base):
     __tablename__ = 'request_throttle'
     key = Column(String, primary_key=True)
     count = Column(Integer, default=0, nullable=False)
+
+
+class DigestPreference(Base):
+    __tablename__ = 'digest_preferences'
+    account_id = Column(String, ForeignKey('accounts.id'), primary_key=True)
+    opted_in = Column(Boolean, default=False, nullable=False)
+    cadence_days = Column(Integer, default=14, nullable=False)
+    last_sent_at = Column(Float, nullable=True)
+    unsubscribed_at = Column(Float, nullable=True)
+    unsubscribe_token = Column(String, unique=True, default=uid, nullable=False)
+
+
+class DigestSend(Base):
+    __tablename__ = 'digest_sends'
+    id = Column(String, primary_key=True, default=uid)
+    account_id = Column(String, ForeignKey('accounts.id'), nullable=False, index=True)
+    sent_at = Column(Float, default=time.time, nullable=False)
+    status = Column(String, default='queued', nullable=False)
+    provider_message_id = Column(String, nullable=True)
+    error = Column(String, default='', nullable=False)
+    payload = Column(JSON, nullable=True)
+
+
+class AffiliationCertificate(Base):
+    __tablename__ = 'affiliation_certificates'
+    id = Column(String, primary_key=True, default=uid)
+    account_id = Column(String, ForeignKey('accounts.id'), nullable=False, index=True)
+    year = Column(Integer, nullable=False)
+    recorded_points_snapshot = Column(Float, nullable=False)
+    issued_at = Column(Float, default=time.time, nullable=False)
+    document_hash = Column(String, nullable=False)
+    disclaimer_version = Column(String, default='CERT-01-v1', nullable=False)
 
 
 class SchemaVersion(Base):

@@ -12,7 +12,7 @@ The project requires **real Tavily Search and Extract API usage** and **open-wei
 - Records of courses signed up for and attended, with personal progress. The SDD proposes external registration and self-reported attendance for MVP.
 - Source-backed ingestion using Tavily and an open-weight model to produce structured candidates for review.
 
-[SDD v0.3](docs/SDD.md) defines the full MVP, data model, service contracts, acceptance tests and build sequence. Proposed defaults and unresolved decisions are labelled. User-facing credits are called CPDs; original source labels are retained without assuming CE/CME equivalence.
+[SDD v0.7](docs/SDD.md) defines the full MVP, data model, service contracts, acceptance tests and build sequence. Proposed defaults and unresolved decisions are labelled. User-facing credits are called CPDs; original source labels are retained without assuming CE/CME equivalence.
 
 ## Tavily's role in the current code
 
@@ -28,12 +28,16 @@ Official API references: [Search](https://docs.tavily.com/documentation/api-refe
 ## Current status
 
 - Three Compose services: backend (FastAPI + PostgreSQL), scraper (Tavily + model worker), frontend (Next.js portal).
+- Doctor **register** (when `ALLOW_SIGNUP=true` / `--demo`) and catalogue **search** against the owned database.
+- **Daily scrape** (OPS-02): curated topics in `config/scrape_topics.json` enqueue once per `Asia/Kuala_Lumpur` day; operator can also `POST /api/v1/admin/daily-scrape`.
+- Catalogue **connect / lookup / decide / save** APIs (`/internal/v1/catalogue/*`) with exact `source_key` short-circuit and **Jev** (TypeSafe System One SDK) existence judgments when `TYPESAFE_API_KEY` or `~/.typesafe/key` is set (near matches stay `uncertain` without it).
+- Daily scrape uses Tavily Search/Extract plus Firehose (`FIREHOSE_MGMT_KEY`) when configured; doctors still only search the owned catalogue.
 - Doctor sign-in uses httponly email/password sessions. Third-party OAuth is still an open decision.
 - Malaysia catalogue filters, nearby distance when coordinates exist, personal sign-up/attendance, year progress, and an optional public profile are implemented.
-- Operator ingestion uses leased jobs and an explicit retry for interrupted work. The old `POST /discovery/search` endpoint was removed after the adapter moved to the scraper.
+- Operator ingestion uses leased jobs and an explicit retry for interrupted work.
 - Demo fixtures load only with `DEMO_MODE=true` outside production and are labelled fictional.
-- Not yet done: official hackathon-rule check, selected open-weight model evidence, live Tavily/model demonstration, OAuth, candidate hold, cancelled sign-up status, and the target error envelope.
-- Nebius remains an unresolved hosting/inference choice; `MODEL_BASE_URL` defaults to Token Factory but is not a completed integration.
+- Live UI: http://127.0.0.1:3000/live
+- Not yet done: biweekly digests / printable certificates (DEC-10), open-weight model live DEMO-01, OAuth, cancelled sign-up status, target error envelope.
 
 Read [the SDD](docs/SDD.md) and [the coding-agent handoff](docs/CODING_AGENT_HANDOFF.md).
 
@@ -66,7 +70,7 @@ Demo sign-in is `demo@carecredits.local` / `CareCredits-demo-2026`. That path us
 
 Sign in as an operator, open **Training sources**, and start a bounded Malaysia topic. The scraper must have `TAVILY_API_KEY`, `MODEL_API_KEY`, `MODEL_ID`, weights/licence URLs, and `MODEL_OPEN_WEIGHT_CONFIRMED=true`. Missing configuration fails explicitly; it never returns demo results as live success.
 
-Each job makes one Search call and, if URLs are returned, one Extract call for up to five pages, then one model request per extracted page. This consumes credits. Interrupted jobs stay interrupted until you retry them.
+Each job makes one Search call and, if URLs are returned, one Extract call for up to five pages. Those Tavily sources are stored on the job. Structured candidates need the model settings above; missing model configuration no longer blocks Tavily. Interrupted jobs stay interrupted until you retry them.
 
 ## Verification
 
@@ -76,4 +80,4 @@ With backend dependencies installed:
 PYTHONPATH=.:backend python -m unittest discover -s backend/tests -v
 ```
 
-Tests mock Tavily and the model and do not spend credits. A live API call, full Docker startup, and browser portal flow must be verified separately.
+Tests mock Tavily and the model and do not spend credits. `python3 scripts/happy_path_review.py` walks hold → publish on a labelled candidate without API credits. A live API call, full Docker startup, and browser portal flow must be verified separately.

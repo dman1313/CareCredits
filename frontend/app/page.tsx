@@ -278,16 +278,22 @@ export default function Home() {
     }
   }
 
-  async function review(id: string, action: string) {
+  async function review(id: string, action: string, reason = '') {
     setSaving(true);
     try {
       await api('/admin/candidates/' + id + '/review', {
         method: 'POST',
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, reason }),
       });
       await refreshOperator();
       await loadCourses();
-      setNotice(action === 'publish' ? 'Training published with source evidence.' : 'Candidate rejected.');
+      setNotice(
+        action === 'publish'
+          ? 'Training published with source evidence.'
+          : action === 'hold'
+            ? 'Candidate held for later review.'
+            : 'Candidate rejected.',
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {

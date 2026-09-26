@@ -6,7 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -35,7 +35,7 @@ class PortalTests(unittest.TestCase):
             with self.Session() as db:
                 yield db
         app.dependency_overrides[get_db]=dependency
-        self.env=patch.dict(os.environ,{'APP_ENV':'test','DEMO_MODE':'false','SCRAPER_SERVICE_TOKEN':'test-service-token','ALLOW_SIGNUP':'true'})
+        self.env=patch.dict(os.environ,{'APP_ENV':'test','DEMO_MODE':'false','SCRAPER_SERVICE_TOKEN':'test-service-token','ALLOW_SIGNUP':'true','DAILY_SCRAPE_ENABLED':'false','DIGEST_ENABLED':'false'})
         self.env.start()
         self.client=TestClient(app,headers={'X-Care-Client':'1'})
         with self.Session() as db:
@@ -135,11 +135,45 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(review.status_code,200,review.text)
         self.assertEqual(self.client.get('/api/v1/admin/candidates').json()['items'],[])
 
+    def test_job_completion_keeps_tavily_sources(self):
+        header={'Idempotency-Key':'tavily-sources-key'}
+        self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP Tavily sources'},headers=header)
+        service={'Authorization':'Bearer test-service-token'}
+        claim=self.client.post('/internal/v1/jobs/claim',headers=service).json()
+        payload={
+            'lease_token':claim['lease_token'],'status':'partial','candidates':[],
+            'warnings':['Configure an open-weight model. Tavily sources were saved for review.'],
+            'sources':[{'url':'https://example.org/afpm','title':'Primary Care Update','snippet':'CPD workshop in Kuala Lumpur','extraction_status':'success','verification_status':'unverified'}],
+        }
+        self.assertEqual(self.client.post('/internal/v1/jobs/'+claim['id']+'/complete',json=payload,headers=service).status_code,200)
+        stored=self.client.get('/api/v1/admin/ingestion-jobs').json()['items'][0]
+        self.assertEqual(stored['status'],'partial')
+        self.assertEqual(stored['result']['sources'][0]['title'],'Primary Care Update')
+        self.assertEqual(stored['result']['candidate_count'],0)
+
     def test_invalid_evidence_cannot_publish(self):
         with self.Session() as db:
             j=Job(account_id=self.a,request_key='j',query='GP');db.add(j);db.flush()
             c=Candidate(job_id=j.id,source_key='fake',data={**sample(),'evidence':{'title':'invented'}});db.add(c);db.commit();cid=c.id
         self.assertEqual(self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'publish'}).status_code,422)
+
+    def test_hold_requires_reason_and_stays_out_of_catalogue(self):
+        with self.Session() as db:
+            j=Job(account_id=self.a,request_key='hold-job',query='GP');db.add(j);db.flush()
+            c=Candidate(job_id=j.id,source_key='hold-source',data=sample('Held GP session'));db.add(c);db.commit();cid=c.id
+        self.assertEqual(self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'hold'}).status_code,422)
+        held=self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'hold','reason':'Need MMC confirmation'})
+        self.assertEqual(held.status_code,200,held.text)
+        self.assertEqual(held.json()['status'],'held')
+        queue=self.client.get('/api/v1/admin/candidates').json()['items']
+        self.assertEqual([(item['id'],item['status'],item['reason']) for item in queue],[(cid,'held','Need MMC confirmation')])
+        titles=[item['title'] for item in self.client.get('/api/v1/trainings?period=all').json()['items']]
+        self.assertNotIn('Held GP session',titles)
+        published=self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'publish','reason':'Source confirmed on the provider page'})
+        self.assertEqual(published.status_code,200,published.text)
+        self.assertEqual(self.client.get('/api/v1/admin/candidates').json()['items'],[])
+        titles=[item['title'] for item in self.client.get('/api/v1/trainings?period=all').json()['items']]
+        self.assertIn('Held GP session',titles)
 
     def add_course(self, key, **fields):
         data={**sample(fields.pop('title', 'GP training')), **fields}
@@ -223,7 +257,11 @@ class PortalTests(unittest.TestCase):
             migrate_schema(db)
             stored=db.get(Course,self.course)
             self.assertEqual((stored.title, stored.city), ('Backfilled GP','Johor Bahru'))
-            self.assertEqual(max(v.version for v in db.query(SchemaVersion).all()), 2)
+            self.assertEqual(max(v.version for v in db.query(SchemaVersion).all()), 4)
+            self.assertIn('review_reason', {c['name'] for c in inspect(db.get_bind()).get_columns('course_candidates')})
+            tables = inspect(db.get_bind()).get_table_names()
+            self.assertIn('digest_preferences', tables)
+            self.assertIn('affiliation_certificates', tables)
 
     def test_catalogue_filters_use_columns_not_json(self):
         with self.Session() as db:
