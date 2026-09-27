@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -89,6 +90,14 @@ class DigestCertificateTests(unittest.TestCase):
         self.assertTrue(body['items'])
         self.assertEqual(body['items'][0]['city'], 'Kuala Lumpur')
         self.assertIn('advisory', body)
+        with self.Session() as db:
+            hidden = fill_course(Course(source_key='cancelled-upcoming'), sample('Cancelled GP', start='2099-07-01'))
+            hidden.publication_status = 'cancelled'
+            hidden.cancellation_status = 'cancelled'
+            db.add(hidden)
+            db.commit()
+        skipped = self.client.get('/api/v1/me/suggestions').json()
+        self.assertFalse(any(item['title'] == 'Cancelled GP' for item in skipped['items']))
 
     def test_digest_opt_in_and_send(self):
         got = self.client.get('/api/v1/me/digest')
@@ -119,11 +128,46 @@ class DigestCertificateTests(unittest.TestCase):
         with self.Session() as db:
             token = db.get(DigestPreference, self.doc_id).unsubscribe_token
         bare = TestClient(app)
-        result = bare.get('/api/v1/digest/unsubscribe', params={'token': token})
-        self.assertEqual(result.status_code, 200)
-        self.assertFalse(result.json()['opted_in'])
+        html = bare.get('/api/v1/digest/unsubscribe', params={'token': token})
+        self.assertEqual(html.status_code, 200)
+        self.assertIn('text/html', html.headers.get('content-type', ''))
+        self.assertIn('You are unsubscribed', html.text)
         self.client.post('/api/v1/auth/login', json={'email': 'doc@example.com', 'password': PASSWORD})
         self.assertFalse(self.client.get('/api/v1/me/digest').json()['opted_in'])
+        json_again = TestClient(app).get(
+            '/api/v1/digest/unsubscribe',
+            params={'token': token},
+            headers={'Accept': 'application/json'},
+        )
+        self.assertEqual(json_again.status_code, 200)
+        self.assertFalse(json_again.json()['opted_in'])
+
+    def test_digest_failure_uses_bounded_backoff(self):
+        self.client.patch('/api/v1/me/digest', json={'opted_in': True})
+        self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': PASSWORD})
+        with patch('digest.send_via_provider', return_value={'status': 'failed', 'provider_message_id': None, 'error': 'SMTP down'}):
+            first = self.client.post('/api/v1/admin/digests/run')
+            self.assertEqual(first.status_code, 200, first.text)
+            self.assertEqual(first.json()['failed'], 1)
+            second = self.client.post('/api/v1/admin/digests/run')
+            self.assertEqual(second.json()['failed'], 0)
+            self.assertEqual(second.json()['sent'], 0)
+        from digest import backoff_seconds
+        from portal_models import DigestPreference
+        with self.Session() as db:
+            pref = db.get(DigestPreference, self.doc_id)
+            self.assertEqual(pref.fail_count, 1)
+            self.assertGreater(pref.next_retry_at, time.time())
+            self.assertEqual(backoff_seconds(1), 15 * 60)
+            self.assertEqual(backoff_seconds(8), 24 * 3600)
+            pref.next_retry_at = time.time() - 1
+            db.commit()
+        with patch('digest.send_via_provider', return_value={'status': 'failed', 'provider_message_id': None, 'error': 'SMTP down'}):
+            retried = self.client.post('/api/v1/admin/digests/run')
+        self.assertEqual(retried.json()['failed'], 1)
+        with self.Session() as db:
+            pref = db.get(DigestPreference, self.doc_id)
+            self.assertEqual(pref.fail_count, 2)
 
     def test_certificate_issue_and_download(self):
         with self.Session() as db:
@@ -155,6 +199,8 @@ class DigestCertificateTests(unittest.TestCase):
         self.assertIn('CareCredits', download.text)
         self.assertIn('not an mmc', download.text.lower())
         self.assertIn(str(body['document_hash']), download.text)
+        self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': PASSWORD})
+        self.assertEqual(self.client.get(body['download_path']).status_code, 404)
 
 
 if __name__ == '__main__':

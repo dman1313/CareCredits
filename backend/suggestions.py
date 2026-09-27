@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from portal_models import Account, Course, Record
+from portal_models import Account, Course, Record, listed_filter
 
 
 TZ = ZoneInfo('Asia/Kuala_Lumpur')
@@ -26,7 +26,7 @@ def suggestions_for(db: Session, account: Account, limit: int = 10) -> dict:
         for r in db.query(Record).filter_by(account_id=account.id, signed_up=True).all()
     }
     skip = attended_ids | signed_ids
-    base = db.query(Course).filter(Course.start_date != None, Course.start_date >= today)
+    base = db.query(Course).filter(listed_filter(), Course.start_date != None, Course.start_date >= today)
     city_rows = []
     if account.city:
         city_rows = (

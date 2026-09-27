@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent } from 'react';
+import { FormEvent, useEffect, useRef } from 'react';
 import { Check, ExternalLink, X } from 'lucide-react';
 import {
   Course,
@@ -22,6 +22,8 @@ export function TrainingDetail({
   onClose,
   onEdit,
   onSave,
+  canCancel = false,
+  onCancel,
 }: {
   course: Course;
   edit: RecordData;
@@ -31,11 +33,42 @@ export function TrainingDetail({
   onClose: () => void;
   onEdit: (next: RecordData) => void;
   onSave: (event: FormEvent) => void;
+  canCancel?: boolean;
+  onCancel?: () => void;
 }) {
   const attendable = !course.start_date || course.start_date <= todayLocal();
+  const dialogRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab' || !dialogRef.current) return;
+      const items = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>('button:not(:disabled),a,input,textarea,select'),
+      );
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      previous?.focus();
+    };
+  }, [onClose]);
   return (
     <div className="modal-shade" onClick={onClose}>
       <section
+        ref={dialogRef}
         className="modal"
         role="dialog"
         aria-modal="true"
@@ -55,7 +88,11 @@ export function TrainingDetail({
         <div className="detail-grid">
           <div>
             <small>Date</small>
-            <strong>{formatDate(course.start_date)}</strong>
+            <strong>
+              {formatDate(course.start_date)}
+              {course.end_date ? ` – ${formatDate(course.end_date)}` : ''}
+              {course.timezone ? ` · ${course.timezone}` : ''}
+            </strong>
           </div>
           <div>
             <small>Location</small>
@@ -77,9 +114,24 @@ export function TrainingDetail({
           </div>
           <div>
             <small>Prerequisites</small>
-            <strong>{course.prerequisites || 'Unknown'}</strong>
+            <strong>
+              {course.prerequisites || 'Unknown — source does not establish prerequisites'}
+            </strong>
           </div>
         </div>
+        {(course.field_evidence?.length || Object.keys(course.evidence || {}).length) ? (
+          <dl className="evidence">
+            {(course.field_evidence?.length
+              ? course.field_evidence.map((row) => [row.field_name, row.excerpt] as const)
+              : Object.entries(course.evidence)
+            ).map(([field, excerpt]) => (
+              <div key={field}>
+                <dt>{field.replaceAll('_', ' ')}</dt>
+                <dd>{excerpt}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
         <div className="button-row">
           {course.registration_url && (
             <a className="secondary" href={course.registration_url} target="_blank" rel="noreferrer">
@@ -89,6 +141,12 @@ export function TrainingDetail({
           <a className="text-btn" href={course.source_url} target="_blank" rel="noreferrer">
             View original source <ExternalLink size={14} />
           </a>
+          {canCancel && onCancel && course.publication_status !== 'cancelled' ? (
+            <button type="button" className="text-btn" disabled={saving} onClick={onCancel}>
+              Cancel published session
+            </button>
+          ) : null}
+          {course.publication_status === 'cancelled' ? <span className="small-note">Session cancelled; personal records are kept.</span> : null}
         </div>
         <p className="small-note">
           Confirm details and CPD eligibility with the provider. Opening a link does not register you.

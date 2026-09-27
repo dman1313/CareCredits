@@ -32,7 +32,10 @@ export default function PublicProfile() {
   useEffect(load, [slug]);
 
   return (
-    <main className="public-page">
+    <main id="public-profile" className="public-page">
+      <a className="skip-link" href="#public-profile">
+        Skip to public profile
+      </a>
       <a href="/">
         <Brand />
       </a>

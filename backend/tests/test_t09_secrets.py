@@ -38,7 +38,7 @@ class SecretSurfaceTests(unittest.TestCase):
         built = FRONTEND / '.next'
         if not built.exists():
             self.skipTest('No built frontend assets in this checkout')
-        needles = ('TAVILY_API_KEY', 'MODEL_API_KEY', 'SCRAPER_SERVICE_TOKEN', 'POSTGRES_PASSWORD', 'GOOGLE_CLIENT_SECRET')
+        needles = ('TAVILY_API_KEY', 'MODEL_API_KEY', 'TYPESAFE_API_KEY', 'SCRAPER_SERVICE_TOKEN', 'POSTGRES_PASSWORD', 'GOOGLE_CLIENT_SECRET')
         hits = []
         for path in built.rglob('*'):
             if not path.is_file() or path.suffix.lower() not in {'.js', '.json', '.html', '.map'}:

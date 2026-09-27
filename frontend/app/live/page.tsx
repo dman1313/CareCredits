@@ -29,7 +29,7 @@ const nav = [
   [Compass, 'Discover'],
   [CalendarDays, 'Events'],
   [FileText, 'Certificates'],
-  [ShieldCheck, 'APC Status'],
+  [ShieldCheck, 'About credits'],
 ] as const;
 
 const workspace = [
@@ -84,6 +84,7 @@ export default function LiveSearch() {
   const [suggestions, setSuggestions] = useState<{ id: string; title: string; start_date?: string | null; city?: string | null; reason?: string }[]>([]);
   const [certBusy, setCertBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [opening, setOpening] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -119,18 +120,25 @@ export default function LiveSearch() {
     }
   }
 
+  async function loadWorkspace() {
+    await search();
+    try {
+      const [nextProgress, digest, nextSuggestions] = await Promise.all([
+        api('/me/progress'),
+        api('/me/digest'),
+        api('/me/suggestions'),
+      ]);
+      setProgress(nextProgress);
+      setDigestOptIn(!!digest.opted_in);
+      setSuggestions(nextSuggestions.items || []);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   useEffect(() => {
     if (!user) return;
-    search('', '').catch(() => {});
-    api('/me/progress')
-      .then(setProgress)
-      .catch(() => {});
-    api('/me/digest')
-      .then((d) => setDigestOptIn(!!d.opted_in))
-      .catch(() => {});
-    api('/me/suggestions')
-      .then((d) => setSuggestions(d.items || []))
-      .catch(() => {});
+    loadWorkspace().catch(() => {});
   }, [user]);
 
   async function toggleDigest(next: boolean) {
@@ -200,12 +208,22 @@ export default function LiveSearch() {
     }
   }
 
-  function openCourse(course: Course) {
+  async function openCourse(course: Course) {
+    setError('');
+    setOpening(true);
     setSelected(course);
     setEdit({ ...emptyRecord, ...(course.record || {}) });
-    api('/me/trainings/' + course.id + '/history')
-      .then((d) => setHistory(d.items || []))
-      .catch(() => setHistory([]));
+    try {
+      const current = await api('/trainings/' + course.id);
+      setSelected(current);
+      setEdit({ ...emptyRecord, ...(current.record || {}) });
+      const hist = await api('/me/trainings/' + course.id + '/history').catch(() => ({ items: [] }));
+      setHistory(hist.items || []);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setOpening(false);
+    }
   }
 
   if (booting) {
@@ -398,9 +416,14 @@ export default function LiveSearch() {
             {error && (
               <p role="alert" className="alert">
                 {error}{' '}
-                <button className="text-link" type="button" onClick={() => search()}>
+                <button className="text-link" type="button" onClick={() => loadWorkspace()}>
                   Retry
                 </button>
+              </p>
+            )}
+            {opening && (
+              <p className="alert" role="status" aria-busy="true">
+                Opening training details…
               </p>
             )}
             {tab === 'Overview' && (
@@ -409,7 +432,7 @@ export default function LiveSearch() {
                   <div className="hero-copy">
                     <span className="eyebrow">MALAYSIA CPD</span>
                     <h1>Your learning, in one place</h1>
-                    <p>Search accredited training, keep a personal record, and open the provider page when you are ready.</p>
+                    <p>Search the owned Malaysia CPD catalogue, keep a personal record, and open the provider page when you are ready.</p>
                   </div>
                   <div className="progress-panel">
                     <div className="ring">
@@ -435,7 +458,7 @@ export default function LiveSearch() {
                         search();
                       }}
                     >
-                      Find eligible events <ChevronRight />
+                      Find catalogue events <ChevronRight />
                     </button>
                   </div>
                 </section>
@@ -550,6 +573,20 @@ export default function LiveSearch() {
                     </div>
                   </div>
                 </section>
+                {tab === 'About credits' && (
+                  <section className="card">
+                    <div className="card-heading">
+                      <div>
+                        <span className="heading-icon">▣</span>
+                        <h2>About recorded credits</h2>
+                      </div>
+                    </div>
+                    <p className="empty-copy">
+                      CareCredits does not decide APC, MMC, or licence renewal. Points you record here are
+                      self-reported and are not independently accredited.
+                    </p>
+                  </section>
+                )}
                 {tab === 'Certificates' && (
                   <section className="card">
                     <div className="card-heading">

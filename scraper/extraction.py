@@ -30,9 +30,13 @@ MONTHS = {
 
 
 def model_caps():
+    raw_in = (os.getenv('MODEL_MAX_INPUT_CHARS') or '').strip()
+    raw_out = (os.getenv('MODEL_MAX_OUTPUT_TOKENS') or '').strip()
+    if not raw_in or not raw_out:
+        raise ExtractionError('MODEL_MAX_INPUT_CHARS and MODEL_MAX_OUTPUT_TOKENS must be set before a model job.')
     try:
-        max_in = int(os.getenv('MODEL_MAX_INPUT_CHARS') or 12000)
-        max_out = int(os.getenv('MODEL_MAX_OUTPUT_TOKENS') or 4000)
+        max_in = int(raw_in)
+        max_out = int(raw_out)
     except ValueError as exc:
         raise ExtractionError('MODEL_MAX_INPUT_CHARS and MODEL_MAX_OUTPUT_TOKENS must be positive integers.') from exc
     if max_in < 1 or max_out < 1:
@@ -195,6 +199,9 @@ def heuristic_extract(source) -> list[dict]:
         'provider': provider[:200],
         'description': '',
         'start_date': start_date,
+        'end_date': None,
+        'timezone': None,
+        'venue': None,
         'city': city,
         'state': None,
         'country': 'MY',
@@ -229,7 +236,9 @@ def extract_training(source, client=None):
         return []
     fields = {
         'title': 'string', 'provider': 'string', 'description': 'string',
-        'start_date': 'YYYY-MM-DD or null', 'city': 'string or null', 'state': 'string or null',
+        'start_date': 'YYYY-MM-DD or null', 'end_date': 'YYYY-MM-DD or null',
+        'timezone': 'IANA timezone or null', 'venue': 'string or null',
+        'city': 'string or null', 'state': 'string or null',
         'country': 'MY only', 'mode': 'in_person|online|hybrid', 'fee': 'number or null',
         'currency': '3-letter currency or null', 'points': 'number or null', 'credit_label': 'original label or null',
         'difficulty': 'beginner|intermediate|advanced|null', 'prerequisites': 'string or null',

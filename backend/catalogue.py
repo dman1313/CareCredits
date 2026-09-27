@@ -4,9 +4,41 @@ from __future__ import annotations
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from portal_models import Candidate, Course, Job, uid, fill_course, CANDIDATE_SCHEMA_VERSION
+from portal_models import Candidate, Course, Job, uid, fill_course, CANDIDATE_SCHEMA_VERSION, FILTER_FIELDS
 from security import digest
 from shared.contracts import Training, validate_evidence
+
+REFRESH_FIELDS = FILTER_FIELDS + ('prerequisites', 'registration_url')
+
+
+def training_payload(data: dict) -> dict:
+    return {key: value for key, value in (data or {}).items() if not str(key).startswith('_')}
+
+
+def resolve_review_course(db: Session, candidate: Candidate) -> Course | None:
+    data = candidate.data or {}
+    matched_id = candidate.resulting_course_id or data.get('_matched_course_id')
+    if matched_id:
+        course = db.get(Course, matched_id)
+        if course:
+            return course
+    return exact_course(db, candidate.source_key)
+
+
+def course_compare_value(course: Course, field: str):
+    if field in ('prerequisites', 'registration_url'):
+        return (course.data or {}).get(field)
+    return getattr(course, field, None)
+
+
+def refresh_diff(course: Course, data: dict) -> list[dict]:
+    changes = []
+    for field in REFRESH_FIELDS:
+        published = course_compare_value(course, field)
+        proposed = data.get(field)
+        if published != proposed:
+            changes.append({'field': field, 'published': published, 'proposed': proposed})
+    return changes
 
 
 def source_key(data: dict) -> str:
@@ -143,7 +175,12 @@ def link_existing(db: Session, account_id: str, training: Training, course: Cour
     candidate = Candidate(
         job_id=job_id,
         source_key=key,
-        data={**data, '_judgment': judgment, '_matched_course_id': course.id},
+        data={
+            **data,
+            '_judgment': judgment,
+            '_matched_course_id': course.id,
+            '_refresh_diff': refresh_diff(course, data),
+        },
         status='held',
         schema_version=CANDIDATE_SCHEMA_VERSION,
         resulting_course_id=course.id,

@@ -71,6 +71,7 @@ export default function Home() {
   const [filters, setFilters] = useState<DiscoverFilters>(initialFilters);
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<Course | null>(null);
+  const [opening, setOpening] = useState(false);
   const [edit, setEdit] = useState<RecordData>(emptyRecord);
   const [saving, setSaving] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -190,38 +191,6 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [user, tab, refreshOperator]);
 
-  useEffect(() => {
-    if (!selected) return;
-    const previous = document.activeElement as HTMLElement;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setSelected(null);
-        return;
-      }
-      if (e.key === 'Tab') {
-        const items = Array.from(
-          document.querySelectorAll<HTMLElement>(
-            '.modal button:not(:disabled),.modal a,.modal input,.modal textarea,.modal select',
-          ),
-        );
-        const first = items[0];
-        const last = items[items.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last?.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first?.focus();
-        }
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      previous?.focus();
-    };
-  }, [selected]);
-
   function navigate(next: WorkspaceTab) {
     setTab(next);
     setNavOpen(false);
@@ -230,6 +199,8 @@ export default function Home() {
   }
 
   async function openCourse(course: Course) {
+    setOpening(true);
+    setError('');
     try {
       const current = await api('/trainings/' + course.id);
       setSelected(current);
@@ -238,6 +209,8 @@ export default function Home() {
       setHistory(hist.items || []);
     } catch (e) {
       fail(e, () => openCourse(course));
+    } finally {
+      setOpening(false);
     }
   }
 
@@ -483,6 +456,11 @@ export default function Home() {
               </button>
             </div>
           )}
+          {opening && (
+            <p className="alert" role="status" aria-busy="true">
+              Opening training details…
+            </p>
+          )}
           {tab === 'Overview' && (
             <OverviewPanel
               progress={progress}
@@ -604,6 +582,20 @@ export default function Home() {
           onClose={() => setSelected(null)}
           onEdit={setEdit}
           onSave={saveRecord}
+          canCancel={user?.role === 'operator'}
+          onCancel={async () => {
+            setSaving(true);
+            try {
+              await api('/admin/trainings/' + selected.id + '/cancel', { method: 'POST' });
+              await loadCourses();
+              setSelected(null);
+              setNotice('Session cancelled. Personal records were kept.');
+            } catch (e) {
+              fail(e, () => {});
+            } finally {
+              setSaving(false);
+            }
+          }}
         />
       )}
     </div>

@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import and_, or_, update, text
 from sqlalchemy.exc import IntegrityError
@@ -24,13 +24,14 @@ from portal_models import (
     Account, LoginSession, Course, Record, RecordHistory, Job, Candidate, Audit, SchemaVersion,
     DigestPreference, AffiliationCertificate, FieldEvidence, SourceDocument,
     SCHEMA_VERSION, FILTER_FIELDS, fill_course, CANDIDATE_SCHEMA_VERSION,
-    counts_toward_cpd, purge_expired_source_text,
+    counts_toward_cpd, purge_expired_source_text, listed_filter,
 )
 from security import current_user, operator, worker, password_hash, password_matches, digest, throttle
 from shared.contracts import Training, validate_evidence
 from catalogue import (
     source_key, course_public, exact_course, near_neighbours,
     save_new_candidate, link_existing, publish_new_event,
+    training_payload, resolve_review_course,
 )
 from jev import decide_existence, JevError, api_key as typesafe_key
 from schedule import enqueue_daily, load_topics, local_today
@@ -130,6 +131,21 @@ def migrate_schema(db):
         _add_candidate_schema_version(db)
         db.add(SchemaVersion(version=14))
         current = 14
+        db.commit()
+    if current == 14:
+        _add_publication_status(db)
+        db.add(SchemaVersion(version=15))
+        current = 15
+        db.commit()
+    if current == 15:
+        _add_session_schedule(db)
+        db.add(SchemaVersion(version=16))
+        current = 16
+        db.commit()
+    if current == 16:
+        _add_digest_backoff(db)
+        db.add(SchemaVersion(version=17))
+        current = 17
         db.commit()
     if current != SCHEMA_VERSION:
         raise RuntimeError('Unsupported portal schema. Apply the matching migration.')
@@ -278,6 +294,35 @@ def _add_candidate_schema_version(db):
     candidates = {column['name'] for column in inspect(db.get_bind()).get_columns('course_candidates')}
     if 'schema_version' not in candidates:
         db.execute(text('ALTER TABLE course_candidates ADD COLUMN schema_version INTEGER DEFAULT 1 NOT NULL'))
+    db.commit()
+
+
+def _add_publication_status(db):
+    courses = {column['name'] for column in inspect(db.get_bind()).get_columns('courses')}
+    if 'publication_status' not in courses:
+        db.execute(text("ALTER TABLE courses ADD COLUMN publication_status VARCHAR DEFAULT 'published' NOT NULL"))
+    if 'cancellation_status' not in courses:
+        db.execute(text("ALTER TABLE courses ADD COLUMN cancellation_status VARCHAR DEFAULT 'active' NOT NULL"))
+    db.commit()
+
+
+def _add_session_schedule(db):
+    courses = {column['name'] for column in inspect(db.get_bind()).get_columns('courses')}
+    if 'end_date' not in courses:
+        db.execute(text('ALTER TABLE courses ADD COLUMN end_date VARCHAR'))
+    if 'timezone' not in courses:
+        db.execute(text('ALTER TABLE courses ADD COLUMN timezone VARCHAR'))
+    if 'venue' not in courses:
+        db.execute(text('ALTER TABLE courses ADD COLUMN venue VARCHAR'))
+    db.commit()
+
+
+def _add_digest_backoff(db):
+    prefs = {column['name'] for column in inspect(db.get_bind()).get_columns('digest_preferences')}
+    if 'fail_count' not in prefs:
+        db.execute(text('ALTER TABLE digest_preferences ADD COLUMN fail_count INTEGER DEFAULT 0 NOT NULL'))
+    if 'next_retry_at' not in prefs:
+        db.execute(text('ALTER TABLE digest_preferences ADD COLUMN next_retry_at FLOAT'))
     db.commit()
 
 
@@ -431,8 +476,9 @@ class CompleteJob(BaseModel):
 
 
 REVIEW_FIELDS = (
-    'title', 'provider', 'description', 'start_date', 'city', 'state', 'mode',
-    'fee', 'currency', 'points', 'credit_label', 'difficulty', 'prerequisites', 'registration_url',
+    'title', 'provider', 'description', 'start_date', 'end_date', 'timezone', 'venue',
+    'city', 'state', 'mode', 'fee', 'currency', 'points', 'credit_label', 'difficulty',
+    'prerequisites', 'registration_url',
 )
 
 
@@ -471,17 +517,26 @@ def record_json(record):
     }
 
 
-def course_json(course, record=None):
+def course_json(course, record=None, field_evidence=None):
     # Full source text and model configuration stay in operator review only.
     data = {k: v for k, v in (course.data or {}).items() if k not in ('source_text', 'model_weights_url', 'model_license_url')}
     for field in FILTER_FIELDS:
         data[field] = getattr(course, field)
+    evidence_rows = []
+    if field_evidence is not None:
+        evidence_rows = [
+            {'field_name': row.field_name, 'excerpt': row.excerpt, 'reviewed_at': row.reviewed_at}
+            for row in field_evidence
+        ]
     return {
         'id': course.id,
         **data,
         'demo': course.demo,
         'verification_status': course.verification_status or 'unverified',
+        'publication_status': course.publication_status or 'published',
+        'cancellation_status': course.cancellation_status or 'active',
         'reviewed_at': course.reviewed_at,
+        'field_evidence': evidence_rows,
         'record': record_json(record),
     }
 
@@ -526,6 +581,23 @@ def config():
         'demo': os.getenv('DEMO_MODE') == 'true',
         'signup_enabled': os.getenv('ALLOW_SIGNUP') == 'true',
         'oauth_google': google_oauth(),
+    }
+
+
+@app.get('/api/v1/admin/integrations')
+def integrations(user=Depends(operator)):
+    weights = (os.getenv('MODEL_WEIGHTS_URL') or '').strip() or None
+    license_url = (os.getenv('MODEL_LICENSE_URL') or '').strip() or None
+    return {
+        'model_id': (os.getenv('MODEL_ID') or '').strip() or None,
+        'model_weights_url': weights,
+        'model_license_url': license_url,
+        'model_open_weight_confirmed': os.getenv('MODEL_OPEN_WEIGHT_CONFIRMED') == 'true',
+        'model_caps_configured': bool((os.getenv('MODEL_MAX_INPUT_CHARS') or '').strip() and (os.getenv('MODEL_MAX_OUTPUT_TOKENS') or '').strip()),
+        'model_key_configured': bool((os.getenv('MODEL_API_KEY') or '').strip()),
+        'typesafe_configured': bool(typesafe_key()),
+        'scraper_token_configured': bool((os.getenv('SCRAPER_SERVICE_TOKEN') or '').strip()),
+        'google_oauth': google_oauth(),
     }
 
 
@@ -644,7 +716,7 @@ def trainings(q: str = '', city: str = '', state: str = '', mode: str = '', diff
         raise HTTPException(422, 'date_from cannot be after date_to.')
     if any(v is not None and (not math.isfinite(v) or v < 0) for v in (fee_limit, min_points)):
         raise HTTPException(422, 'Invalid price or points filter.')
-    query = db.query(Course)
+    query = db.query(Course).filter(listed_filter())
     if q:
         like = _contains(Course.title, q) | _contains(Course.provider, q) | _contains(Course.description, q)
         query = query.filter(like)
@@ -724,7 +796,11 @@ def detail(course_id: str, user=Depends(current_user), db: Session = Depends(get
     course = db.get(Course, course_id)
     if not course:
         raise HTTPException(404, 'Training not found.')
-    return course_json(course, db.query(Record).filter_by(account_id=user.id, course_id=course_id).first())
+    return course_json(
+        course,
+        db.query(Record).filter_by(account_id=user.id, course_id=course_id).first(),
+        db.query(FieldEvidence).filter_by(course_id=course_id).all(),
+    )
 
 
 @app.put('/api/v1/me/trainings/{course_id}')
@@ -904,14 +980,37 @@ def download_certificate(certificate_id: str, user=Depends(current_user), db: Se
 
 
 @app.get('/api/v1/digest/unsubscribe')
-def digest_unsubscribe(token: str, db: Session = Depends(get_db)):
+def digest_unsubscribe(token: str, request: Request, db: Session = Depends(get_db)):
     pref = db.query(DigestPreference).filter_by(unsubscribe_token=token).first()
     if not pref:
         raise HTTPException(404, 'Unsubscribe link is invalid or expired.')
     pref.opted_in = False
     pref.unsubscribed_at = time.time()
     db.commit()
-    return {'opted_in': False, 'message': 'You are unsubscribed from CareCredits digests.'}
+    payload = {'opted_in': False, 'message': 'You are unsubscribed from CareCredits digests.'}
+    accept = (request.headers.get('accept') or '').lower()
+    if 'application/json' in accept and 'text/html' not in accept:
+        return payload
+    return HTMLResponse(
+        """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Unsubscribed — CareCredits</title>
+<style>
+  body { font-family: Georgia, serif; color: #10233f; max-width: 36rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.6rem; }
+  p { line-height: 1.5; color: #3d536b; }
+</style>
+</head>
+<body>
+  <h1>You are unsubscribed</h1>
+  <p>CareCredits will not send another biweekly digest unless you opt in again from your signed-in portal.</p>
+  <p>This page does not require a CareCredits account. No catalogue search or Tavily call ran.</p>
+</body>
+</html>"""
+    )
 
 
 @app.post('/api/v1/admin/digests/run')
@@ -1077,11 +1176,11 @@ def review(candidate_id: str, body: Review, user=Depends(operator), db: Session 
             data['evidence'] = evidence
             candidate.data = data
         try:
-            training = validate_evidence(Training(**data))
+            training = validate_evidence(Training(**training_payload(data)))
         except ValueError:
             raise HTTPException(422, 'Source evidence is incomplete. Reject or ingest a better source.')
         payload = training.model_dump(mode='json')
-        course = db.query(Course).filter_by(source_key=candidate.source_key).first()
+        course = resolve_review_course(db, candidate)
         if course:
             fill_course(course, payload)
         else:
@@ -1122,6 +1221,19 @@ def review(candidate_id: str, body: Review, user=Depends(operator), db: Session 
         db.rollback()
         raise HTTPException(409, 'Another review published this session. Refresh.')
     return {'status': candidate.status, 'reason': candidate.review_reason, 'version': candidate.version, 'resulting_course_id': candidate.resulting_course_id}
+
+
+@app.post('/api/v1/admin/trainings/{course_id}/cancel')
+def cancel_training(course_id: str, user=Depends(operator), db: Session = Depends(get_db)):
+    course = db.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, 'Training not found.')
+    course.publication_status = 'cancelled'
+    course.cancellation_status = 'cancelled'
+    course.updated_at = time.time()
+    audit(db, user.id, 'course_cancelled', course.id, {'publication_status': 'cancelled'})
+    db.commit()
+    return course_json(course)
 
 
 @app.post('/internal/v1/jobs/claim', dependencies=[Depends(worker)])

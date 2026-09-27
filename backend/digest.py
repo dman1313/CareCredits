@@ -9,11 +9,12 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from portal_models import Account, Course, DigestPreference, DigestSend, Record, uid, counts_toward_cpd
+from portal_models import Account, Course, DigestPreference, DigestSend, Record, uid, counts_toward_cpd, listed_filter
 from security import digest as hash_digest
 
 
 TZ = ZoneInfo('Asia/Kuala_Lumpur')
+BACKOFF_SECONDS = (15 * 60, 60 * 60, 4 * 3600, 12 * 3600, 24 * 3600)
 DISCLAIMER = (
     'CareCredits digests summarise catalogue listings and your self-reported progress. '
     'They are not MMC, MOH, or APC compliance statements.'
@@ -22,6 +23,12 @@ DISCLAIMER = (
 
 def local_now() -> datetime:
     return datetime.now(TZ)
+
+
+def backoff_seconds(fail_count: int) -> int:
+    if fail_count < 1:
+        return BACKOFF_SECONDS[0]
+    return BACKOFF_SECONDS[min(fail_count, len(BACKOFF_SECONDS)) - 1]
 
 
 def progress_snapshot(db: Session, account_id: str, year: int | None = None) -> dict:
@@ -47,7 +54,7 @@ def progress_snapshot(db: Session, account_id: str, year: int | None = None) -> 
 
 def upcoming_sessions(db: Session, city: str | None, limit: int = 8) -> list[dict]:
     today = local_now().date().isoformat()
-    query = db.query(Course).filter(Course.start_date != None, Course.start_date >= today)
+    query = db.query(Course).filter(listed_filter(), Course.start_date != None, Course.start_date >= today)
     if city:
         same_city = query.filter(Course.city == city).order_by(Course.start_date).limit(limit).all()
         if same_city:
@@ -176,13 +183,17 @@ def due_preferences(db: Session, now: float | None = None) -> list[DigestPrefere
     rows = db.query(DigestPreference).filter_by(opted_in=True).all()
     due = []
     for pref in rows:
+        retry_at = getattr(pref, 'next_retry_at', None)
+        if retry_at is not None and now < retry_at:
+            continue
         cadence = max(1, pref.cadence_days or 14) * 86400
         if pref.last_sent_at is None or (now - pref.last_sent_at) >= cadence:
             due.append(pref)
     return due
 
 
-def send_digest(db: Session, account: Account, pref: DigestPreference, public_base: str) -> DigestSend:
+def send_digest(db: Session, account: Account, pref: DigestPreference, public_base: str, now: float | None = None) -> DigestSend:
+    now = now if now is not None else time.time()
     payload = compose_digest(db, account)
     unsub = f"{public_base.rstrip('/')}/api/v1/digest/unsubscribe?token={pref.unsubscribe_token}"
     body = render_text(payload, unsub)
@@ -199,21 +210,27 @@ def send_digest(db: Session, account: Account, pref: DigestPreference, public_ba
     )
     db.add(row)
     if result['status'] == 'sent':
-        pref.last_sent_at = time.time()
+        pref.last_sent_at = now
+        pref.fail_count = 0
+        pref.next_retry_at = None
+    else:
+        pref.fail_count = (pref.fail_count or 0) + 1
+        pref.next_retry_at = now + backoff_seconds(pref.fail_count)
     db.commit()
     db.refresh(row)
     return row
 
 
-def run_due_digests(db: Session, public_base: str | None = None) -> dict:
+def run_due_digests(db: Session, public_base: str | None = None, now: float | None = None) -> dict:
     base = public_base or os.getenv('PUBLIC_API_BASE') or 'http://127.0.0.1:8000'
+    now = now if now is not None else time.time()
     sent = 0
     failed = 0
-    for pref in due_preferences(db):
+    for pref in due_preferences(db, now):
         account = db.get(Account, pref.account_id)
         if not account or account.role != 'doctor':
             continue
-        row = send_digest(db, account, pref, base)
+        row = send_digest(db, account, pref, base, now=now)
         if row.status == 'sent':
             sent += 1
         else:

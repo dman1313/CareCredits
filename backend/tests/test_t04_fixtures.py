@@ -260,6 +260,8 @@ class T04FixtureEvaluation(unittest.TestCase):
             'MODEL_LICENSE_URL': 'https://example.org/license',
             'MODEL_OPEN_WEIGHT_CONFIRMED': 'true',
             'MODEL_BASE_URL': 'https://example.org/v1',
+            'MODEL_MAX_INPUT_CHARS': '12000',
+            'MODEL_MAX_OUTPUT_TOKENS': '4000',
         })
         self.env.start()
         self.addCleanup(self.env.stop)
@@ -278,8 +280,8 @@ class T04FixtureEvaluation(unittest.TestCase):
                 **case['row'],
                 'evidence': {key: text for key in ['title', 'provider', 'mode', 'country'] + [
                     field for field in (
-                        'start_date', 'city', 'state', 'fee', 'currency', 'points', 'credit_label',
-                        'difficulty', 'prerequisites', 'registration_url',
+                        'start_date', 'end_date', 'timezone', 'venue', 'city', 'state', 'fee', 'currency',
+                        'points', 'credit_label', 'difficulty', 'prerequisites', 'registration_url',
                     ) if case['row'].get(field) is not None
                 ]},
             }

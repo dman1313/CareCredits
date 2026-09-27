@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, MutableRefObject, useState } from 'react';
+import { FormEvent, MutableRefObject, useEffect, useState } from 'react';
 import { Check, ExternalLink, Loader2, Pause, Sparkles } from 'lucide-react';
 import { Candidate, Job, feeLabel, formatDate } from '@/lib/portal';
 import { Empty } from '@/components/CourseList';
@@ -45,6 +45,22 @@ export function IngestionPanel({
   ) => void;
   onDailyScrape?: () => void;
 }) {
+  const [integrations, setIntegrations] = useState<{
+    model_id: string | null;
+    model_weights_url: string | null;
+    model_license_url: string | null;
+    model_open_weight_confirmed: boolean;
+    model_caps_configured: boolean;
+    model_key_configured: boolean;
+    typesafe_configured: boolean;
+    scraper_token_configured: boolean;
+  } | null>(null);
+  useEffect(() => {
+    fetch('/api/v1/admin/integrations', { credentials: 'include', headers: { 'X-Care-Client': '1' } })
+      .then((response) => (response.ok ? response.json() : null))
+      .then(setIntegrations)
+      .catch(() => setIntegrations(null));
+  }, []);
   return (
     <>
       <div className="page-title">
@@ -99,6 +115,33 @@ export function IngestionPanel({
           A live run uses Tavily Search and Extract for up to five sources. Missing Tavily credentials fail honestly.
           Structured candidates still need a configured open-weight model.
         </p>
+        {integrations ? (
+          <p className="small-note" data-testid="integration-status">
+            Model {integrations.model_id || 'not selected'}
+            {integrations.model_open_weight_confirmed ? ' · open-weight confirmed' : ' · open-weight not confirmed'}
+            {integrations.model_key_configured ? ' · key present' : ' · key missing'}
+            {integrations.model_caps_configured ? ' · caps set' : ' · caps missing'}
+            {integrations.typesafe_configured ? ' · Jev ready' : ' · Jev key missing'}
+            {integrations.scraper_token_configured ? ' · scraper token set' : ' · scraper token missing'}.
+            {integrations.model_weights_url ? (
+              <>
+                {' '}
+                <a href={integrations.model_weights_url} target="_blank" rel="noreferrer">
+                  Weights
+                </a>
+              </>
+            ) : null}
+            {integrations.model_license_url ? (
+              <>
+                {' '}
+                <a href={integrations.model_license_url} target="_blank" rel="noreferrer">
+                  Licence
+                </a>
+              </>
+            ) : null}{' '}
+            Secrets stay on the server.
+          </p>
+        ) : null}
       </form>
       <div className="section-heading">
         <h2>Discovery jobs</h2>
@@ -178,8 +221,44 @@ function CandidateCard({
   ) => void;
 }) {
   const [reason, setReason] = useState(candidate.reason || '');
-  const [title, setTitle] = useState(candidate.data.title);
-  const [excerpt, setExcerpt] = useState(candidate.data.evidence?.title || '');
+  const [edits, setEdits] = useState<Record<string, string>>({
+    title: candidate.data.title || '',
+    provider: candidate.data.provider || '',
+    start_date: candidate.data.start_date || '',
+    venue: candidate.data.venue || '',
+    city: candidate.data.city || '',
+    fee: candidate.data.fee == null ? '' : String(candidate.data.fee),
+    points: candidate.data.points == null ? '' : String(candidate.data.points),
+  });
+  const [excerpts, setExcerpts] = useState<Record<string, string>>({
+    title: candidate.data.evidence?.title || '',
+    provider: candidate.data.evidence?.provider || '',
+    start_date: candidate.data.evidence?.start_date || '',
+    venue: candidate.data.evidence?.venue || '',
+    city: candidate.data.evidence?.city || '',
+    fee: candidate.data.evidence?.fee || '',
+    points: candidate.data.evidence?.points || '',
+  });
+  const original: Record<string, string> = {
+    title: candidate.data.title || '',
+    provider: candidate.data.provider || '',
+    start_date: candidate.data.start_date || '',
+    venue: candidate.data.venue || '',
+    city: candidate.data.city || '',
+    fee: candidate.data.fee == null ? '' : String(candidate.data.fee),
+    points: candidate.data.points == null ? '' : String(candidate.data.points),
+  };
+  function publishPayload() {
+    const corrections: Record<string, string> = {};
+    const evidence: Record<string, string> = {};
+    for (const field of Object.keys(edits)) {
+      if ((edits[field] || '') !== (original[field] || '')) {
+        corrections[field] = edits[field];
+        evidence[field] = excerpts[field] || '';
+      }
+    }
+    return { corrections, evidence };
+  }
   return (
     <section className="panel candidate">
       <div className="section-heading">
@@ -198,6 +277,23 @@ function CandidateCard({
         </div>
       </div>
       <p>{candidate.data.description}</p>
+      {candidate.data._refresh_diff?.length ? (
+        <div className="refresh-diff" data-testid="refresh-diff">
+          <p className="small-note">Proposed changes versus the published session. Review before overwriting.</p>
+          <dl className="evidence">
+            {candidate.data._refresh_diff.map((change) => (
+              <div key={change.field}>
+                <dt>{change.field.replaceAll('_', ' ')}</dt>
+                <dd>
+                  Published: {change.published == null || change.published === '' ? 'Unknown' : String(change.published)}
+                  {' → '}
+                  Proposed: {change.proposed == null || change.proposed === '' ? 'Unknown' : String(change.proposed)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
       <dl className="evidence">
         {Object.entries(candidate.data.evidence).map(([k, v]) => (
           <div key={k}>
@@ -206,19 +302,38 @@ function CandidateCard({
           </div>
         ))}
       </dl>
-      <label>
-        Corrected title
-        <input value={title} onChange={(e) => setTitle(e.target.value)} />
-      </label>
-      <label>
-        Title evidence excerpt
-        <textarea
-          rows={2}
-          value={excerpt}
-          onChange={(e) => setExcerpt(e.target.value)}
-          placeholder="Verbatim source sentence that supports the corrected title"
-        />
-      </label>
+      {(
+        [
+          ['title', 'Corrected title'],
+          ['provider', 'Corrected provider'],
+          ['start_date', 'Corrected start date'],
+          ['venue', 'Corrected venue'],
+          ['city', 'Corrected city'],
+          ['fee', 'Corrected fee'],
+          ['points', 'Corrected points'],
+        ] as const
+      ).map(([field, label]) => (
+        <div key={field}>
+          <label>
+            {label}
+            <input
+              value={edits[field]}
+              onChange={(e) => setEdits({ ...edits, [field]: e.target.value })}
+            />
+          </label>
+          {edits[field] !== original[field] ? (
+            <label>
+              {label.replace('Corrected ', '')} evidence excerpt
+              <textarea
+                rows={2}
+                value={excerpts[field]}
+                onChange={(e) => setExcerpts({ ...excerpts, [field]: e.target.value })}
+                placeholder="Verbatim source sentence that supports this correction"
+              />
+            </label>
+          ) : null}
+        </div>
+      ))}
       <label>
         Review reason
         <textarea
@@ -238,16 +353,10 @@ function CandidateCard({
         <button
           disabled={saving}
           className="primary"
-          onClick={() =>
-            onReview(
-              candidate.id,
-              'publish',
-              reason,
-              candidate.version,
-              title !== candidate.data.title ? { title } : {},
-              title !== candidate.data.title ? { title: excerpt } : {},
-            )
-          }
+          onClick={() => {
+            const payload = publishPayload();
+            onReview(candidate.id, 'publish', reason, candidate.version, payload.corrections, payload.evidence);
+          }}
         >
           <Check size={16} /> Publish reviewed training
         </button>

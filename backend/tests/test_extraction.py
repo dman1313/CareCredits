@@ -8,7 +8,7 @@ from scraper.worker import run_job
 
 class ModelTests(unittest.TestCase):
     def setUp(self):
-        self.env=patch.dict(os.environ,{'MODEL_ID':'test/open-weight-model','MODEL_API_KEY':'test-secret','MODEL_WEIGHTS_URL':'https://example.org/weights','MODEL_LICENSE_URL':'https://example.org/license','MODEL_OPEN_WEIGHT_CONFIRMED':'true','MODEL_BASE_URL':'https://example.org/v1'})
+        self.env=patch.dict(os.environ,{'MODEL_ID':'test/open-weight-model','MODEL_API_KEY':'test-secret','MODEL_WEIGHTS_URL':'https://example.org/weights','MODEL_LICENSE_URL':'https://example.org/license','MODEL_OPEN_WEIGHT_CONFIRMED':'true','MODEL_BASE_URL':'https://example.org/v1','MODEL_MAX_INPUT_CHARS':'12000','MODEL_MAX_OUTPUT_TOKENS':'4000'})
         self.env.start();self.addCleanup(self.env.stop)
         self.text='Primary care seminar. Provider: Medical School. Online for Malaysian doctors.'
         self.row={'title':'Primary care seminar','provider':'Medical School','mode':'online','country':'MY','evidence':{k:self.text for k in ['title','provider','mode','country']}}
@@ -62,6 +62,39 @@ class ModelTests(unittest.TestCase):
         self.assertNotIn('raw_content',result['sources'][0])
         self.assertTrue(any('model' in warning.lower() or 'heuristic' in warning.lower() for warning in result['warnings']))
 
+    def test_snippet_only_sources_are_held_not_auto_saved(self):
+        from types import SimpleNamespace
+        snippet = (
+            'Primary Care Update organised by Medical School in Kuala Lumpur, Malaysia. '
+            'Conference 2026-06-12. In-person primary care conference.'
+        )
+        sources = [{
+            'url': 'https://example.org/primary-care',
+            'title': 'Primary Care Update',
+            'snippet': snippet,
+            'raw_content': None,
+            'extraction_status': 'failed',
+            'verification_status': 'unverified',
+        }]
+        called = []
+
+        class FakeClient:
+            def get(self, path):
+                called.append(path)
+                return SimpleNamespace(status_code=200, json=lambda: {})
+
+            def post(self, path, json=None):
+                called.append(path)
+                return SimpleNamespace(status_code=200, json=lambda: {'decision': 'new'})
+
+        with patch.dict(os.environ, {'MODEL_API_KEY': ''}), patch(
+            'scraper.worker.discover', return_value={'sources': sources, 'warnings': []}
+        ):
+            result = run_job({'query': 'GP', 'lease_token': 'test', 'id': 'job-1'}, lambda: None, FakeClient())
+        self.assertTrue(result['candidates'], result)
+        self.assertTrue(any('snippet-only' in warning.lower() for warning in result['warnings']))
+        self.assertFalse(any('catalogue/save' in path or 'catalogue/connect' in path for path in called))
+
     def test_heuristic_extracts_malaysia_event_without_model(self):
         from scraper.extraction import heuristic_extract
         text = (
@@ -80,6 +113,23 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(rows[0]['start_date'], '2026-09-04')
         self.assertEqual(rows[0]['model_id'], 'heuristic-v1')
         self.assertIsNone(rows[0]['points'])
+
+    def test_heuristic_does_not_infer_difficulty_points_or_fee(self):
+        from scraper.extraction import heuristic_extract
+        text = (
+            'Primary Care Update organised by Medical School in Kuala Lumpur, Malaysia. '
+            'Conference 2026-06-12. 8 CPD points. Fee MYR 350. Sounds advanced and expensive.'
+        )
+        rows = heuristic_extract({
+            'url': 'https://example.org/primary-care-update',
+            'title': 'Primary Care Update',
+            'raw_content': text,
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]['difficulty'])
+        self.assertIsNone(rows[0]['points'])
+        self.assertIsNone(rows[0]['fee'])
+        self.assertIsNone(rows[0]['currency'])
         self.assertEqual(heuristic_extract({
             'url': 'https://www.instagram.com/reel/abc',
             'title': 'Instagram',
@@ -102,3 +152,24 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(result['status'],'succeeded')
             self.assertEqual(result['candidates'],[])
             model.assert_not_called()
+
+    def test_missing_model_caps_block_configuration(self):
+        from scraper.extraction import configuration
+        with patch.dict(os.environ, {'MODEL_MAX_INPUT_CHARS': '', 'MODEL_MAX_OUTPUT_TOKENS': ''}, clear=False):
+            with self.assertRaises(ExtractionError):
+                configuration()
+
+    def test_run_job_tavily_timeout_is_failed(self):
+        from scraper.tavily import ProviderError
+        with patch('scraper.worker.discover', side_effect=ProviderError(504, 'Tavily is unavailable or timed out.')):
+            result = run_job({'id': 'j', 'query': 'GP', 'lease_token': 'test', 'max_results': 1}, lambda: None)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['candidates'], [])
+        self.assertTrue(result['warnings'])
+
+    def test_run_job_tavily_credit_limit_is_failed(self):
+        from scraper.tavily import ProviderError
+        with patch('scraper.worker.discover', side_effect=ProviderError(429, 'Tavily rate or credit limit reached. Try again later.')):
+            result = run_job({'id': 'j', 'query': 'GP', 'lease_token': 'test', 'max_results': 1}, lambda: None)
+        self.assertEqual(result['status'], 'failed')
+        self.assertIn('credit', result['warnings'][0].lower())

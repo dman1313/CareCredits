@@ -7,9 +7,15 @@ from shared.contracts import Training
 
 def seed(db):
     from main import today
+    demo_hash = password_hash('CareCredits-demo-2026')
     for email, name, role in [('demo@carecredits.local', 'Dr Aisha Rahman', 'operator'), ('doctor@carecredits.local', 'Dr Daniel Tan', 'doctor')]:
-        if not db.query(Account).filter_by(email=email).first():
-            db.add(Account(email=email, name=name, role=role, password_hash=password_hash('CareCredits-demo-2026'), bio='General practitioner · committed to continuing professional development.'))
+        existing = db.query(Account).filter_by(email=email).first()
+        if existing:
+            existing.password_hash = demo_hash
+            existing.name = name
+            existing.role = role
+        else:
+            db.add(Account(email=email, name=name, role=role, password_hash=demo_hash, bio='General practitioner · committed to continuing professional development.'))
     items = [
         ('Diabetes care in general practice', 'Primary Care Learning Lab', 12, 'Kuala Lumpur', 'in_person', 180, 4, 'intermediate', 3.139, 101.687),
         ('Everyday dermatology for GPs', 'Community Medicine Academy', 21, 'Petaling Jaya', 'hybrid', 250, 6, 'beginner', 3.107, 101.606),

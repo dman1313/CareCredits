@@ -116,17 +116,28 @@ def run_job(job, heartbeat, client=None):
         except ExtractionError as exc:
             model_ready = False
             warnings.append(str(exc) + ' Using evidence-gated heuristic extraction; Tavily sources are still saved.')
+        held = []
         for source in sources:
             heartbeat()
-            if not source.get('raw_content') and not source.get('snippet'):
+            raw = (source.get('raw_content') or '').strip()
+            snippet = (source.get('snippet') or '').strip()
+            if not raw and not snippet:
                 continue
+            snippet_only = (not raw) or str(source.get('extraction_status') or '') == 'failed'
             try:
-                if model_ready:
-                    candidates.extend(extract_training(source))
+                if model_ready and not snippet_only:
+                    page_candidates = extract_training(source)
                 else:
-                    candidates.extend(heuristic_extract(source))
+                    page_candidates = heuristic_extract(source)
             except ExtractionError as exc:
                 warnings.append(str(exc))
+                continue
+            if snippet_only:
+                held.extend(page_candidates)
+                if page_candidates:
+                    warnings.append('Snippet-only source kept for review; not auto-published.')
+            else:
+                candidates.extend(page_candidates)
         saved = 0
         if client is not None and candidates:
             try:
@@ -138,8 +149,10 @@ def run_job(job, heartbeat, client=None):
                     warnings.append('Catalogue connect unavailable; candidates were not saved through the API.')
             except httpx.HTTPError:
                 warnings.append('Catalogue connect failed; candidates were not saved through the API.')
-        # When connect/save handled candidates, do not re-insert via complete.
-        complete_candidates = [] if saved else candidates
+        # Snippet-only rows stay on the job for operator review. Connect/save owns full-extract rows.
+        complete_candidates = list(held)
+        if not saved:
+            complete_candidates.extend(candidates)
         if candidates and not saved:
             warnings.append('Falling back to job-complete candidate insert without Jev decide/save.')
         return {

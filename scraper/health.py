@@ -7,11 +7,22 @@ import threading
 
 def ready():
     missing = [name for name in ('SCRAPER_SERVICE_TOKEN', 'BACKEND_INTERNAL_URL') if not (os.getenv(name) or '').strip()]
+    model_configured = bool((os.getenv('MODEL_API_KEY') or '').strip() and (os.getenv('MODEL_ID') or '').strip())
+    missing_model = []
+    if model_configured:
+        missing_model = [
+            name for name in ('MODEL_MAX_INPUT_CHARS', 'MODEL_MAX_OUTPUT_TOKENS', 'MODEL_WEIGHTS_URL', 'MODEL_LICENSE_URL')
+            if not (os.getenv(name) or '').strip()
+        ]
+        if os.getenv('MODEL_OPEN_WEIGHT_CONFIRMED') != 'true':
+            missing_model.append('MODEL_OPEN_WEIGHT_CONFIRMED')
     return {
         'status': 'ready' if not missing else 'not_ready',
         'missing': missing,
         'tavily_configured': bool((os.getenv('TAVILY_API_KEY') or '').strip()),
-        'model_configured': bool((os.getenv('MODEL_API_KEY') or '').strip() and (os.getenv('MODEL_ID') or '').strip()),
+        'model_configured': model_configured,
+        'model_ready': model_configured and not missing_model,
+        'missing_model': missing_model,
     }
 
 

@@ -1,11 +1,11 @@
-"""Portal schema v14. Candidate schema_version and source retention."""
+"""Portal schema v17. Digest send backoff plus session schedule on flattened Course."""
 import os
 import time
 import uuid
-from sqlalchemy import Column, String, Float, Boolean, Integer, JSON, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Float, Boolean, Integer, JSON, ForeignKey, UniqueConstraint, and_
 from database import Base
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 17
 CANDIDATE_SCHEMA_VERSION = 1
 
 
@@ -53,6 +53,9 @@ class Course(Base):
     provider = Column(String, default='', nullable=False)
     description = Column(String, default='', nullable=False)
     start_date = Column(String, nullable=True, index=True)
+    end_date = Column(String, nullable=True)
+    timezone = Column(String, nullable=True)
+    venue = Column(String, nullable=True)
     city = Column(String, nullable=True, index=True)
     state = Column(String, nullable=True, index=True)
     country = Column(String, default='MY', nullable=False)
@@ -65,13 +68,16 @@ class Course(Base):
     credit_label = Column(String, nullable=True)
     difficulty = Column(String, nullable=True, index=True)
     verification_status = Column(String, default='unverified', nullable=False)
+    publication_status = Column(String, default='published', nullable=False, index=True)
+    cancellation_status = Column(String, default='active', nullable=False)
     reviewed_by = Column(String, nullable=True)
     reviewed_at = Column(Float, nullable=True)
 
 
 FILTER_FIELDS = (
-    'title', 'provider', 'description', 'start_date', 'city', 'state', 'country', 'mode',
-    'latitude', 'longitude', 'fee', 'currency', 'points', 'credit_label', 'difficulty',
+    'title', 'provider', 'description', 'start_date', 'end_date', 'timezone', 'venue',
+    'city', 'state', 'country', 'mode', 'latitude', 'longitude', 'fee', 'currency',
+    'points', 'credit_label', 'difficulty',
 )
 
 
@@ -80,11 +86,22 @@ def fill_course(course, data, demo=None):
     start = payload.get('start_date')
     if hasattr(start, 'isoformat'):
         payload['start_date'] = start.isoformat()
+    end = payload.get('end_date')
+    if hasattr(end, 'isoformat'):
+        payload['end_date'] = end.isoformat()
+        end = payload['end_date']
     course.data = payload
     course.title = (payload.get('title') or '')[:200]
     course.provider = (payload.get('provider') or '')[:200]
     course.description = (payload.get('description') or '')[:3000]
     course.start_date = payload.get('start_date')
+    course.end_date = end
+    course.timezone = (payload.get('timezone') or None)
+    if course.timezone:
+        course.timezone = str(course.timezone)[:80]
+    course.venue = (payload.get('venue') or None)
+    if course.venue:
+        course.venue = str(course.venue)[:200]
     course.city = payload.get('city')
     course.state = payload.get('state')
     course.country = payload.get('country') or 'MY'
@@ -97,7 +114,6 @@ def fill_course(course, data, demo=None):
         raise ValueError('Fee cannot be negative.')
     if points is not None and points < 0:
         raise ValueError('Points cannot be negative.')
-    end = payload.get('end_date')
     if end and course.start_date and str(end) < str(course.start_date):
         raise ValueError('End date cannot be before start date.')
     course.fee = fee
@@ -105,10 +121,18 @@ def fill_course(course, data, demo=None):
     course.points = points
     course.credit_label = payload.get('credit_label')
     course.difficulty = payload.get('difficulty')
+    if not course.publication_status:
+        course.publication_status = 'published'
+    if not course.cancellation_status:
+        course.cancellation_status = 'active'
     if demo is not None:
         course.demo = demo
     course.updated_at = time.time()
     return course
+
+
+def listed_filter():
+    return and_(Course.country == 'MY', Course.publication_status != 'cancelled')
 
 
 class Record(Base):
@@ -221,6 +245,8 @@ class DigestPreference(Base):
     last_sent_at = Column(Float, nullable=True)
     unsubscribed_at = Column(Float, nullable=True)
     unsubscribe_token = Column(String, unique=True, default=uid, nullable=False)
+    fail_count = Column(Integer, default=0, nullable=False)
+    next_retry_at = Column(Float, nullable=True)
 
 
 class DigestSend(Base):

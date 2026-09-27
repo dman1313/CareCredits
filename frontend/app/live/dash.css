@@ -2,6 +2,8 @@
 .dash .menu-button{display:none}
 .dash .city-search{width:160px;height:44px;border:1px solid #dbe6f7;border-radius:9px;background:#f8fbff;padding:0 12px;color:var(--ink)}
 .dash .search input:focus-visible,.dash .city-search:focus-visible,.dash .search-btn:focus-visible,.dash .nav-item:focus-visible,.dash .icon-button:focus-visible,.dash .primary:focus-visible{outline:3px solid #93c5fd;outline-offset:3px}
+.dash .skip-link{position:absolute;left:8px;top:8px;z-index:80;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);width:1px;height:1px;white-space:nowrap;color:#fff}
+.dash .skip-link:focus,.dash .skip-link:focus-visible{clip:auto;clip-path:none;width:auto;height:auto;background:#102454;padding:8px 12px;border-radius:6px}
 .dash .gate{min-height:100vh;display:grid;place-items:center;padding:32px}
 .dash .gate-card{width:min(440px,100%);background:#fff;border:1px solid var(--line);border-radius:18px;padding:32px;box-shadow:0 12px 40px #1e40af12}
 .dash .gate-card h1{font-size:28px;letter-spacing:-1px;margin:16px 0 8px}

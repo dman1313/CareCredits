@@ -51,6 +51,36 @@ class ErrorEnvelopeTests(unittest.TestCase):
         self.assertEqual(result.status_code, 422)
         self.assertEqual(result.json()['error']['code'], 'invalid')
 
+    def test_unsubscribe_unknown_token_uses_envelope(self):
+        result = self.client.get('/api/v1/digest/unsubscribe', params={'token': 'not-a-token'}, headers={'Accept': 'application/json'})
+        self.assertEqual(result.status_code, 404)
+        body = result.json()['error']
+        self.assertEqual(body['code'], 'not_found')
+        self.assertTrue(body['request_id'])
+
+    def test_liveness_does_not_require_database(self):
+        live = self.client.get('/health/live')
+        self.assertEqual(live.status_code, 200)
+        self.assertEqual(live.json()['status'], 'ok')
+
+    def test_ready_reports_database_and_fails_closed(self):
+        ready = self.client.get('/health/ready')
+        self.assertEqual(ready.status_code, 200, ready.text)
+        self.assertEqual(ready.json(), {'status': 'ready', 'database': 'ready'})
+
+        class Boom:
+            def execute(self, *_args, **_kwargs):
+                raise RuntimeError('db down')
+
+        def dependency():
+            yield Boom()
+
+        app.dependency_overrides[get_db] = dependency
+        down = self.client.get('/health/ready')
+        self.assertEqual(down.status_code, 503)
+        self.assertEqual(down.json()['error']['code'], 'unavailable')
+        self.assertNotIn('db down', down.text)
+
 
 if __name__ == '__main__':
     unittest.main()

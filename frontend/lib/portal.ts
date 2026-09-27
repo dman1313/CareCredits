@@ -59,6 +59,9 @@ export type Course = {
   provider: string;
   description: string;
   start_date: string | null;
+  end_date?: string | null;
+  timezone?: string | null;
+  venue?: string | null;
   city: string | null;
   state?: string | null;
   mode: string;
@@ -75,6 +78,9 @@ export type Course = {
   demo: boolean;
   verification_status?: string;
   reviewed_at?: number | null;
+  publication_status?: string;
+  cancellation_status?: string;
+  field_evidence?: { field_name: string; excerpt: string; reviewed_at?: number | null }[];
   record: RecordData | null;
 };
 
@@ -104,7 +110,17 @@ export type Job = {
   result: { warnings?: string[]; candidate_count?: number; sources?: TavilySource[] } | null;
 };
 
-export type Candidate = { id: string; data: Course; status: string; reason?: string; version?: number; schema_version?: number; resulting_course_id?: string | null };
+export type RefreshDiff = { field: string; published: unknown; proposed: unknown };
+
+export type Candidate = {
+  id: string;
+  data: Course & { _refresh_diff?: RefreshDiff[]; _matched_course_id?: string };
+  status: string;
+  reason?: string;
+  version?: number;
+  schema_version?: number;
+  resulting_course_id?: string | null;
+};
 
 export type WorkspaceTab =
   | 'Overview'
@@ -128,7 +144,8 @@ export const emptyRecord: RecordData = {
 
 export function formatDate(value: string | null) {
   return value
-    ? new Date(value + 'T12:00:00').toLocaleDateString('en-MY', {
+    ? new Date(value + 'T00:00:00+08:00').toLocaleDateString('en-MY', {
+        timeZone: 'Asia/Kuala_Lumpur',
         day: 'numeric',
         month: 'short',
         year: 'numeric',
@@ -146,11 +163,15 @@ export function modeName(value: string) {
   return ({ in_person: 'In person', online: 'Online', hybrid: 'Hybrid' }[value] || value);
 }
 
-export function locationLabel(course: { mode: string; city: string | null; state?: string | null }) {
-  if (course.city) {
-    return course.state ? `${course.city}, ${course.state}` : course.city;
-  }
-  return course.mode === 'online' ? 'Online' : 'Location not listed';
+export function locationLabel(course: { mode: string; city: string | null; state?: string | null; venue?: string | null }) {
+  const place = course.city
+    ? course.state
+      ? `${course.city}, ${course.state}`
+      : course.city
+    : course.mode === 'online'
+      ? 'Online'
+      : 'Location not listed';
+  return course.venue ? `${course.venue} · ${place}` : place;
 }
 
 export function distanceLabel(course: { distance_km?: number | null; mode: string }, nearby = false) {

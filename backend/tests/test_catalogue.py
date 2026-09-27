@@ -188,7 +188,57 @@ class CatalogueApiTests(unittest.TestCase):
         listed = self.client.get('/api/v1/trainings?period=all&q=Primary%20Care%20Update').json()
         self.assertEqual(listed['total'], 1)
         queue = self.client.get('/api/v1/admin/candidates').json()['items']
-        self.assertTrue(any(item['status'] == 'held' and item['id'] == again.json()['candidate_id'] for item in queue))
+        held = next(item for item in queue if item['id'] == again.json()['candidate_id'])
+        self.assertEqual(held['status'], 'held')
+        diff = {row['field']: row for row in held['data'].get('_refresh_diff') or []}
+        self.assertEqual(diff['fee']['published'], None)
+        self.assertEqual(diff['fee']['proposed'], 150)
+        self.assertIn('description', diff)
+        published = self.client.post(
+            '/api/v1/admin/candidates/' + held['id'] + '/review',
+            json={'action': 'publish', 'reason': 'Fee change is source-backed', 'version': held['version']},
+        )
+        self.assertEqual(published.status_code, 200, published.text)
+        self.assertEqual(published.json()['status'], 'published')
+        self.assertEqual(published.json()['resulting_course_id'], course_id)
+        listed = self.client.get('/api/v1/trainings?period=all&q=Primary%20Care%20Update').json()
+        self.assertEqual(listed['total'], 1)
+        self.assertEqual(listed['items'][0]['id'], course_id)
+        self.assertEqual(listed['items'][0]['fee'], 150)
+
+    def test_exists_refresh_updates_matched_course_when_source_key_drifts(self):
+        training = sample(title='Primary Care Update 2026')
+        first = self.client.post(
+            '/internal/v1/catalogue/save',
+            json={'candidate': training, 'judgment': {'decision': 'new', 'confidence': 1, 'probabilities': {'new': 1}}},
+            headers=self.service,
+        )
+        course_id = first.json()['course_id']
+        renamed = sample(title='Primary Care Update KL 2026')
+        renamed['evidence'] = {**renamed['evidence'], 'title': QUOTE}
+        renamed['source_text'] = QUOTE
+        again = self.client.post(
+            '/internal/v1/catalogue/save',
+            json={
+                'candidate': renamed,
+                'judgment': {'decision': 'exists', 'confidence': 1, 'matched_session_id': course_id, 'probabilities': {'exists': 1}},
+            },
+            headers=self.service,
+        )
+        self.assertEqual(again.json()['course_id'], course_id)
+        self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': 'CareCredits-demo-2026'})
+        held_id = again.json()['candidate_id']
+        held = next(item for item in self.client.get('/api/v1/admin/candidates').json()['items'] if item['id'] == held_id)
+        published = self.client.post(
+            '/api/v1/admin/candidates/' + held_id + '/review',
+            json={'action': 'publish', 'reason': 'Same session, updated title', 'version': held['version']},
+        )
+        self.assertEqual(published.status_code, 200, published.text)
+        self.assertEqual(published.json()['resulting_course_id'], course_id)
+        listed = self.client.get('/api/v1/trainings?period=all&include_unknown=true').json()
+        self.assertEqual(listed['total'], 1)
+        self.assertEqual(listed['items'][0]['id'], course_id)
+        self.assertEqual(listed['items'][0]['title'], 'Primary Care Update KL 2026')
 
 
 if __name__ == '__main__':

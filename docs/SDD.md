@@ -1,6 +1,6 @@
 # CareCredits — spec-driven development specification
 
-Version: 0.19 · 2026-09-27 · Status: implementation specification; portal and three-service split exist on this branch; DEC-09–11, BUILD-10, cancelled signup_status, attendance_status, FieldEvidence source links, source documents, versioned review, candidate `resulting_course_id`/`schema_version`, scraper HTTP ready, 30s job heartbeat, 30-day raw-source retention, and a runtime frontend `/api/v1` proxy are implemented. Live TypeSafe Jev is wired when `TYPESAFE_API_KEY` is set. Open-weight model DEMO-01 still needs owner model keys.
+Version: 0.23 · 2026-09-27 · Status: implementation specification; portal and three-service split exist on this branch; DEC-09–11 and BUILD-10 are implemented. Digest failures use a bounded retry backoff, email unsubscribe returns a signed-out HTML page, and exists-matches queue a published-vs-proposed refresh diff for operators. Open-weight model DEMO-01 still needs owner model keys.
 
 This document expands the initial Tavily discovery specification using the owner's supplied meeting summary. It defines the full Malaysia MVP and the contracts needed to build it. It does not claim that the described application is already implemented.
 
@@ -133,7 +133,7 @@ PostgreSQL is infrastructure, not a fourth application service. External identit
 
 ### Migration from the current branch
 
-The existing `backend/discovery.py` implements synchronous operator discovery inside FastAPI. Move its Tavily adapter and tests into the scraper service without losing provenance, bounds or error behavior. Add job contracts and backend-owned candidate storage. The existing `/discovery/search` is transitional and must be removed or explicitly disabled in the public release after migration; do not silently change its synchronous response into a job response. Update the setup command and Compose secret routing when the service moves.
+The transitional `backend/discovery.py` and `/discovery/search` operator endpoint have been removed. Tavily lives in `scraper/tavily.py`; jobs, candidates and publication stay on the backend. Do not reintroduce a synchronous public discovery route.
 
 The earlier unauthenticated `/users/` endpoints and disabled-auth adapter are gone; doctor sessions and optional Google OAuth now own identity. A scraper bearer token does not solve user authentication.
 
@@ -180,10 +180,10 @@ Statuses describe this branch: **existing** means implemented code, not live-pro
 | DISC-01 | Real Tavily Search | Bounded request uses Search for Malaysian medical training sources | Existing in scraper; live call unverified |
 | DISC-02 | Real Tavily Extract | Extract at most five unique returned URLs; empty Search results skip Extract | Existing in scraper; live call unverified |
 | DISC-03 | Provenance | Preserve URL, retrieval time, source text and extraction outcome through candidate/publication flow | Existing on candidates; source text is operator-only |
-| DISC-04 | Failure honesty | Partial extraction keeps evidence and warnings; provider failure is never fabricated success | Existing job statuses and warnings |
+| DISC-04 | Failure honesty | Partial extraction keeps evidence and warnings; provider failure is never fabricated success | Existing job statuses and warnings. Snippet-only pages can produce review candidates but are not auto-published through catalogue save |
 | DISC-05 | Bounded work | Query 3–300 trimmed characters; 1–5 search results; 30 seconds per Tavily call; no automatic paid retries | Existing; retain |
 | AI-01 | Open-weight extraction | Approved open-weight model produces validated candidates with field-level excerpts and model/version metadata | Adapter existing; model choice and live run remain OPEN-03 / DEMO-01 |
-| EVT-01 | Required training fields | Details show title, provider, session dates, delivery mode/location, CPD points, prerequisites, difficulty and fees; unknowns are explicit | Existing in catalogue and detail UI |
+| EVT-01 | Required training fields | Details show title, provider, session dates, delivery mode/location, CPD points, prerequisites, difficulty and fees; unknowns are explicit | Existing; flattened Course now also stores optional `end_date`, `timezone`, and `venue` |
 | EVT-02 | Event identity and updates | Same source/session does not duplicate; different sessions on one page remain distinct; ambiguous matches require review | Existing: `source_key` is `url|title|start_date`. Flattened `Course` is the intentional MVP of Training+Session (known merge limit: no shared training parent) |
 | EVT-03 | Claim verification | Advertised points, publication and accreditation verification remain separate; verified claims have evidence/reviewer/time | Existing: operator publish writes `field_evidence` with reviewer/time and sets `source_reviewed`. Never accreditation |
 | FIND-01 | Catalogue filters | Combine text, date, city/state or radius, mode, points, difficulty and fee filters with pagination; clearing filters resets results | Existing SQL filters on indexed columns; unknown dates/fees/points need `include_unknown` |
@@ -191,16 +191,16 @@ Statuses describe this branch: **existing** means implemented code, not live-pro
 | ATT-01 | Attendance record | User can mark eligible past/started session attended and correct it; future sessions cannot be marked attended | Existing; optimistic versioning; corrections append `record_history` |
 | PROG-01 | Personal progress | Selected-year counts and recorded points derive from attendance; corrections cannot double count; unknown/unapproved values are excluded and disclosed | Existing year dashboard with excluded-count disclosure |
 | PROG-02 | Suggested next courses | Portal shows upcoming owned-catalogue sessions filtered by doctor profile (city/mode) and recent gaps; copy is advisory (“consider”), never a compliance verdict | Implemented |
-| NTF-01 | Biweekly digest email | Opted-in doctors receive an email every 14 days with upcoming events, known prices, and current recorded CPD totals; unsubscribe works; no Tavily call per send | Implemented (MAIL_PROVIDER=log default; SMTP optional) |
+| NTF-01 | Biweekly digest email | Opted-in doctors receive an email every 14 days with upcoming events, known prices, and current recorded CPD totals; unsubscribe works; no Tavily call per send | Implemented (MAIL_PROVIDER=log default; SMTP optional). Failed sends retry with a 15-minute to 24-hour backoff. GET `/api/v1/digest/unsubscribe` works without sign-in and returns HTML for email clients |
 | CERT-01 | Printable affiliation certificate | Doctor can download/print a CareCredits PDF/statement naming them, issue date, recorded CPD total for the selected year, and clear non-regulator disclaimer; suitable to share with organisations | Implemented (printable HTML) |
 | UI-01 | Full portal | Sign-in, discovery, detail, signed-up/attended lists and progress have loading, empty, error and retry states | Existing Next.js portal: digest opt-in, suggestions, printable certificate, retry on catalogue errors, labelled demo fixtures |
 | SEC-01 | Private secret setup | Hidden input saves ignored owner-readable `.env`; no key reaches frontend or logs | Existing `scripts/setup_integrations.py`; Tavily/model keys stay on scraper |
 | SEC-02 | Operator/service access | Doctor cannot start jobs or publish; scraper token cannot access personal data; missing integration configuration fails explicitly | Existing operator role and scraper bearer token |
 | OPS-01 | Controlled ingestion | Durable leased jobs, bounded workers, pagination, usage metadata and an explicit run budget; doctor search never calls Tavily | Existing claim/heartbeat/complete plus explicit interrupted-job retry |
 | OPS-02 | Daily owned-catalogue scrape | A schedule enqueues bounded jobs for the curated Malaysia medical source/topic list once per day (timezone Asia/Kuala_Lumpur); usage is attributed to the operator budget; failures stay honest and never auto-replay paid calls | Existing: `backend/schedule.py`, lifespan tick, `POST /api/v1/admin/daily-scrape`, `config/scrape_topics.json` |
-| CAT-01 | API connect to owned DB | Scraper/agent authenticates to backend connect endpoints; only the backend opens PostgreSQL; connect readiness fails closed if the DB is unreachable | Existing: `/internal/v1/catalogue/connect|lookup|decide|save` |
+| CAT-01 | API connect to owned DB | Scraper/agent authenticates to backend connect endpoints; only the backend opens PostgreSQL; connect readiness fails closed if the DB is unreachable | Existing: `/internal/v1/catalogue/connect|lookup|decide|save`. `GET /health/ready` reports database readiness and returns 503 without leaking the driver error |
 | JEV-01 | Jev existence judgment | For each validated candidate without an exact `source_key` match, backend queries Jev with candidate + match set; outcomes are `exists`, `new`, or `uncertain` with stored probabilities; doctor search never calls Jev | Implemented; live TypeSafe call uses `TYPESAFE_API_KEY` or `~/.typesafe/key`. Without the key, near matches stay `uncertain` |
-| CAT-02 | Save new events | When judgment is `new` (or operator publishes an uncertain/new candidate), persist the event into the owned catalogue with evidence; never duplicate an exact `source_key` | Existing: `decision=new` publishes a searchable course; uncertain stays held; heuristic extract is used when no open-weight model is configured |
+| CAT-02 | Save new events | When judgment is `new` (or operator publishes an uncertain/new candidate), persist the event into the owned catalogue with evidence; never duplicate an exact `source_key` | Existing: `decision=new` publishes a searchable course; `exists` holds a refresh candidate with `_refresh_diff`; operator publish applies the proposed fields to the matched session even if `source_key` drifted; uncertain stays held |
 | DEMO-01 | Real demonstration | Show one live Search/Extract run, one eligible model run, published results and personal tracking flow; separate live from fixture evidence | Pending |
 
 ## 8. Behavioural rules and defaults
@@ -232,12 +232,12 @@ Use migrations and stable IDs. Existing integer user IDs may remain during migra
 | --- | --- |
 | DoctorProfile | user_id; identity_issuer + identity_subject unique; display_name; city/state; optional coordinates; location_consent_at; created_at |
 | Training | id; title; provider_name; description; prerequisites nullable; difficulty nullable; created_at/updated_at |
-| Session | id; training_id; start/end timestamps or date-only fields; timezone; mode; country/city/state/venue; nullable coordinates; fee_amount/currency; advertised_points; original_credit_label; registration_url; publication_status; cancellation_status |
+| Session | id; training_id; start/end timestamps or date-only fields; timezone; mode; country/city/state/venue; nullable coordinates; fee_amount/currency; advertised_points; original_credit_label; registration_url; publication_status; cancellation_status. Flattened `Course` stores publication_status/cancellation_status; operator cancel hides the session from search without deleting personal records |
 | SourceDocument | id; canonical_url; content_hash; retrieved_at; extraction_status; source excerpt/text; ingestion_job_id; unique URL+content hash |
 | FieldEvidence | session/candidate reference; field_name; source_document_id; verbatim excerpt; reviewed_by/at nullable |
 | Candidate | id; ingestion_job_id; source-local event key; structured payload; schema_version; model metadata; validation findings; review state/reason; resulting session_id nullable |
 | DoctorSession | id; user_id+session_id unique; signup_status; attendance_status; signed_up_at; attended_on; nullable recorded_points; original_credit_label; points_origin; optional personal_notes; version |
-| DigestPreference | user_id unique; opted_in; cadence_days default 14; last_sent_at; unsubscribed_at |
+| DigestPreference | user_id unique; opted_in; cadence_days default 14; last_sent_at; unsubscribed_at; fail_count; next_retry_at |
 | DigestSend | id; user_id; sent_at; status; event_count; recorded_points_snapshot; provider_message_id nullable |
 | AffiliationCertificate | id; user_id; year; recorded_points_snapshot; issued_at; document_hash; disclaimer_version |
 | IngestionJob | id; request key; query; limits; status; attempt; lease token/expiry; timestamps; provider outcomes; measured usage if available; sanitized error |
@@ -255,7 +255,7 @@ Routes in this section are implemented on this branch unless marked pending. JSO
 | --- | --- | --- |
 | GET/PATCH `/api/v1/me` | Doctor | Read/update own location/preferences; no caller-supplied owner ID |
 | GET `/api/v1/trainings` | Doctor | Query/filter catalogue; `page` >=1, `page_size` 1–50 (default 20); return items, total, page and applied filters |
-| GET `/api/v1/trainings/{session_id}` | Doctor | Session detail, source evidence, publication/review labels and registration URL |
+| GET `/api/v1/trainings/{session_id}` | Doctor | Session detail, stored `field_evidence` excerpts, publication/review labels and registration URL |
 | GET `/api/v1/me/trainings` | Doctor | Filter own signed-up/attended records, paginated |
 | PUT `/api/v1/me/trainings/{session_id}` | Doctor | Upsert signup/attendance, points and notes; version check prevents lost edits |
 | GET `/api/v1/me/progress?year=YYYY` | Doctor | Counts, recorded CPD subtotal, excluded-record count/reasons; no compliance verdict |
@@ -266,7 +266,7 @@ Routes in this section are implemented on this branch unless marked pending. JSO
 | POST `/api/v1/admin/ingestion-jobs` | Operator | `{query,max_results}`; require Idempotency-Key; return 202 + job_id/status |
 | GET `/api/v1/admin/ingestion-jobs/{id}` | Operator | State, counts, warnings and usage; no credentials |
 | POST `/api/v1/admin/ingestion-jobs/{id}/retry` | Operator | Re-queue an `interrupted` job only; 409 otherwise; never auto-replays paid calls |
-| GET `/api/v1/admin/candidates` | Operator | Paginated review queue |
+| GET `/api/v1/admin/integrations` | Operator | Model identity, weights/licence URLs, confirmation/caps/key flags, Jev and scraper-token presence. Never returns secret values |
 | POST `/api/v1/admin/candidates/{id}/review` | Operator | publish/reject/hold, reason, version and evidence-backed corrections. Corrections require a verbatim `evidence` excerpt from the stored source text |
 | POST `/internal/v1/jobs/claim` | Scraper | Atomically lease one queued job; 204 if none; return lease_token and bounded job payload |
 | POST `/internal/v1/jobs/{id}/heartbeat` | Scraper | Matching lease token extends lease within job deadline |
@@ -305,7 +305,7 @@ Mocked tests cover Tavily bounds, extraction validation, two-user isolation, fil
 
 - Prefer the existing repository's intended third-party OAuth direction; select a provider before implementing sign-in. Validate token issuer/audience/session expiry. Never accept an arbitrary email or user ID as identity proof.
 - Separate doctor, operator and scraper permissions. Scraper cannot read personal profiles, notes or attendance. Frontend cannot obtain service tokens.
-- After the service split, give Tavily/model secrets only to scraper; give database credentials only to backend. Restrict browser origins and internal endpoints. Current broad CORS and unauthenticated user endpoints must be corrected before a pilot.
+- After the service split, give Tavily/model secrets only to scraper; give database credentials only to backend. Restrict browser origins and internal endpoints. Origins default to localhost; there is no wildcard CORS middleware. Unauthenticated `/users/` routes are gone.
 - Collect city/state by default; exact location is optional. Do not put precise location, user identity, notes or patient data into Tavily/model prompts. Training discovery needs public event information only.
 - Render source text as escaped text/sanitized content. Model output cannot issue tool calls, change authorization or publish itself. Reject unsafe links on publication even if Tavily returned them.
 - Retain retrieval metadata and evidence required to explain listings. Default raw-page retention is 30 days; retain reviewed field excerpts while the listing needs them, subject to source terms and a documented privacy/retention review before a pilot.
@@ -317,14 +317,14 @@ Mocked tests cover Tavily bounds, extraction validation, two-user isolation, fil
 
 | Test ID | Requirement IDs | Scenario and pass condition |
 | --- | --- | --- |
-| T-01 | AUTH-01, AUTH-02, SEC-02 | Sign-in/out plus two-user isolation; changing record IDs never exposes another user's data; doctors cannot ingest or publish |
+| T-01 | AUTH-01, AUTH-02, SEC-02 | Sign-in/out plus two-user isolation; changing record IDs never exposes another user's data; doctors cannot ingest or publish. Certificate download is owner-only (404 for another account). Record history is owner-only (empty list for another account) |
 | T-02 | DISC-01, DISC-02, DISC-05 | Mock Search/Extract contract; deduplicate URLs; no Extract on empty Search; input/result/time bounds preserved after migration |
-| T-03 | DISC-03, DISC-04, OPS-01 | Partial extraction, malformed payload, missing key, timeout, 401/429/credit limits, process crash; preserve evidence and accurate terminal state |
+| T-03 | DISC-03, DISC-04, OPS-01 | Partial extraction, malformed payload, missing key, timeout, 401/429/credit limits, process crash; preserve evidence and accurate terminal state. Adapter mapping is in `test_discovery.py`; `run_job` timeout/credit-limit failure, heartbeat extend, and expired-lease-does-not-publish are covered |
 | T-04 | AI-01, EVT-01, EVT-03 | Reviewed 20-page fixture set including English/Malay, missing fees/points, several sessions, ambiguous dates and malicious instructions; all accepted outputs schema-valid, every published non-null factual field has supporting evidence, no unsupported points/fees published. Mocked evaluation is in `backend/tests/test_t04_fixtures.py`; live model accuracy remains DEMO-01 |
-| T-05 | EVT-02, OPS-01 | Re-import same page, changed content, several sessions per page, expired lease, duplicate completion and concurrent workers; no double publication or silent merge. Covered by `test_two_sessions_on_one_page_stay_distinct`, `test_changed_content_queues_refresh_without_duplicate`, `test_expired_lease_complete_does_not_publish`, `test_concurrent_complete_does_not_duplicate_candidates`, and concurrent claim |
-| T-06 | GEO-01, GEO-02, FIND-01 | Malaysia/non-Malaysia, radius boundary, denied location, missing venue coordinates, online eligibility, unknown fees and pagination; results match defined filters |
+| T-05 | EVT-02, OPS-01 | Re-import same page, changed content, several sessions per page, expired lease, duplicate completion and concurrent workers; no double publication or silent merge. Covered by `test_two_sessions_on_one_page_stay_distinct`, `test_changed_content_queues_refresh_without_duplicate`, `test_exists_refresh_updates_matched_course_when_source_key_drifts`, `test_expired_lease_complete_does_not_publish`, `test_concurrent_complete_does_not_duplicate_candidates`, and concurrent claim |
+| T-06 | GEO-01, GEO-02, FIND-01 | Malaysia/non-Malaysia, radius boundary, denied location, missing venue coordinates, online eligibility, unknown fees and pagination; results match defined filters. Catalogue listing now excludes `country != MY` and cancelled sessions; pagination and cancel-retain-records are in `test_catalogue_paginates_and_hides_non_malaysia_or_cancelled`. `max_fee_myr` excludes non-MYR prices even when `include_unknown` is set. Radius values outside 10/25/50/100 return 422 |
 | T-07 | REG-01, ATT-01, PROG-01 | Link click does not sign up; repeated save does not duplicate; future attendance rejected; corrections and year boundary recalculate once; unknown/unmapped credits excluded visibly |
-| T-08 | UI-01 | Keyboard-accessible sign-in/search/detail/portal, readable mobile layout, loading/empty/error states and retry; no fake success toast. Source labels and a live frontend-proxy sign-in/search/detail walk are in `test_t08_ui.py` / `test_t08_live.py`; a full keyboard browser pass remains |
+| T-08 | UI-01 | Keyboard-accessible sign-in/search/detail/portal, readable mobile layout, loading/empty/error states and retry; no fake success toast. Skip links stay in tab order via visually-hidden-until-focus (`left:8px` on focus, not off-screen). A 2026-09-27 live check on :3010 showed the skip link is the first focusable control and becomes visible on programmatic focus; a native Tab keystroke still could not be recorded through automation. HTTP walk remains in `test_t08_live.py` |
 | T-09 | SEC-01, SEC-02, OPS-01 | Check built client assets/logs for test secrets, internal route access, database ownership, origin policy and spending limits. Source-tree scan, origin default, and a built `.next` asset scan are covered by `backend/tests/test_t09_secrets.py` |
 | T-10 | DEMO-01, AI-01 | Real Tavily and selected open-weight inference calls; preserve redacted request evidence and model identity; demonstrate publish/search/track flow |
 
@@ -342,7 +342,7 @@ Mock tests run without secrets. Live tests are separate, explicitly use configur
 | BUILD-04 | BUILD-01 model choice, BUILD-02 | Adapter, evidence gate, and mocked T-04 20-page fixture evaluation exist; live accuracy still DEMO-01 |
 | BUILD-05 | BUILD-02, BUILD-04 | Existing publish + SQL catalogue filters on indexed columns; evidence remains in JSON. Flattened `Course` is the documented MVP of Training+Session |
 | BUILD-06 | BUILD-03, BUILD-05 | Existing records and progress; `signup_status` includes cancelled; `record_history` stores corrections |
-| BUILD-07 | BUILD-03, BUILD-05, BUILD-06 | Existing portal including digest/suggestions/certificate and retry; demo fixtures labelled; T-09 built-asset scan exists; T-08 keyboard browser pass remains |
+| BUILD-07 | BUILD-03, BUILD-05, BUILD-06 | Existing portal including digest/suggestions/certificate and retry; demo fixtures labelled; T-09 built-asset scan exists; dialog focus trap and public skip-link are in place; a recorded T-08 browser keyboard pass remains |
 | BUILD-08 | BUILD-01–07 | Not started. Run three-service deployment, live integration and complete demo; record T-10 evidence and known limitations |
 | BUILD-09 | BUILD-02, BUILD-05, OPEN-05, OPEN-09 | Done. Curated `config/scrape_topics.json` + daily enqueue (OPS-02) with `DAILY_SCRAPE_JOB_CEILING`; doctors search the owned catalogue only |
 | BUILD-10 | BUILD-06, OPEN-10 | Done. Digest preferences + biweekly send (NTF-01), catalogue suggestions (PROG-02), printable affiliation certificate (CERT-01) with non-regulator disclaimer. Default mailer is file log; set MAIL_PROVIDER=smtp for real email |
@@ -447,3 +447,7 @@ v0.16 links published candidates to `resulting_course_id` and lets `scripts/dev.
 v0.17 adds per-journey Retry, scraper `/health/live`+`/health/ready`, 30s lease heartbeats, candidate `schema_version`, 30-day raw-source purge, configurable `AGGREGATE_CREDIT_LABELS`, and scraper-token isolation / hourly job-limit tests; schema v14. DEMO-01 / T-10 / BUILD-08 remain owner-blocked without model keys.
 v0.18 adds T-03 lease-expiry-does-not-publish and T-05 same-source changed-content refresh-without-duplicate coverage. T-08 live keyboard walk and DEMO-01 remain.
 v0.19 proxies `/api/v1` through a runtime Next route so `BACKEND_URL` is not baked at build time, removes unused pre-portal `models.py`/`schemas.py`, and adds a live T-08 sign-in/search/detail walk through the frontend proxy when the portal is running.
+v0.20 fails closed on missing model input/output caps, hides non-Malaysia and cancelled sessions from catalogue search, adds operator cancel that retains personal records, covers T-03 heartbeat/timeout/credit-limit terminals, and moves dialog Escape/Tab trapping into the shared detail modal; schema v15. DEMO-01 / T-10 / BUILD-08 remain owner-blocked without model keys.
+v0.21 returns stored FieldEvidence on session detail, keeps suggestions/digests on the Malaysia published catalogue, and adds `GET /api/v1/admin/integrations` so the operator workspace can show model identity/weights/licence flags without secrets. DEMO-01 / T-10 / BUILD-08 remain owner-blocked without model keys.
+v0.22 persists optional session `end_date`, `timezone`, and `venue` on flattened Course, shows them on training detail, lets operators cancel a published session from the modal, and formats date-only values in `Asia/Kuala_Lumpur`; schema v16. Operator review can correct title, provider, dates, venue, city, fee and points when each change has a verbatim source excerpt. DEMO-01 / T-10 / BUILD-08 remain owner-blocked without model keys.
+v0.23 adds digest send backoff (`fail_count` / `next_retry_at`, schema v17), a signed-out HTML unsubscribe page, and published-vs-proposed refresh diffs on `exists` candidates so operators can review material changes before overwrite. Operator publish of a refresh updates the matched session (not a duplicate) even when `source_key` drifted, after stripping internal `_` candidate keys. `/live` now shows an opening status while detail loads, and its copy no longer claims accreditation or APC status. DEMO_MODE reseeds the documented demo password. DEMO-01 / T-10 / BUILD-08 remain owner-blocked without model keys.

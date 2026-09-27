@@ -67,6 +67,7 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/v1/auth/logout').status_code,200)
         self.assertEqual(self.client.get('/api/v1/me').status_code,401)
         self.assertEqual(self.client.get('/users/').status_code,404)
+        self.assertEqual(self.client.get('/internal/v1/catalogue/connect').status_code,403)
 
     def test_two_user_isolation_and_roles(self):
         self.assertEqual(self.save().status_code,200)
@@ -76,6 +77,12 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/v1/admin/candidates').status_code,403)
         self.assertEqual(self.client.post('/internal/v1/jobs/claim').status_code,403)
         self.assertNotIn('PRIVATE NOTE', self.client.get('/api/v1/me/export/csv').text)
+        self.assertEqual(self.client.get('/api/v1/me/progress').json()['attended'], 0)
+        self.assertEqual(self.client.get('/api/v1/me/trainings/' + self.course + '/history').json()['items'], [])
+        self.assertEqual(self.client.get('/api/v1/me/digest').status_code, 200)
+        self.assertEqual(self.client.get('/api/v1/me/suggestions').status_code, 200)
+        self.assertEqual(self.client.post('/api/v1/me/certificates', json={'year': 2026}).status_code, 201)
+        self.assertNotIn('PRIVATE NOTE', self.client.get('/api/v1/me/progress').text)
 
     def test_record_idempotency_and_points_corrections(self):
         first=self.save();self.assertEqual(first.status_code,200,first.text)
@@ -198,6 +205,16 @@ class PortalTests(unittest.TestCase):
         stored=self.client.get('/api/v1/admin/ingestion-jobs/'+claim['id']).json()
         self.assertEqual(stored['status'],'interrupted')
 
+    def test_heartbeat_extends_lease(self):
+        header={'Idempotency-Key':'heartbeat-key'}
+        self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP heartbeat'},headers=header)
+        service={'Authorization':'Bearer test-service-token'}
+        claim=self.client.post('/internal/v1/jobs/claim',headers=service).json()
+        beat=self.client.post('/internal/v1/jobs/'+claim['id']+'/heartbeat',json={'lease_token':claim['lease_token']},headers=service)
+        self.assertEqual(beat.status_code,200,beat.text)
+        stale=self.client.post('/internal/v1/jobs/'+claim['id']+'/heartbeat',json={'lease_token':'wrong'},headers=service)
+        self.assertEqual(stale.status_code,409)
+
     def test_invalid_evidence_cannot_publish(self):
         with self.Session() as db:
             j=Job(account_id=self.a,request_key='j',query='GP');db.add(j);db.flush()
@@ -216,6 +233,20 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(published.status_code,200,published.text)
         found=self.client.get('/api/v1/trainings?period=all&q=Corrected').json()['items']
         self.assertEqual(found[0]['title'],'Corrected GP Day')
+
+    def test_review_cannot_publish_unsafe_registration_url(self):
+        quote='Clinic day javascript:alert(1) by Learning Institute in Malaysia Kuala Lumpur online. 2026-01-01. CPD points 2.'
+        payload={**sample('Unsafe link'),'source_text':quote,'evidence':{key:quote for key in ['title','provider','mode','country','start_date','points','credit_label']}}
+        with self.Session() as db:
+            j=Job(account_id=self.a,request_key='unsafe-url',query='GP');db.add(j);db.flush()
+            c=Candidate(job_id=j.id,source_key='unsafe-source',data=payload);db.add(c);db.commit();cid=c.id
+        result=self.client.post(
+            '/api/v1/admin/candidates/'+cid+'/review',
+            json={'action':'publish','corrections':{'registration_url':'javascript:alert(1)'},'evidence':{'registration_url':'javascript:alert(1)'}},
+        )
+        self.assertEqual(result.status_code,422)
+        titles=[item['title'] for item in self.client.get('/api/v1/trainings?period=all').json()['items']]
+        self.assertNotIn('Unsafe link', titles)
 
     def test_hold_requires_reason_and_stays_out_of_catalogue(self):
         with self.Session() as db:
@@ -252,7 +283,31 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/v1/trainings?period=all&max_fee_myr=0').json()['total'],0)
         self.assertEqual(self.client.get('/api/v1/trainings?period=all&latitude=3.139&longitude=101.687&radius_km=25').json()['total'],1)
         self.assertEqual(self.client.get('/api/v1/trainings?latitude=3').status_code,422)
+        self.assertEqual(self.client.get('/api/v1/trainings?latitude=3.139&longitude=101.687&radius_km=15').status_code,422)
         self.assertEqual(self.client.get('/api/v1/trainings?page=0').status_code,422)
+
+    def test_catalogue_paginates_and_hides_non_malaysia_or_cancelled(self):
+        extra=self.add_course('page-two', title='Second GP seminar', start_date='2026-02-01')
+        foreign=self.add_course('sg-event', title='Singapore seminar', country='SG', start_date='2026-03-01')
+        first=self.client.get('/api/v1/trainings?period=all&page=1&page_size=1').json()
+        second=self.client.get('/api/v1/trainings?period=all&page=2&page_size=1').json()
+        self.assertEqual(first['page_size'],1)
+        self.assertGreaterEqual(first['total'],2)
+        self.assertEqual(len(first['items']),1)
+        self.assertEqual(len(second['items']),1)
+        self.assertNotEqual(first['items'][0]['id'], second['items'][0]['id'])
+        titles={item['title'] for item in self.client.get('/api/v1/trainings?period=all').json()['items']}
+        self.assertNotIn('Singapore seminar', titles)
+        self.assertEqual(self.client.get('/api/v1/trainings/'+foreign).json()['country'],'SG')
+        cancel=self.client.post('/api/v1/admin/trainings/'+extra+'/cancel')
+        self.assertEqual(cancel.status_code,200,cancel.text)
+        hidden={item['id'] for item in self.client.get('/api/v1/trainings?period=all').json()['items']}
+        self.assertNotIn(extra, hidden)
+        detail=self.client.get('/api/v1/trainings/'+extra)
+        self.assertEqual(detail.status_code,200)
+        self.assertEqual(detail.json()['publication_status'],'cancelled')
+        self.login('b@example.com')
+        self.assertEqual(self.client.post('/api/v1/admin/trainings/'+extra+'/cancel').status_code,403)
 
     def test_nearby_keeps_city_matches_without_coordinates(self):
         with self.Session() as db:
@@ -291,6 +346,19 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(fee_filter['total'], 0)
         self.assertEqual(fee_with_unknown['total'], 1)
 
+    def test_myr_fee_filter_excludes_other_currencies(self):
+        with self.Session() as db:
+            c = db.get(Course, self.course)
+            fill_course(c, {**c.data, 'fee': 80, 'currency': 'SGD', 'mode': 'online', 'start_date': '2026-01-01'})
+            db.commit()
+        self.assertEqual(self.client.get('/api/v1/trainings?period=all&max_fee_myr=200').json()['total'], 0)
+        self.assertEqual(self.client.get('/api/v1/trainings?period=all&max_fee_myr=200&include_unknown=true').json()['total'], 0)
+        with self.Session() as db:
+            c = db.get(Course, self.course)
+            fill_course(c, {**c.data, 'fee': 80, 'currency': 'MYR'})
+            db.commit()
+        self.assertEqual(self.client.get('/api/v1/trainings?period=all&max_fee_myr=200').json()['total'], 1)
+
     def test_state_and_date_range_filters_and_applied_filters(self):
         with self.Session() as db:
             c=db.get(Course,self.course)
@@ -317,9 +385,11 @@ class PortalTests(unittest.TestCase):
             migrate_schema(db)
             stored=db.get(Course,self.course)
             self.assertEqual((stored.title, stored.city), ('Backfilled GP','Johor Bahru'))
-            self.assertEqual(max(v.version for v in db.query(SchemaVersion).all()), 14)
+            self.assertEqual(max(v.version for v in db.query(SchemaVersion).all()), 17)
             self.assertIn('identity_issuer', {c['name'] for c in inspect(db.get_bind()).get_columns('accounts')})
             self.assertIn('verification_status', {c['name'] for c in inspect(db.get_bind()).get_columns('courses')})
+            self.assertIn('publication_status', {c['name'] for c in inspect(db.get_bind()).get_columns('courses')})
+            self.assertIn('end_date', {c['name'] for c in inspect(db.get_bind()).get_columns('courses')})
             self.assertIn('review_reason', {c['name'] for c in inspect(db.get_bind()).get_columns('course_candidates')})
             self.assertIn('signup_status', {c['name'] for c in inspect(db.get_bind()).get_columns('doctor_records')})
             self.assertIn('state', {c['name'] for c in inspect(db.get_bind()).get_columns('accounts')})
@@ -335,6 +405,7 @@ class PortalTests(unittest.TestCase):
             self.assertIn('schema_version', {c['name'] for c in inspect(db.get_bind()).get_columns('course_candidates')})
             self.assertIn('source_document_id', {c['name'] for c in inspect(db.get_bind()).get_columns('field_evidence')})
             tables = inspect(db.get_bind()).get_table_names()
+            self.assertIn('fail_count', {c['name'] for c in inspect(db.get_bind()).get_columns('digest_preferences')})
             self.assertIn('digest_preferences', tables)
             self.assertIn('affiliation_certificates', tables)
             self.assertIn('record_history', tables)
@@ -489,6 +560,20 @@ class PortalTests(unittest.TestCase):
         self.assertIn('GP training', titles)
         self.assertNotIn('Far clinic day', titles)
 
+    def test_operator_integrations_omit_secrets(self):
+        result=self.client.get('/api/v1/admin/integrations')
+        self.assertEqual(result.status_code,200,result.text)
+        body=result.json()
+        self.assertIn('model_key_configured', body)
+        self.assertIn('model_caps_configured', body)
+        blob=result.text
+        self.assertNotIn('TAVILY_API_KEY', blob)
+        self.assertNotIn('MODEL_API_KEY', blob)
+        self.assertNotIn('TYPESAFE_API_KEY', blob)
+        self.assertNotIn('test-service-token', blob)
+        self.login('b@example.com')
+        self.assertEqual(self.client.get('/api/v1/admin/integrations').status_code,403)
+
     def test_public_config_is_login_flags_only(self):
         body = self.client.get('/api/v1/config').json()
         self.assertEqual(set(body), {'demo', 'signup_enabled', 'oauth_google'})
@@ -513,6 +598,9 @@ class PortalTests(unittest.TestCase):
             self.assertGreaterEqual(len(rows),4)
             self.assertTrue(all(row.reviewed_by and row.reviewed_at for row in rows))
             self.assertTrue(all(row.source_document_id for row in rows))
+        detail=self.client.get('/api/v1/trainings/'+found['id']).json()
+        self.assertGreaterEqual(len(detail.get('field_evidence') or []),4)
+        self.assertTrue(all(item.get('excerpt') for item in detail['field_evidence']))
 
     def test_signed_up_at_and_points_origin(self):
         saved=self.save(signup_status='signed_up')
@@ -627,3 +715,20 @@ class PortalTests(unittest.TestCase):
     def test_end_date_cannot_precede_start(self):
         with self.assertRaises(ValueError):
             fill_course(Course(source_key='bad-dates'), {**sample(), 'end_date':'2025-01-01'})
+
+    def test_session_schedule_fields_persist(self):
+        quote=sample()['source_text']+' Ends 2026-01-02 at Menara venue Asia/Kuala_Lumpur.'
+        cid=self.add_course(
+            'scheduled',
+            title='Scheduled GP',
+            start_date='2026-01-01',
+            end_date='2026-01-02',
+            timezone='Asia/Kuala_Lumpur',
+            venue='Menara',
+            source_text=quote,
+            evidence={key:quote for key in ['title','provider','mode','country','start_date','end_date','timezone','venue']},
+        )
+        detail=self.client.get('/api/v1/trainings/'+cid).json()
+        self.assertEqual(detail['end_date'],'2026-01-02')
+        self.assertEqual(detail['timezone'],'Asia/Kuala_Lumpur')
+        self.assertEqual(detail['venue'],'Menara')
