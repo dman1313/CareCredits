@@ -74,7 +74,7 @@ def main():
         db.commit()
         publish_id = publish_candidate.id
         reject_id = reject_candidate.id
-    with TestClient(app, headers={'X-Care-Client': '1'}) as client:
+    with TestClient(app, headers={'X-Care-Client': '1', 'Origin': 'http://127.0.0.1:3000'}) as client:
         login = client.post('/api/v1/auth/login', json={'email': EMAIL, 'password': PASSWORD})
         if login.status_code != 200:
             raise SystemExit('Demo operator login failed. Check DEMO_MODE and the local database.')

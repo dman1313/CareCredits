@@ -399,8 +399,9 @@ async def request_boundary(request: Request, call_next):
     started = time.perf_counter()
     request.state.request_id = secrets.token_hex(8)
     if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') and not request.url.path.startswith('/internal/'):
-        origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
-        if request.headers.get('x-care-client') != '1' or (request.headers.get('origin') and request.headers['origin'] not in origins):
+        origins = [item.strip() for item in os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',') if item.strip()]
+        origin = (request.headers.get('origin') or '').strip()
+        if request.headers.get('x-care-client') != '1' or not origin or origin not in origins:
             return envelope(403, 'Request origin not allowed.', request)
     result = await call_next(request)
     result.headers['Cache-Control'] = 'no-store'

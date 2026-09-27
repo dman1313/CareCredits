@@ -111,6 +111,7 @@ export type Job = {
   result: {
     warnings?: string[];
     candidate_count?: number;
+    extraction_status?: string;
     sources?: TavilySource[];
     usage?: { tavily_credits?: number | null; model_tokens?: number | null };
   } | null;
@@ -127,7 +128,12 @@ export type JevJudgment = {
 
 export type Candidate = {
   id: string;
-  data: Course & { _refresh_diff?: RefreshDiff[]; _matched_course_id?: string; _judgment?: JevJudgment };
+  data: Course & {
+    _refresh_diff?: RefreshDiff[];
+    _matched_course_id?: string;
+    _judgment?: JevJudgment;
+    _fixture?: boolean;
+  };
   status: string;
   reason?: string;
   version?: number;

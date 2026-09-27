@@ -22,7 +22,20 @@ import {
 } from 'lucide-react';
 import { TrainingDetail } from '@/components/TrainingDetail';
 import { LiveIngestion } from '@/components/LiveIngestion';
-import { api, Course, emptyRecord, formatDate, Progress, RecordData, User } from '@/lib/portal';
+import { api, Course, distanceLabel, emptyRecord, formatDate, Progress, RecordData, RecordHistoryItem, User } from '@/lib/portal';
+
+const PAGE_SIZE = 12;
+
+function excludedCopy(progress: Progress | null) {
+  if (!progress?.excluded) return '';
+  const reasons = progress.excluded_reasons?.length
+    ? ': ' +
+      progress.excluded_reasons
+        .map((item) => (item.reason === 'unknown_points' ? 'unknown points' : item.credit_label || 'other credit type'))
+        .join(', ')
+    : ' (unknown or other credit types)';
+  return `${progress.excluded} attended record(s) excluded${reasons}.`;
+}
 
 const nav = [
   [LayoutDashboard, 'Overview'],
@@ -65,7 +78,8 @@ export default function LiveSearch() {
   const [booting, setBooting] = useState(true);
   const [signup, setSignup] = useState(false);
   const [oauth, setOauth] = useState(false);
-  const [history, setHistory] = useState<{ at: number }[]>([]);
+  const [demo, setDemo] = useState(false);
+  const [history, setHistory] = useState<RecordHistoryItem[]>([]);
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<'register' | 'signin'>('register');
   const [tab, setTab] = useState<(typeof nav)[number][1]>('Discover');
@@ -74,11 +88,18 @@ export default function LiveSearch() {
   const [password, setPassword] = useState('');
   const [query, setQuery] = useState('');
   const [city, setCity] = useState('');
+  const [state, setState] = useState('');
   const [deliveryMode, setDeliveryMode] = useState('');
   const [period, setPeriod] = useState('all');
   const [difficulty, setDifficulty] = useState('');
   const [maxFee, setMaxFee] = useState('');
   const [minPoints, setMinPoints] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [includeUnknown, setIncludeUnknown] = useState(false);
+  const [radius, setRadius] = useState('25');
+  const [page, setPage] = useState(1);
+  const [nearby, setNearby] = useState<{ latitude: number; longitude: number } | null>(null);
   const [year, setYear] = useState(() => new Date().getFullYear());
   const [courses, setCourses] = useState<Course[]>([]);
   const [total, setTotal] = useState(0);
@@ -95,12 +116,22 @@ export default function LiveSearch() {
   const [saving, setSaving] = useState(false);
   const [locationBusy, setLocationBusy] = useState(false);
   const [opening, setOpening] = useState(false);
+  const [records, setRecords] = useState<Course[]>([]);
+  const [recordsTotal, setRecordsTotal] = useState(0);
+  const [learningFilter, setLearningFilter] = useState<'all' | 'signed_up' | 'attended'>('all');
+  const [learningBusy, setLearningBusy] = useState(false);
 
   useEffect(() => {
     Promise.all([
       api('/config').then((c) => {
         setSignup(c.signup_enabled);
         setOauth(!!c.oauth_google);
+        setDemo(!!c.demo);
+        if (c.demo) {
+          setEmail((current) => current || 'demo@carecredits.local');
+          setPassword((current) => current || 'CareCredits-demo-2026');
+          setMode('signin');
+        }
       }),
       api('/me')
         .then(setUser)
@@ -108,33 +139,63 @@ export default function LiveSearch() {
     ]).finally(() => setBooting(false));
   }, []);
 
-  async function search(
-    nextQuery = query,
-    nextCity = city,
-    nextMode = deliveryMode,
-    nextPeriod = period,
-    nextDifficulty = difficulty,
-    nextMaxFee = maxFee,
-    nextMinPoints = minPoints,
-  ) {
+  async function search(overrides: {
+    query?: string;
+    city?: string;
+    state?: string;
+    mode?: string;
+    period?: string;
+    difficulty?: string;
+    maxFee?: string;
+    minPoints?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    includeUnknown?: boolean;
+    radius?: string;
+    page?: number;
+    nearby?: { latitude: number; longitude: number } | null;
+  } = {}) {
+    const nextQuery = overrides.query ?? query;
+    const nextCity = overrides.city ?? city;
+    const nextState = overrides.state ?? state;
+    const nextMode = overrides.mode ?? deliveryMode;
+    const nextPeriod = overrides.period ?? period;
+    const nextDifficulty = overrides.difficulty ?? difficulty;
+    const nextMaxFee = overrides.maxFee ?? maxFee;
+    const nextMinPoints = overrides.minPoints ?? minPoints;
+    const nextDateFrom = overrides.dateFrom ?? dateFrom;
+    const nextDateTo = overrides.dateTo ?? dateTo;
+    const nextIncludeUnknown = overrides.includeUnknown ?? includeUnknown;
+    const nextRadius = overrides.radius ?? radius;
+    const nextPage = overrides.page ?? page;
+    const nextNearby = overrides.nearby === undefined ? nearby : overrides.nearby;
     setLoading(true);
     setError('');
     try {
       const params = new URLSearchParams({
         q: nextQuery,
         city: nextCity,
+        state: nextState,
         period: nextPeriod,
-        page: '1',
-        page_size: '12',
-        include_unknown: 'true',
+        page: String(nextPage),
+        page_size: String(PAGE_SIZE),
+        include_unknown: String(nextIncludeUnknown),
       });
       if (nextMode) params.set('mode', nextMode);
       if (nextDifficulty) params.set('difficulty', nextDifficulty);
       if (nextMaxFee) params.set('max_fee_myr', nextMaxFee);
       if (nextMinPoints) params.set('min_points', nextMinPoints);
+      if (nextDateFrom) params.set('date_from', nextDateFrom);
+      if (nextDateTo) params.set('date_to', nextDateTo);
+      if (nextNearby) {
+        params.set('latitude', String(nextNearby.latitude));
+        params.set('longitude', String(nextNearby.longitude));
+        params.set('radius_km', nextRadius);
+      }
       const data = await api('/trainings?' + params);
       setCourses(data.items);
       setTotal(data.total);
+      setPage(nextPage);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -142,8 +203,25 @@ export default function LiveSearch() {
     }
   }
 
-  async function loadWorkspace(nextCity = city) {
-    await search(query, nextCity, deliveryMode, period, difficulty, maxFee, minPoints);
+  async function loadLearning(filter: 'all' | 'signed_up' | 'attended' = learningFilter) {
+    setLearningBusy(true);
+    try {
+      const params = new URLSearchParams({ page: '1', page_size: '12' });
+      if (filter === 'signed_up') params.set('signup_status', 'signed_up');
+      if (filter === 'attended') params.set('attendance_status', 'attended');
+      const data = await api('/me/trainings?' + params);
+      setRecords(data.items || []);
+      setRecordsTotal(data.total || 0);
+      setLearningFilter(filter);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLearningBusy(false);
+    }
+  }
+
+  async function loadWorkspace(nextCity = city, nextState = state) {
+    await search({ city: nextCity, state: nextState, page: 1 });
     try {
       const [nextProgress, digest, nextSuggestions] = await Promise.all([
         api('/me/progress?year=' + year),
@@ -153,20 +231,62 @@ export default function LiveSearch() {
       setProgress(nextProgress);
       setDigestOptIn(!!digest.opted_in);
       setSuggestions(nextSuggestions.items || []);
+      await loadLearning(learningFilter);
     } catch (e) {
       setError((e as Error).message);
     }
   }
 
   function clearFilters() {
+    const nextCity = user?.city || '';
+    const nextState = user?.state || '';
     setQuery('');
-    setCity(user?.city || '');
+    setCity(nextCity);
+    setState(nextState);
     setDeliveryMode('');
     setPeriod('all');
     setDifficulty('');
     setMaxFee('');
     setMinPoints('');
-    search('', user?.city || '', '', 'all', '', '', '');
+    setDateFrom('');
+    setDateTo('');
+    setIncludeUnknown(false);
+    setRadius('25');
+    setNearby(null);
+    setPage(1);
+    search({
+      query: '',
+      city: nextCity,
+      state: nextState,
+      mode: '',
+      period: 'all',
+      difficulty: '',
+      maxFee: '',
+      minPoints: '',
+      dateFrom: '',
+      dateTo: '',
+      includeUnknown: false,
+      radius: '25',
+      page: 1,
+      nearby: null,
+    });
+  }
+
+  function locateNearby() {
+    if (!navigator.geolocation) {
+      setError('Location is unavailable. Choose your city instead.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const next = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+        setNearby(next);
+        setPage(1);
+        search({ nearby: next, page: 1 });
+      },
+      () => setError('Location was not available. You can still search by city or state.'),
+      { timeout: 10000 },
+    );
   }
 
   async function saveLocation(event: FormEvent) {
@@ -189,7 +309,8 @@ export default function LiveSearch() {
       });
       setUser(saved);
       setCity(saved.city || '');
-      await loadWorkspace(saved.city || '');
+      setState(saved.state || '');
+      await loadWorkspace(saved.city || '', saved.state || '');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -200,8 +321,10 @@ export default function LiveSearch() {
   useEffect(() => {
     if (!user) return;
     const nextCity = city || user.city || '';
+    const nextState = state || user.state || '';
     if (!city && user.city) setCity(user.city);
-    loadWorkspace(nextCity).catch(() => {});
+    if (!state && user.state) setState(user.state);
+    loadWorkspace(nextCity, nextState).catch(() => {});
   }, [user]);
 
   async function toggleDigest(next: boolean) {
@@ -315,7 +438,16 @@ export default function LiveSearch() {
               </div>
             </div>
             <h1>{mode === 'register' ? 'Create your workspace' : 'Sign in to search'}</h1>
-            <p>Register, then search Malaysian CPD courses from the original dashboard.</p>
+            <p>
+              {demo
+                ? 'Demo mode: sign in as demo@carecredits.local to review fixtures and personal tracking. Live Tavily/model discovery needs configured credentials.'
+                : 'Register, then search Malaysian CPD courses from the original dashboard.'}
+            </p>
+            {demo && (
+              <p className="demo-banner">
+                <span className="badge">DEMO</span> Example courses and review candidates are fictional. Use doctor@carecredits.local for a pure doctor login.
+              </p>
+            )}
             {mode === 'register' && (
               <label>
                 Your name
@@ -445,7 +577,7 @@ export default function LiveSearch() {
               onSubmit={(event) => {
                 event.preventDefault();
                 setTab('Discover');
-                search();
+                search({ page: 1 });
               }}
             >
               <label className="search">
@@ -463,6 +595,13 @@ export default function LiveSearch() {
                 onChange={(e) => setCity(e.target.value)}
                 placeholder="Kuala Lumpur"
                 aria-label="City"
+              />
+              <input
+                className="city-search"
+                value={state}
+                onChange={(e) => setState(e.target.value)}
+                placeholder="Selangor"
+                aria-label="State"
               />
               <label className="city-search">
                 <select
@@ -511,8 +650,50 @@ export default function LiveSearch() {
                 placeholder="Min points"
                 aria-label="Minimum advertised points"
               />
+              <input
+                className="city-search"
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                aria-label="From date"
+              />
+              <input
+                className="city-search"
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                aria-label="To date"
+              />
+              <label className="city-search">
+                <select aria-label="Search radius" value={radius} onChange={(e) => setRadius(e.target.value)}>
+                  {[10, 25, 50, 100].map((km) => (
+                    <option key={km} value={km}>
+                      {km} km
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="city-search check-row">
+                <input
+                  type="checkbox"
+                  checked={includeUnknown}
+                  onChange={(e) => setIncludeUnknown(e.target.checked)}
+                  aria-label="Include unknown dates fees or points"
+                />
+                <span>Include unknowns</span>
+              </label>
               <button className="search-btn" disabled={loading}>
                 {loading ? <Loader2 className="spin" size={16} /> : 'Search'}
+              </button>
+              <button
+                className="text-link"
+                type="button"
+                onClick={() => {
+                  setTab('Discover');
+                  locateNearby();
+                }}
+              >
+                Near me
               </button>
               <button className="text-link" type="button" onClick={clearFilters}>
                 Clear filters
@@ -527,6 +708,12 @@ export default function LiveSearch() {
             </div>
           </header>
           <div className="content">
+            {demo && (
+              <p className="demo-banner">
+                <span className="badge">DEMO</span> Example courses and review candidates are fictional. Live discovery
+                needs configured Tavily and model credentials.
+              </p>
+            )}
             {error && (
               <p role="alert" className="alert">
                 {error}{' '}
@@ -569,7 +756,7 @@ export default function LiveSearch() {
                       className="primary"
                       onClick={() => {
                         setTab('Discover');
-                        search();
+                        search({ page: 1 });
                       }}
                     >
                       Find catalogue events <ChevronRight />
@@ -596,7 +783,7 @@ export default function LiveSearch() {
                     <div>
                       <p>Signed up</p>
                       <strong>{signed}</strong>
-                      {!!progress?.excluded && <small>{progress.excluded} excluded from the CPD total</small>}
+                      {!!progress?.excluded && <small>{excludedCopy(progress)}</small>}
                     </div>
                   </article>
                 </section>
@@ -615,23 +802,58 @@ export default function LiveSearch() {
                   {loading ? (
                     <p className="empty-copy">Finding your training…</p>
                   ) : courses.length ? (
-                    courses.map((course, index) => (
-                      <button key={course.id} className="event" onClick={() => openCourse(course)}>
-                        <span className={`event-photo ${tones[index % tones.length]}`} />
-                        <span className="event-name">
-                          <strong>{course.title}</strong>
-                          <small>
-                            {formatDate(course.start_date)} · {course.city || 'Online'}
-                          </small>
-                        </span>
-                        <span className="event-points">
-                          {course.points != null ? `${course.points} ${course.credit_label || 'CPD'} points` : 'Points not listed'}
-                        </span>
-                        <ChevronRight />
-                      </button>
-                    ))
+                    <>
+                      {courses.map((course, index) => (
+                        <button key={course.id} className="event" onClick={() => openCourse(course)}>
+                          <span className={`event-photo ${tones[index % tones.length]}`} />
+                          <span className="event-name">
+                            <strong>
+                              {course.title}
+                              {course.demo ? ' · Demo course' : ''}
+                            </strong>
+                            <small>
+                              {formatDate(course.start_date)} · {course.city || 'Online'}
+                              {distanceLabel(course, !!nearby)}
+                            </small>
+                          </span>
+                          <span className="event-points">
+                            {course.points != null ? `${course.points} ${course.credit_label || 'CPD'} points` : 'Points not listed'}
+                          </span>
+                          <ChevronRight />
+                        </button>
+                      ))}
+                      {total > PAGE_SIZE && (
+                        <div className="pager">
+                          <button
+                            className="text-link"
+                            type="button"
+                            disabled={page <= 1 || loading}
+                            onClick={() => search({ page: page - 1 })}
+                          >
+                            Previous
+                          </button>
+                          <span>
+                            Page {page} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+                          </span>
+                          <button
+                            className="text-link"
+                            type="button"
+                            disabled={page * PAGE_SIZE >= total || loading}
+                            onClick={() => search({ page: page + 1 })}
+                          >
+                            Next
+                          </button>
+                        </div>
+                      )}
+                      {nearby && (
+                        <p className="empty-copy">
+                          Approximate straight-line distance when venue coordinates exist; otherwise distance unavailable.
+                          Online sessions still appear for Online, Hybrid, or Any mode.
+                        </p>
+                      )}
+                    </>
                   ) : (
-                    <p className="empty-copy">No matching training. Try a broader topic or clear the city filter.</p>
+                    <p className="empty-copy">No matching training. Try a broader topic or clear filters.</p>
                   )}
                 </section>
               </div>
@@ -651,8 +873,8 @@ export default function LiveSearch() {
                     </div>
                   </div>
                   <p className="empty-copy">
-                    Save city and state on your profile. Catalogue search uses that city. Skipping location does not
-                    block the rest of the demo.
+                    Save city and state on your profile. Catalogue search uses those fields, or Near me with a radius when
+                    you share coordinates. Skipping location does not block the rest of the demo.
                   </p>
                   <form onSubmit={saveLocation}>
                     <label>
@@ -756,7 +978,11 @@ export default function LiveSearch() {
                           })}
                         </select>
                       </label>
-                      <p className="missing">{progress?.excluded ? `${progress.excluded} records excluded from the CPD total` : 'Opening a source does not register you with the provider.'}</p>
+                      <p className="missing">
+                        {progress?.excluded
+                          ? excludedCopy(progress)
+                          : 'Opening a source does not register you with the provider.'}
+                      </p>
                       <a className="text-link" href="/">
                         Open full workspace <ChevronRight />
                       </a>
@@ -791,6 +1017,71 @@ export default function LiveSearch() {
                     <button className="primary" disabled={certBusy} onClick={issueCertificate}>
                       {certBusy ? 'Preparing…' : 'Issue printable certificate'}
                     </button>
+                  </section>
+                )}
+                {tab === 'My Credits' && (
+                  <section className="card" id="live-learning" data-testid="live-learning">
+                    <div className="card-heading">
+                      <div>
+                        <span className="heading-icon">▣</span>
+                        <h2>My learning</h2>
+                      </div>
+                      <p>{recordsTotal} saved records</p>
+                    </div>
+                    <p className="empty-copy">
+                      Signed-up and attended lists from your personal record. Opening a provider link does not create a
+                      sign-up.
+                    </p>
+                    <div className="button-row">
+                      {(
+                        [
+                          ['all', 'All'],
+                          ['signed_up', 'Signed up'],
+                          ['attended', 'Attended'],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          className={learningFilter === value ? 'secondary chosen' : 'secondary'}
+                          type="button"
+                          aria-pressed={learningFilter === value}
+                          onClick={() => loadLearning(value)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                      <button className="text-link" type="button" onClick={() => loadLearning(learningFilter)}>
+                        Retry
+                      </button>
+                    </div>
+                    {learningBusy ? (
+                      <p className="empty-copy" role="status" aria-busy="true">
+                        Loading your learning record…
+                      </p>
+                    ) : records.length ? (
+                      records.map((course) => (
+                        <button key={course.id} className="event" type="button" onClick={() => openCourse(course)}>
+                          <span className="event-name">
+                            <strong>{course.title}</strong>
+                            <small>
+                              {formatDate(course.start_date)} ·{' '}
+                              {course.record?.attendance_status === 'attended'
+                                ? 'Attended'
+                                : course.record?.signup_status === 'signed_up'
+                                  ? 'Signed up'
+                                  : course.record?.signup_status === 'cancelled'
+                                    ? 'Sign-up cancelled'
+                                    : 'Saved'}
+                            </small>
+                          </span>
+                          <ChevronRight />
+                        </button>
+                      ))
+                    ) : (
+                      <p className="empty-copy">
+                        Your learning story starts here. Open a catalogue course to record sign-up or attendance.
+                      </p>
+                    )}
                   </section>
                 )}
                 {tab === 'My Credits' && (

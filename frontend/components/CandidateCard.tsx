@@ -71,6 +71,7 @@ export function CandidateCard({
           </p>
         </div>
         <div className="button-row">
+          {candidate.data._fixture ? <span className="status fixture">fixture</span> : null}
           <span className={'status ' + candidate.status}>{candidate.status}</span>
           <a href={candidate.data.source_url} target="_blank" rel="noreferrer" className="text-btn">
             Open source <ExternalLink size={14} />

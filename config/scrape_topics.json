@@ -1,7 +1,14 @@
 [
-  {"query": "GP CPD courses Kuala Lumpur", "max_results": 5},
-  {"query": "Family Medicine Scientific Conference Malaysia", "max_results": 5},
-  {"query": "Academy of Family Physicians Malaysia CME", "max_results": 5},
-  {"query": "Sunway Medical Centre CME conference", "max_results": 5},
-  {"query": "Malaysia medical CPD webinar 2026", "max_results": 5}
+  {"query": "site:afpm.org.my CME OR CPD OR \"continuing professional\"", "max_results": 5},
+  {"query": "site:mma.org.my CPD OR CME OR conference Malaysia", "max_results": 5},
+  {"query": "\"Academy of Family Physicians Malaysia\" CME OR CPD course", "max_results": 5},
+  {"query": "\"Family Medicine Scientific Conference\" Malaysia CPD", "max_results": 5},
+  {"query": "site:sunwaymedical.com CME OR CPD OR symposium", "max_results": 5},
+  {"query": "site:gleneagles.com.my CME OR \"continuous medical\" OR workshop", "max_results": 5},
+  {"query": "site:pjh.com.my OR \"Prince Court\" CME Malaysia doctors", "max_results": 5},
+  {"query": "GP CPD courses Kuala Lumpur OR Selangor medical training", "max_results": 5},
+  {"query": "Malaysia medical CPD webinar OR \"online CME\" doctors 2026", "max_results": 5},
+  {"query": "\"Ministry of Health\" Malaysia CPD OR CME primary care conference", "max_results": 5},
+  {"query": "\"Malaysian Medical Association\" scientific meeting CPD", "max_results": 5},
+  {"query": "\"Universiti Malaya\" OR \"UKM\" OR \"USM\" CME primary care GP", "max_results": 5}
 ]

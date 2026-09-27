@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 export type ServiceStatus = {
   backend: string;
@@ -34,17 +34,56 @@ export type IntegrationFlags = {
 export function IntegrationStatus({ className = 'small-note' }: { className?: string }) {
   const [integrations, setIntegrations] = useState<IntegrationFlags | null>(null);
   const [services, setServices] = useState<ServiceStatus | null>(null);
-  useEffect(() => {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
     const headers = { 'X-Care-Client': '1' };
-    fetch('/api/v1/admin/integrations', { credentials: 'include', headers })
-      .then((response) => (response.ok ? response.json() : null))
-      .then(setIntegrations)
-      .catch(() => setIntegrations(null));
-    fetch('/api/v1/admin/services', { credentials: 'include', headers })
-      .then((response) => (response.ok ? response.json() : null))
-      .then(setServices)
-      .catch(() => setServices(null));
+    Promise.all([
+      fetch('/api/v1/admin/services', { credentials: 'include', headers }).then(async (response) => {
+        if (!response.ok) throw new Error('Service status could not be loaded.');
+        return response.json();
+      }),
+      fetch('/api/v1/admin/integrations', { credentials: 'include', headers }).then(async (response) => {
+        if (!response.ok) throw new Error('Integration status could not be loaded.');
+        return response.json();
+      }),
+    ])
+      .then(([nextServices, nextIntegrations]) => {
+        setServices(nextServices);
+        setIntegrations(nextIntegrations);
+      })
+      .catch((err) => {
+        setServices(null);
+        setIntegrations(null);
+        setError(err instanceof Error ? err.message : 'Status could not be loaded.');
+      })
+      .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (loading) {
+    return (
+      <p className={className} role="status" aria-busy="true" data-testid="integration-loading">
+        Checking service and integration status…
+      </p>
+    );
+  }
+  if (error) {
+    return (
+      <p className={className} role="alert" data-testid="integration-error">
+        {error}{' '}
+        <button className="text-link" type="button" onClick={load}>
+          Retry
+        </button>
+      </p>
+    );
+  }
   if (!integrations && !services) return null;
   return (
     <>

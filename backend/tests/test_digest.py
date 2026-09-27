@@ -65,7 +65,7 @@ class DigestCertificateTests(unittest.TestCase):
             'PUBLIC_API_BASE': 'http://testserver',
         })
         self.env.start()
-        self.client = TestClient(app, headers={'X-Care-Client': '1'})
+        self.client = TestClient(app, headers={'X-Care-Client': '1', 'Origin': 'http://127.0.0.1:3000'})
         with self.Session() as db:
             doc = Account(email='doc@example.com', name='Doctor Dig', password_hash=HASH, city='Kuala Lumpur')
             op = Account(email='op@example.com', name='Operator', password_hash=HASH, role='operator')

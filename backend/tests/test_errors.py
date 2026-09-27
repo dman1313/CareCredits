@@ -32,7 +32,7 @@ class ErrorEnvelopeTests(unittest.TestCase):
                 yield db
 
         app.dependency_overrides[get_db] = dependency
-        self.client = TestClient(app, headers={'X-Care-Client': '1'})
+        self.client = TestClient(app, headers={'X-Care-Client': '1', 'Origin': 'http://127.0.0.1:3000'})
 
     def tearDown(self):
         app.dependency_overrides.clear()

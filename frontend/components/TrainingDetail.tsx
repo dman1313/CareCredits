@@ -40,6 +40,7 @@ export function TrainingDetail({
   const dialogRef = useRef<HTMLElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         onClose();
@@ -73,6 +74,7 @@ export function TrainingDetail({
         role="dialog"
         aria-modal="true"
         aria-labelledby="training-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <button autoFocus className="modal-close icon-btn" aria-label="Close training details" onClick={onClose}>

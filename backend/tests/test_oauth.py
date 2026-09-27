@@ -22,7 +22,7 @@ from main import app
 
 class OAuthTests(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(app, headers={'X-Care-Client': '1'})
+        self.client = TestClient(app, headers={'X-Care-Client': '1', 'Origin': 'http://127.0.0.1:3000'})
 
     def test_unconfigured_start_is_unavailable(self):
         result = self.client.get('/api/v1/auth/oauth/google', follow_redirects=False)

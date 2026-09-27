@@ -58,16 +58,19 @@ def enqueue_daily(db: Session, force: bool = False) -> dict:
     ceiling = daily_ceiling()
     enqueued = 0
     skipped = 0
+    used_today = 0
     for topic in topics:
-        if enqueued >= ceiling:
-            skipped += len(topics) - enqueued - skipped
-            break
         request_key = digest('daily:' + day + ':' + topic['query'])
         existing = db.query(Job).filter_by(request_key=request_key).first()
         if existing and not force:
+            used_today += 1
             skipped += 1
             continue
         if existing and force and existing.status in ('queued', 'running'):
+            used_today += 1
+            skipped += 1
+            continue
+        if used_today >= ceiling:
             skipped += 1
             continue
         if existing and force:
@@ -76,9 +79,11 @@ def enqueue_daily(db: Session, force: bool = False) -> dict:
             existing.lease_until = None
             existing.started_at = None
             existing.result = None
+            used_today += 1
             enqueued += 1
             continue
         db.add(Job(account_id=op.id, request_key=request_key, query=topic['query'], status='queued', created_at=time.time()))
+        used_today += 1
         enqueued += 1
     db.commit()
     return {'enqueued': enqueued, 'skipped': skipped, 'day': day, 'ceiling': ceiling, 'topics': len(topics)}

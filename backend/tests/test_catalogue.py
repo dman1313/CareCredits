@@ -75,7 +75,7 @@ class CatalogueApiTests(unittest.TestCase):
             )
             db.add(op)
             db.commit()
-        self.client = TestClient(app, headers={'X-Care-Client': '1'})
+        self.client = TestClient(app, headers={'X-Care-Client': '1', 'Origin': 'http://127.0.0.1:3000'})
         self.service = {'Authorization': 'Bearer test-service-token'}
         self.keyfile = patch('jev.keyfile_path')
         mocked = self.keyfile.start()
@@ -167,9 +167,12 @@ class CatalogueApiTests(unittest.TestCase):
         self.assertEqual(save.json()['status'], 'held')
 
     def test_daily_scrape_enqueue(self):
-        self.assertTrue(load_topics())
+        topics = load_topics()
+        self.assertTrue(topics)
+        self.assertTrue(any('site:' in item['query'] for item in topics))
         first = enqueue_daily(self.Session())
         self.assertGreaterEqual(first['enqueued'], 1)
+        self.assertLessEqual(first['enqueued'], first['ceiling'])
         second = enqueue_daily(self.Session())
         self.assertEqual(second['enqueued'], 0)
         self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': 'CareCredits-demo-2026'})

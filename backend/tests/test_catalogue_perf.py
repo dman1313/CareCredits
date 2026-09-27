@@ -61,7 +61,7 @@ class CataloguePerfTests(unittest.TestCase):
             'DIGEST_ENABLED': 'false',
         })
         self.env.start()
-        self.client = TestClient(app, headers={'X-Care-Client': '1'})
+        self.client = TestClient(app, headers={'X-Care-Client': '1', 'Origin': 'http://127.0.0.1:3000'})
         with self.Session() as db:
             db.add(Account(email='perf@example.com', name='Perf Doctor', password_hash=password_hash(PASSWORD)))
             for index in range(1000):

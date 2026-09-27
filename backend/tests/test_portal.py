@@ -38,7 +38,7 @@ class PortalTests(unittest.TestCase):
         app.dependency_overrides[get_db]=dependency
         self.env=patch.dict(os.environ,{'APP_ENV':'test','DEMO_MODE':'false','SCRAPER_SERVICE_TOKEN':'test-service-token','ALLOW_SIGNUP':'true','DAILY_SCRAPE_ENABLED':'false','DIGEST_ENABLED':'false'})
         self.env.start()
-        self.client=TestClient(app,headers={'X-Care-Client':'1'})
+        self.client=TestClient(app,headers={'X-Care-Client':'1','Origin':'http://127.0.0.1:3000'})
         with self.Session() as db:
             a=Account(email='a@example.com',name='Doctor A',password_hash=HASH,role='operator')
             b=Account(email='b@example.com',name='Doctor B',password_hash=HASH)
@@ -64,6 +64,12 @@ class PortalTests(unittest.TestCase):
     def test_authentication_csrf_and_logout(self):
         self.assertIn('HttpOnly',self.login().headers['set-cookie'])
         self.assertEqual(self.client.post('/api/v1/auth/logout',headers={'Origin':'https://evil.example'}).status_code,403)
+        bare=TestClient(app,headers={'X-Care-Client':'1'})
+        bare.cookies.update(self.client.cookies)
+        self.assertEqual(bare.post('/api/v1/auth/logout').status_code,403)
+        no_client=TestClient(app,headers={'Origin':'http://127.0.0.1:3000'})
+        no_client.cookies.update(self.client.cookies)
+        self.assertEqual(no_client.post('/api/v1/auth/logout').status_code,403)
         self.assertEqual(self.client.post('/api/v1/auth/logout').status_code,200)
         self.assertEqual(self.client.get('/api/v1/me').status_code,401)
         self.assertEqual(self.client.get('/users/').status_code,404)
@@ -833,6 +839,8 @@ class PortalTests(unittest.TestCase):
 
     def test_demo_seed_exposes_provider_registration_urls(self):
         from seed_demo import seed
+        from security import password_hash, password_matches
+        from portal_models import Candidate, Record
         with self.Session() as db:
             seed(db)
             rows=db.query(Course).filter(Course.source_key.like('demo-%')).all()
@@ -840,9 +848,30 @@ class PortalTests(unittest.TestCase):
             for row in rows:
                 url=(row.data or {}).get('registration_url')
                 self.assertTrue(url and url.startswith('https://example.org/carecredits-demo-') and url.endswith('/register'), row.source_key)
+            pending=db.query(Candidate).filter(Candidate.status=='pending', Candidate.source_key.like('demo-candidate-%')).all()
+            self.assertGreaterEqual(len(pending),2)
+            for cand in pending:
+                self.assertIn('Demonstration source only', (cand.data or {}).get('source_text',''))
+                self.assertTrue((cand.data or {}).get('_fixture'))
+            from portal_models import Job
+            job=db.query(Job).filter_by(request_key='demo-review-queue').one()
+            self.assertEqual((job.result or {}).get('extraction_status'), 'fixture')
+            doctor=db.query(Account).filter_by(email='doctor@carecredits.local').one()
+            operator=db.query(Account).filter_by(email='demo@carecredits.local').one()
+            self.assertGreaterEqual(db.query(Record).filter_by(account_id=doctor.id).count(),2)
+            self.assertGreaterEqual(db.query(Record).filter_by(account_id=operator.id).count(),2)
             first=rows[0]
             first.data={**(first.data or {}), 'registration_url': None}
+            demo=db.query(Account).filter_by(email='demo@carecredits.local').one()
+            demo.password_hash=password_hash('Wrong-demo-password-999')
             db.commit()
             seed(db)
             refreshed=db.get(Course, first.id)
             self.assertTrue((refreshed.data or {}).get('registration_url', '').endswith('/register'))
+            demo=db.query(Account).filter_by(email='demo@carecredits.local').one()
+            self.assertTrue(password_matches('CareCredits-demo-2026', demo.password_hash))
+            # Reseed keeps pending review candidates when already present.
+            self.assertGreaterEqual(
+                db.query(Candidate).filter(Candidate.status=='pending', Candidate.source_key.like('demo-candidate-%')).count(),
+                2,
+            )

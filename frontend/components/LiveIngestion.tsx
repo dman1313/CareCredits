@@ -8,6 +8,15 @@ import { api, Candidate, Job } from '@/lib/portal';
 
 const TERMINAL = new Set(['succeeded', 'partial', 'failed']);
 
+function isFixtureJob(job: Job | null) {
+  if (!job) return false;
+  return (
+    job.result?.extraction_status === 'fixture' ||
+    (job.query || '').toLowerCase().includes('fictional fixtures') ||
+    (job.result?.warnings || []).some((warning) => warning.toUpperCase().includes('FIXTURE'))
+  );
+}
+
 export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
   const [query, setQuery] = useState('GP CPD courses Kuala Lumpur');
   const [maxResults, setMaxResults] = useState(3);
@@ -28,7 +37,13 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
   }
 
   useEffect(() => {
-    loadCandidates();
+    Promise.all([api('/admin/ingestion-jobs'), loadCandidates()])
+      .then(([jobs]) => {
+        const items: Job[] = jobs.items || [];
+        const fixture = items.find((item) => isFixtureJob(item));
+        if (fixture) setJob(fixture);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -84,16 +99,27 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
 
   const sources = job?.result?.sources || [];
   const warnings = job?.result?.warnings || [];
+  const fixtureJob = isFixtureJob(job);
+  const fixtureCandidates = candidates.some(
+    (item) => item.data._fixture || (item.data.source_url || '').includes('carecredits-demo-candidate'),
+  );
 
   return (
     <section className="card">
       <div className="card-heading">
         <div>
           <span className="heading-icon">▣</span>
-          <h2>Live ingestion</h2>
+          <h2>{fixtureJob || fixtureCandidates ? 'Fixture review queue' : 'Live ingestion'}</h2>
         </div>
       </div>
       <IntegrationStatus className="empty-copy" />
+      {(fixtureJob || fixtureCandidates) && (
+        <p className="empty-copy" data-testid="fixture-review-banner">
+          <span className="badge">FIXTURE</span> Pending candidates below are fictional demo fixtures for offline
+          review. They are not a live Tavily Search/Extract or model run. Start a bounded discovery below only when
+          live credentials are configured.
+        </p>
+      )}
       <form className="empty-copy" onSubmit={start}>
         <label>
           Malaysia training topic
@@ -131,7 +157,8 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
         </button>
       </form>
       <p className="empty-copy">
-        One Search and, if URLs return, one Extract for up to five pages. Doctor search never calls Tavily.
+        One Search and, if URLs return, one Extract for up to five pages. Doctor search never calls Tavily. Live jobs
+        spend operator credits; fixture queue items do not.
       </p>
       {error && (
         <p role="alert" className="alert">
@@ -141,7 +168,7 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
       {job && (
         <div className="empty-copy" data-testid="live-job-status">
           <p>
-            Job {job.status}
+            {fixtureJob ? 'Fixture job' : 'Job'} {job.status}
             {job.result?.usage?.tavily_credits != null ? ` · ${job.result.usage.tavily_credits} reported Tavily credits` : ''}
             {job.result?.usage?.model_tokens != null ? ` · ${job.result.usage.model_tokens} reported model tokens` : ''}
           </p>
@@ -154,7 +181,7 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
               ))}
             </ul>
           ) : (
-            <p>No Tavily source URLs yet.</p>
+            <p>{fixtureJob ? 'Fixture sources are labelled below. No Tavily URLs were fetched.' : 'No Tavily source URLs yet.'}</p>
           )}
           {warnings.map((warning) => (
             <p key={warning}>{warning}</p>
