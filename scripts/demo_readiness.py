@@ -34,11 +34,13 @@ def main() -> int:
         ('MODEL_MAX_INPUT_CHARS', present('MODEL_MAX_INPUT_CHARS')),
         ('MODEL_MAX_OUTPUT_TOKENS', present('MODEL_MAX_OUTPUT_TOKENS')),
         ('SCRAPER_SERVICE_TOKEN', present('SCRAPER_SERVICE_TOKEN')),
-        ('BACKEND_INTERNAL_URL', present('BACKEND_INTERNAL_URL')),
     ]
+    # Match scraper/worker.py: unset URL defaults to local backend.
+    backend_url = (os.getenv('BACKEND_INTERNAL_URL') or 'http://127.0.0.1:8000').strip()
     print('CareCredits DEMO-01 readiness (no secrets printed, no API calls):')
     for label, ok in checks:
         print(f'  {"OK " if ok else "NO "} {label}')
+    print(f'  OK  BACKEND_INTERNAL_URL (effective: {backend_url})')
 
     fixture = root / 'backend' / 'seed_demo.py'
     live_ui = root / 'frontend' / 'app' / 'live' / 'page.tsx'

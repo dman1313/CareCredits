@@ -41,7 +41,7 @@ export function IntegrationStatus({ className = 'small-note' }: { className?: st
     setLoading(true);
     setError('');
     const headers = { 'X-Care-Client': '1' };
-    Promise.all([
+    Promise.allSettled([
       fetch('/api/v1/admin/services', { credentials: 'include', headers }).then(async (response) => {
         if (!response.ok) throw new Error('Service status could not be loaded.');
         return response.json();
@@ -51,14 +51,21 @@ export function IntegrationStatus({ className = 'small-note' }: { className?: st
         return response.json();
       }),
     ])
-      .then(([nextServices, nextIntegrations]) => {
+      .then(([servicesResult, integrationsResult]) => {
+        const nextServices = servicesResult.status === 'fulfilled' ? servicesResult.value : null;
+        const nextIntegrations = integrationsResult.status === 'fulfilled' ? integrationsResult.value : null;
         setServices(nextServices);
         setIntegrations(nextIntegrations);
-      })
-      .catch((err) => {
-        setServices(null);
-        setIntegrations(null);
-        setError(err instanceof Error ? err.message : 'Status could not be loaded.');
+        if (!nextServices && !nextIntegrations) {
+          const first =
+            (servicesResult.status === 'rejected' && servicesResult.reason) ||
+            (integrationsResult.status === 'rejected' && integrationsResult.reason);
+          setError(first instanceof Error ? first.message : 'Status could not be loaded.');
+        } else if (!nextServices) {
+          setError('Three-service readiness is unavailable. Integration flags below are still from this backend.');
+        } else if (!nextIntegrations) {
+          setError('Integration status could not be loaded.');
+        }
       })
       .finally(() => setLoading(false));
   }, []);
@@ -74,19 +81,26 @@ export function IntegrationStatus({ className = 'small-note' }: { className?: st
       </p>
     );
   }
-  if (error) {
-    return (
+  if (!integrations && !services) {
+    return error ? (
       <p className={className} role="alert" data-testid="integration-error">
         {error}{' '}
         <button className="text-link" type="button" onClick={load}>
           Retry
         </button>
       </p>
-    );
+    ) : null;
   }
-  if (!integrations && !services) return null;
   return (
     <>
+      {error ? (
+        <p className={className} role="alert" data-testid="integration-error">
+          {error}{' '}
+          <button className="text-link" type="button" onClick={load}>
+            Retry
+          </button>
+        </p>
+      ) : null}
       {services ? (
         <p className={className} data-testid="service-status">
           Backend {services.backend} · database {services.database} (owned by {services.database_owner}) · scraper{' '}

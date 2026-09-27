@@ -124,6 +124,7 @@ class DiscoveryTests(unittest.TestCase):
         sample = (
             'TAVILY_API_KEY=\nMODEL_API_KEY=\nTYPESAFE_API_KEY=\nMODEL_ID=\n'
             'MODEL_WEIGHTS_URL=\nMODEL_LICENSE_URL=\nMODEL_PUBLISHER=\nMODEL_HOST=\n'
+            'MODEL_BASE_URL=\nMODEL_MAX_INPUT_CHARS=\nMODEL_MAX_OUTPUT_TOKENS=\n'
             'MODEL_OPEN_WEIGHT_CONFIRMED=false\n'
         )
         answers = iter([
@@ -132,6 +133,9 @@ class DiscoveryTests(unittest.TestCase):
             'https://huggingface.co/Qwen/Qwen3-test/blob/main/LICENSE',
             'Qwen',
             'Nebius Token Factory',
+            'https://api.tokenfactory.nebius.com/v1',
+            '12000',
+            '4000',
             'yes',
         ])
         with tempfile.TemporaryDirectory() as folder:
@@ -148,6 +152,9 @@ class DiscoveryTests(unittest.TestCase):
             self.assertIn('MODEL_PUBLISHER=Qwen', saved)
             self.assertIn('MODEL_HOST=Nebius Token Factory', saved)
             self.assertIn('MODEL_OPEN_WEIGHT_CONFIRMED=true', saved)
+            self.assertIn('MODEL_BASE_URL=https://api.tokenfactory.nebius.com/v1', saved)
+            self.assertIn('MODEL_MAX_INPUT_CHARS=12000', saved)
+            self.assertIn('MODEL_MAX_OUTPUT_TOKENS=4000', saved)
             self.assertIn('MODEL_API_KEY=sk-test-only', saved)
             self.assertNotIn('sk-test-only', output.getvalue())
             self.assertEqual((root / '.env').stat().st_mode & 0o777, 0o600)

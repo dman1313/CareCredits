@@ -25,7 +25,7 @@ os.environ['DATABASE_URL'] = 'sqlite:///' + str(DB_PATH)
 
 from main import app, source_key
 from database import Base, get_db, engine
-from portal_models import Account, Course, fill_course
+from portal_models import Account, Course, Job, fill_course
 from security import password_hash
 from shared.contracts import Training
 from schedule import enqueue_daily, load_topics
@@ -170,9 +170,16 @@ class CatalogueApiTests(unittest.TestCase):
         topics = load_topics()
         self.assertTrue(topics)
         self.assertTrue(any('site:' in item['query'] for item in topics))
+        self.assertTrue(any(item['max_results'] != 5 for item in topics), 'at least one topic should exercise non-default max_results')
         first = enqueue_daily(self.Session())
         self.assertGreaterEqual(first['enqueued'], 1)
         self.assertLessEqual(first['enqueued'], first['ceiling'])
+        by_query = {item['query']: max(1, min(int(item['max_results']), 5)) for item in topics}
+        with self.Session() as db:
+            matched = [job for job in db.query(Job).all() if job.query in by_query]
+            self.assertTrue(matched)
+            for job in matched:
+                self.assertEqual(job.max_results, by_query[job.query])
         second = enqueue_daily(self.Session())
         self.assertEqual(second['enqueued'], 0)
         self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': 'CareCredits-demo-2026'})

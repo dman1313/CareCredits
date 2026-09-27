@@ -58,6 +58,24 @@ class ErrorEnvelopeTests(unittest.TestCase):
         self.assertEqual(body['code'], 'not_found')
         self.assertTrue(body['request_id'])
 
+    def test_unhandled_error_uses_envelope_without_traceback(self):
+        from unittest.mock import patch
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError('secret stack should not leak')
+
+        with patch('main.preference_json', side_effect=boom):
+            self.client.post('/api/v1/auth/register', json={'email': 'err@example.com', 'password': 'CareCredits-demo-2026', 'name': 'Err'})
+            self.client.post('/api/v1/auth/login', json={'email': 'err@example.com', 'password': 'CareCredits-demo-2026'})
+            result = self.client.get('/api/v1/me/digest')
+        self.assertEqual(result.status_code, 500)
+        body = result.json()['error']
+        self.assertEqual(body['code'], 'error')
+        self.assertEqual(body['message'], 'Request failed.')
+        self.assertTrue(body['request_id'])
+        self.assertNotIn('secret stack', result.text)
+        self.assertNotIn('traceback', result.text.lower())
+
     def test_liveness_does_not_require_database(self):
         live = self.client.get('/health/live')
         self.assertEqual(live.status_code, 200)

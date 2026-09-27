@@ -10,6 +10,13 @@ class ScraperHealthTests(unittest.TestCase):
             payload = ready()
             self.assertEqual(payload['status'], 'not_ready')
             self.assertIn('SCRAPER_SERVICE_TOKEN', payload['missing'])
+            self.assertEqual(payload['backend_internal_url'], 'http://127.0.0.1:8000')
+
+    def test_ready_defaults_backend_url_like_worker(self):
+        with patch.dict(os.environ, {'SCRAPER_SERVICE_TOKEN': 'token', 'BACKEND_INTERNAL_URL': '', 'TAVILY_API_KEY': '', 'MODEL_API_KEY': '', 'MODEL_ID': ''}, clear=False):
+            payload = ready()
+            self.assertEqual(payload['status'], 'ready')
+            self.assertEqual(payload['backend_internal_url'], 'http://127.0.0.1:8000')
 
     def test_ready_does_not_call_paid_providers(self):
         with patch.dict(os.environ, {'SCRAPER_SERVICE_TOKEN': 'token', 'BACKEND_INTERNAL_URL': 'http://127.0.0.1:8000', 'TAVILY_API_KEY': 'set', 'MODEL_API_KEY': '', 'MODEL_ID': ''}, clear=False):

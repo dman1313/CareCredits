@@ -223,6 +223,11 @@ class DigestCertificateTests(unittest.TestCase):
         html = self.client.get(body['download_path'] + '?format=html')
         self.assertEqual(html.status_code, 200)
         self.assertIn('CareCredits', html.text)
+        # Unicode names fold for Helvetica PDF but remain intact in HTML.
+        from certificates import _pdf_escape
+
+        self.assertIn('Jose', _pdf_escape('José'))
+        self.assertNotIn('\u0301', _pdf_escape('José'))
         self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': PASSWORD})
         self.assertEqual(self.client.get(body['download_path']).status_code, 404)
 

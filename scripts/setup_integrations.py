@@ -23,6 +23,9 @@ def main():
         ('MODEL_LICENSE_URL','Official model licence URL', r'[A-Za-z0-9_./:?=&%#@+~-]+'),
         ('MODEL_PUBLISHER','Model publisher', r'[A-Za-z0-9][A-Za-z0-9 ._+/-]{0,80}'),
         ('MODEL_HOST','Model hosting provider', r'[A-Za-z0-9][A-Za-z0-9 ._+/-]{0,80}'),
+        ('MODEL_BASE_URL','Model API base URL', r'https?://[A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]+'),
+        ('MODEL_MAX_INPUT_CHARS','Model max input characters', r'[1-9][0-9]{2,7}'),
+        ('MODEL_MAX_OUTPUT_TOKENS','Model max output tokens', r'[1-9][0-9]{1,6}'),
     ]:
         value=input(label+' (blank keeps existing): ').strip()
         if value:

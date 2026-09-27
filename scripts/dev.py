@@ -24,43 +24,82 @@ def free_port(preferred):
     raise RuntimeError('No free local port near ' + str(preferred))
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--demo', action='store_true')
-    parser.add_argument('--backend-port', type=int, default=int(os.getenv('BACKEND_PORT') or 8000))
-    parser.add_argument('--frontend-port', type=int, default=int(os.getenv('FRONTEND_PORT') or 3000))
-    args = parser.parse_args()
-    root = Path(__file__).resolve().parents[1]
-    settings = {k: v for k, v in dotenv_values(root / '.env').items() if v is not None}
-    backend_port = free_port(args.backend_port)
-    frontend_port = free_port(args.frontend_port)
+MODEL_IDENTITY = (
+    'MODEL_ID',
+    'MODEL_PUBLISHER',
+    'MODEL_HOST',
+    'MODEL_WEIGHTS_URL',
+    'MODEL_LICENSE_URL',
+    'MODEL_OPEN_WEIGHT_CONFIRMED',
+    'MODEL_MAX_INPUT_CHARS',
+    'MODEL_MAX_OUTPUT_TOKENS',
+)
+BACKEND_OPTIONAL = (
+    'TYPESAFE_API_KEY',
+    'JEV_CONFIDENCE_FLOOR',
+    'DAILY_SCRAPE_JOB_CEILING',
+    'SCRAPE_TOPICS_FILE',
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'GOOGLE_REDIRECT_URI',
+    'CATALOGUE_AUTO_PUBLISH_NEW',
+    'MAIL_PROVIDER',
+    'DIGEST_ENABLED',
+    'DIGEST_LOG_DIR',
+    'SMTP_HOST',
+    'SMTP_PORT',
+    'SMTP_USER',
+    'SMTP_PASSWORD',
+    'SMTP_FROM',
+)
+
+
+def service_environments(
+    root: Path,
+    settings: dict,
+    environ: dict,
+    backend_port: int,
+    frontend_port: int,
+    health_port: int,
+    demo: bool,
+    token: str,
+    typesafe_keyfile: Path | None = None,
+):
+    """Split local env so paid secrets stay on the owning process (SEC-01 / DEMO-01)."""
     frontend = 'http://127.0.0.1:' + str(frontend_port)
     api = 'http://127.0.0.1:' + str(backend_port)
-    common = {**os.environ, 'NEXT_TELEMETRY_DISABLED': '1', 'PYTHONPATH': str(root) + os.pathsep + str(root / 'backend')}
-    # Scope provider and DB secrets explicitly to their owning process.
+    health = 'http://127.0.0.1:' + str(health_port)
+    common = {**environ, 'NEXT_TELEMETRY_DISABLED': '1', 'PYTHONPATH': str(root) + os.pathsep + str(root / 'backend')}
     for key in list(common):
-        if key.startswith(('MODEL_', 'TAVILY_', 'TYPESAFE_', 'JEV_', 'DAILY_', 'SCRAPE_', 'FIREHOSE_', 'GOOGLE_')) or key in ('DATABASE_URL', 'POSTGRES_PASSWORD', 'SCRAPER_SERVICE_TOKEN'):
+        if key.startswith(('MODEL_', 'TAVILY_', 'TYPESAFE_', 'JEV_', 'DAILY_', 'SCRAPE_', 'FIREHOSE_', 'GOOGLE_')) or key in (
+            'DATABASE_URL',
+            'POSTGRES_PASSWORD',
+            'SCRAPER_SERVICE_TOKEN',
+            'MODEL_API_KEY',
+            'SMTP_PASSWORD',
+        ):
             common.pop(key)
-    token = settings.get('SCRAPER_SERVICE_TOKEN') or secrets.token_urlsafe(32)
-    (root / '.data').mkdir(exist_ok=True)
-    db_url = os.getenv('DATABASE_URL') or settings.get('DATABASE_URL') or 'sqlite:///' + str(root / '.data' / ('demo.db' if args.demo else 'carecredits.db'))
+    db_url = environ.get('DATABASE_URL') or settings.get('DATABASE_URL') or 'sqlite:///' + str(root / '.data' / ('demo.db' if demo else 'carecredits.db'))
     backend = {
         **common,
         'DATABASE_URL': db_url,
         'APP_ENV': 'development',
-        'DEMO_MODE': str(args.demo).lower(),
-        'ALLOW_SIGNUP': 'true' if args.demo else settings.get('ALLOW_SIGNUP', 'false'),
+        'DEMO_MODE': str(demo).lower(),
+        'ALLOW_SIGNUP': 'true' if demo else settings.get('ALLOW_SIGNUP', 'false'),
         'SCRAPER_SERVICE_TOKEN': token,
         'DAILY_SCRAPE_ENABLED': settings.get('DAILY_SCRAPE_ENABLED', 'true'),
         'PUBLIC_API_BASE': api,
         'PUBLIC_FRONTEND_BASE': frontend,
         'ALLOWED_ORIGINS': 'http://localhost:' + str(frontend_port) + ',' + frontend,
+        'SCRAPER_HEALTH_URL': health,
     }
-    for key in ('TYPESAFE_API_KEY', 'JEV_CONFIDENCE_FLOOR', 'DAILY_SCRAPE_JOB_CEILING', 'SCRAPE_TOPICS_FILE', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI'):
+    for key in (*BACKEND_OPTIONAL, *MODEL_IDENTITY):
         if settings.get(key):
             backend[key] = settings[key]
+    if (settings.get('MODEL_API_KEY') or '').strip():
+        backend['MODEL_KEY_CONFIGURED'] = 'true'
     if not (backend.get('TYPESAFE_API_KEY') or '').strip():
-        keyfile = Path.home() / '.typesafe' / 'key'
+        keyfile = typesafe_keyfile if typesafe_keyfile is not None else Path.home() / '.typesafe' / 'key'
         try:
             if keyfile.is_file():
                 file_key = keyfile.read_text().strip()
@@ -73,8 +112,36 @@ def main():
         **{k: v for k, v in settings.items() if k.startswith(('MODEL_', 'TAVILY_', 'FIREHOSE_'))},
         'SCRAPER_SERVICE_TOKEN': token,
         'BACKEND_INTERNAL_URL': api,
+        'SCRAPER_HEALTH_HOST': settings.get('SCRAPER_HEALTH_HOST') or '127.0.0.1',
+        'SCRAPER_HEALTH_PORT': str(health_port),
     }
     frontend_env = {**common, 'BACKEND_URL': api}
+    return backend, scraper, frontend_env
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--demo', action='store_true')
+    parser.add_argument('--backend-port', type=int, default=int(os.getenv('BACKEND_PORT') or 8000))
+    parser.add_argument('--frontend-port', type=int, default=int(os.getenv('FRONTEND_PORT') or 3000))
+    args = parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
+    settings = {k: v for k, v in dotenv_values(root / '.env').items() if v is not None}
+    backend_port = free_port(args.backend_port)
+    frontend_port = free_port(args.frontend_port)
+    health_port = free_port(int(settings.get('SCRAPER_HEALTH_PORT') or os.getenv('SCRAPER_HEALTH_PORT') or 8002))
+    token = settings.get('SCRAPER_SERVICE_TOKEN') or secrets.token_urlsafe(32)
+    (root / '.data').mkdir(exist_ok=True)
+    backend, scraper, frontend_env = service_environments(
+        root,
+        settings,
+        dict(os.environ),
+        backend_port,
+        frontend_port,
+        health_port,
+        args.demo,
+        token,
+    )
     processes = []
     try:
         for command, env, cwd in [
@@ -83,7 +150,10 @@ def main():
             (['npm', 'run', 'dev', '--', '--hostname', '127.0.0.1', '--port', str(frontend_port)], frontend_env, root / 'frontend'),
         ]:
             processes.append(subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True))
-        print('CareCredits: ' + frontend + ' — API ' + api + ' — Ctrl+C stops all three services.', flush=True)
+        print(
+            'CareCredits: ' + backend['PUBLIC_FRONTEND_BASE'] + ' — API ' + backend['PUBLIC_API_BASE'] + ' — Ctrl+C stops all three services.',
+            flush=True,
+        )
         while all(p.poll() is None for p in processes):
             time.sleep(1)
     except KeyboardInterrupt:

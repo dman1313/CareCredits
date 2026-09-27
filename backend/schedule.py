@@ -73,8 +73,10 @@ def enqueue_daily(db: Session, force: bool = False) -> dict:
         if used_today >= ceiling:
             skipped += 1
             continue
+        max_results = max(1, min(int(topic['max_results']), 5))
         if existing and force:
             existing.status = 'queued'
+            existing.max_results = max_results
             existing.lease_token = None
             existing.lease_until = None
             existing.started_at = None
@@ -82,7 +84,16 @@ def enqueue_daily(db: Session, force: bool = False) -> dict:
             used_today += 1
             enqueued += 1
             continue
-        db.add(Job(account_id=op.id, request_key=request_key, query=topic['query'], status='queued', created_at=time.time()))
+        db.add(
+            Job(
+                account_id=op.id,
+                request_key=request_key,
+                query=topic['query'],
+                max_results=max_results,
+                status='queued',
+                created_at=time.time(),
+            )
+        )
         used_today += 1
         enqueued += 1
     db.commit()

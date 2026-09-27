@@ -53,7 +53,7 @@ Use Python 3.11+ and Docker Compose. From the repository root:
 python3 scripts/setup_integrations.py
 ```
 
-The script asks privately for the Tavily key and model settings, writes the ignored `.env`, and generates `SCRAPER_SERVICE_TOKEN` / `POSTGRES_PASSWORD` if missing. Never put secrets in frontend code, `NEXT_PUBLIC_*` variables, chat, screenshots, or Git.
+The script asks privately for the Tavily key, model identity, weights/licence URLs, I/O caps, and open-weight confirmation, writes the ignored `.env`, and generates `SCRAPER_SERVICE_TOKEN` / `POSTGRES_PASSWORD` if missing. Never put secrets in frontend code, `NEXT_PUBLIC_*` variables, chat, screenshots, or Git.
 
 ```sh
 docker compose up --build
@@ -68,7 +68,7 @@ Local three-service development without Compose:
 python3 scripts/dev.py --demo
 ```
 
-`scripts/dev.py` binds the next free local ports when 8000 or 3000 are already taken, or you can pass `--backend-port` / `--frontend-port`. Demo sign-in is `demo@carecredits.local` / `CareCredits-demo-2026`. That path uses labelled fictional courses and does not call Tavily.
+`scripts/dev.py` binds the next free local ports when 8000 or 3000 are already taken, or you can pass `--backend-port` / `--frontend-port`. It points the backend at scraper `/health/ready` and copies model identity (not `MODEL_API_KEY`) so `/live` can show DEMO-01 service/integration status. Demo sign-in is `demo@carecredits.local` / `CareCredits-demo-2026`. That path uses labelled fictional courses and does not call Tavily.
 
 ## Try live ingestion
 

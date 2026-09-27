@@ -5,8 +5,16 @@ import os
 import threading
 
 
+DEFAULT_BACKEND_INTERNAL_URL = 'http://127.0.0.1:8000'
+
+
+def backend_internal_url() -> str:
+    """Match scraper/worker.py: unset BACKEND_INTERNAL_URL defaults to local backend."""
+    return (os.getenv('BACKEND_INTERNAL_URL') or DEFAULT_BACKEND_INTERNAL_URL).strip() or DEFAULT_BACKEND_INTERNAL_URL
+
+
 def ready():
-    missing = [name for name in ('SCRAPER_SERVICE_TOKEN', 'BACKEND_INTERNAL_URL') if not (os.getenv(name) or '').strip()]
+    missing = [name for name in ('SCRAPER_SERVICE_TOKEN',) if not (os.getenv(name) or '').strip()]
     model_configured = bool((os.getenv('MODEL_API_KEY') or '').strip() and (os.getenv('MODEL_ID') or '').strip())
     missing_model = []
     if model_configured:
@@ -19,6 +27,7 @@ def ready():
     return {
         'status': 'ready' if not missing else 'not_ready',
         'missing': missing,
+        'backend_internal_url': backend_internal_url(),
         'tavily_configured': bool((os.getenv('TAVILY_API_KEY') or '').strip()),
         'model_configured': model_configured,
         'model_ready': model_configured and not missing_model,

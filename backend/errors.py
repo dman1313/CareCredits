@@ -18,6 +18,7 @@ CODES = {
     409: 'conflict',
     422: 'invalid',
     429: 'throttled',
+    500: 'error',
     502: 'upstream',
     503: 'unavailable',
 }

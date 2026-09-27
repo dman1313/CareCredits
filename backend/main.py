@@ -391,6 +391,13 @@ async def lifespan(app):
 app = FastAPI(title='CareCredits', version='0.5.0', lifespan=lifespan)
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    return envelope(500, 'Request failed.', request)
+
+
 setup_logs()
 
 
@@ -399,11 +406,14 @@ async def request_boundary(request: Request, call_next):
     started = time.perf_counter()
     request.state.request_id = secrets.token_hex(8)
     if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') and not request.url.path.startswith('/internal/'):
-        origins = [item.strip() for item in os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',') if item.strip()]
+        origins = [item.strip() for item in os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3010,http://127.0.0.1:3010').split(',') if item.strip()]
         origin = (request.headers.get('origin') or '').strip()
         if request.headers.get('x-care-client') != '1' or not origin or origin not in origins:
             return envelope(403, 'Request origin not allowed.', request)
-    result = await call_next(request)
+    try:
+        result = await call_next(request)
+    except Exception:
+        return envelope(500, 'Request failed.', request)
     result.headers['Cache-Control'] = 'no-store'
     result.headers['X-Content-Type-Options'] = 'nosniff'
     rid = request_id(request)

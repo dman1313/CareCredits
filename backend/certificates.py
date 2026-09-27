@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import html
 import time
+import unicodedata
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -62,8 +63,15 @@ def certificate_json(row: AffiliationCertificate) -> dict:
 
 
 def _pdf_escape(value: str) -> str:
+    """Fold Unicode to Helvetica-safe Latin-1 (core PDF fonts have no CJK/Malay diacritics).
+
+    HTML certificates keep the original Unicode; PDF approximates accents then replaces
+    remaining non-Latin-1 glyphs so names never crash rendering.
+    """
+    folded = unicodedata.normalize('NFKD', value or '')
+    folded = ''.join(ch for ch in folded if not unicodedata.combining(ch))
     return (
-        value.encode('latin-1', 'replace')
+        folded.encode('latin-1', 'replace')
         .decode('latin-1')
         .replace('\\', '\\\\')
         .replace('(', '\\(')

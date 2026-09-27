@@ -6,7 +6,7 @@
   {"query": "site:sunwaymedical.com CME OR CPD OR symposium", "max_results": 5},
   {"query": "site:gleneagles.com.my CME OR \"continuous medical\" OR workshop", "max_results": 5},
   {"query": "site:pjh.com.my OR \"Prince Court\" CME Malaysia doctors", "max_results": 5},
-  {"query": "GP CPD courses Kuala Lumpur OR Selangor medical training", "max_results": 5},
+  {"query": "GP CPD courses Kuala Lumpur OR Selangor medical training", "max_results": 3},
   {"query": "Malaysia medical CPD webinar OR \"online CME\" doctors 2026", "max_results": 5},
   {"query": "\"Ministry of Health\" Malaysia CPD OR CME primary care conference", "max_results": 5},
   {"query": "\"Malaysian Medical Association\" scientific meeting CPD", "max_results": 5},

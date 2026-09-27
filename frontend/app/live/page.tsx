@@ -2,19 +2,15 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import {
-  Bell,
   BookOpen,
   CalendarDays,
-  ChevronDown,
   ChevronRight,
   Compass,
   FileText,
-  GraduationCap,
   LayoutDashboard,
   Loader2,
   LogOut,
   Menu,
-  MessageSquare,
   Search,
   Settings,
   ShieldCheck,
@@ -44,12 +40,6 @@ const nav = [
   [CalendarDays, 'Events'],
   [FileText, 'Certificates'],
   [ShieldCheck, 'About credits'],
-] as const;
-
-const workspace = [
-  [GraduationCap, 'Learning Hub'],
-  [MessageSquare, 'Messages'],
-  [Settings, 'Settings'],
 ] as const;
 
 const tones = ['sky', 'mint', 'coral'] as const;
@@ -90,7 +80,7 @@ export default function LiveSearch() {
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
   const [deliveryMode, setDeliveryMode] = useState('');
-  const [period, setPeriod] = useState('all');
+  const [period, setPeriod] = useState('upcoming');
   const [difficulty, setDifficulty] = useState('');
   const [maxFee, setMaxFee] = useState('');
   const [minPoints, setMinPoints] = useState('');
@@ -244,7 +234,7 @@ export default function LiveSearch() {
     setCity(nextCity);
     setState(nextState);
     setDeliveryMode('');
-    setPeriod('all');
+    setPeriod('upcoming');
     setDifficulty('');
     setMaxFee('');
     setMinPoints('');
@@ -259,7 +249,7 @@ export default function LiveSearch() {
       city: nextCity,
       state: nextState,
       mode: '',
-      period: 'all',
+      period: 'upcoming',
       difficulty: '',
       maxFee: '',
       minPoints: '',
@@ -529,6 +519,10 @@ export default function LiveSearch() {
                 onClick={() => {
                   setTab(item);
                   setOpen(false);
+                  if (item === 'Events' || item === 'Discover') {
+                    setPeriod('upcoming');
+                    void search({ period: 'upcoming', page: 1 });
+                  }
                 }}
               >
                 <Icon />
@@ -537,14 +531,12 @@ export default function LiveSearch() {
             ))}
           </nav>
           <div className="nav-rule" />
-          <p className="nav-heading">WORKSPACE</p>
+          <p className="nav-heading">FULL WORKSPACE</p>
           <nav>
-            {workspace.map(([Icon, item]) => (
-              <a key={item} className="nav-item" href="/">
-                <Icon />
-                <span>{item}</span>
-              </a>
-            ))}
+            <a className="nav-item" href="/" aria-label="Open full CareCredits workspace">
+              <Settings />
+              <span>Operator and doctor workspace</span>
+            </a>
           </nav>
           <div className="profile">
             <span className="avatar">{initials(user.name)}</span>
@@ -617,8 +609,8 @@ export default function LiveSearch() {
               </label>
               <label className="city-search">
                 <select aria-label="Period" value={period} onChange={(e) => setPeriod(e.target.value)}>
-                  <option value="all">All dates</option>
                   <option value="upcoming">Upcoming</option>
+                  <option value="all">All dates</option>
                   <option value="past">Past</option>
                 </select>
               </label>
@@ -678,9 +670,9 @@ export default function LiveSearch() {
                   type="checkbox"
                   checked={includeUnknown}
                   onChange={(e) => setIncludeUnknown(e.target.checked)}
-                  aria-label="Include unknown dates fees or points"
+                  aria-label="Include date not confirmed and unknown fees or points"
                 />
-                <span>Include unknowns</span>
+                <span>Include date not confirmed and unknown fees or points</span>
               </label>
               <button className="search-btn" disabled={loading}>
                 {loading ? <Loader2 className="spin" size={16} /> : 'Search'}
@@ -700,11 +692,9 @@ export default function LiveSearch() {
               </button>
             </form>
             <div className="top-actions">
-              <button className="icon-button" aria-label="Notifications">
-                <Bell />
-              </button>
-              <span className="avatar">{initials(user.name)}</span>
-              <ChevronDown className="chevron" />
+              <span className="avatar" title={user.name} aria-label={user.name}>
+                {initials(user.name)}
+              </span>
             </div>
           </header>
           <div className="content">
@@ -795,7 +785,13 @@ export default function LiveSearch() {
                   <div className="card-heading">
                     <div>
                       <span className="heading-icon">▣</span>
-                      <h2>{tab === 'Discover' ? 'Search results' : 'Upcoming and listed training'}</h2>
+                      <h2>
+                        {tab === 'Discover'
+                          ? 'Search results'
+                          : tab === 'Events'
+                            ? 'Upcoming training'
+                            : 'Listed training'}
+                      </h2>
                     </div>
                     <p>{total} events</p>
                   </div>
@@ -895,6 +891,31 @@ export default function LiveSearch() {
                         placeholder="Optional, e.g. Selangor"
                       />
                     </label>
+                    <label>
+                      Public profile bio
+                      <textarea
+                        aria-label="Public profile bio"
+                        value={user.bio || ''}
+                        onChange={(e) => setUser({ ...user, bio: e.target.value })}
+                        rows={2}
+                      />
+                    </label>
+                    <label className="empty-copy">
+                      <input
+                        type="checkbox"
+                        checked={!!user.public_enabled}
+                        onChange={(e) => setUser({ ...user, public_enabled: e.target.checked })}
+                      />{' '}
+                      Show selected attended learning on a public profile
+                    </label>
+                    {user.public_slug ? (
+                      <p className="empty-copy">
+                        <a href={'/p/' + user.public_slug} target="_blank" rel="noreferrer">
+                          Open public profile
+                        </a>
+                        {user.public_enabled ? '' : ' (private until you enable sharing)'}
+                      </p>
+                    ) : null}
                     <button className="secondary" disabled={locationBusy}>
                       {locationBusy ? 'Saving…' : 'Save location and search'}
                     </button>
@@ -1053,6 +1074,12 @@ export default function LiveSearch() {
                       <button className="text-link" type="button" onClick={() => loadLearning(learningFilter)}>
                         Retry
                       </button>
+                      <a className="text-link" href="/api/v1/me/export/csv">
+                        Export CSV
+                      </a>
+                      <a className="text-link" href="/api/v1/me/export/eml">
+                        Email draft
+                      </a>
                     </div>
                     {learningBusy ? (
                       <p className="empty-copy" role="status" aria-busy="true">
@@ -1120,6 +1147,19 @@ export default function LiveSearch() {
           onClose={() => setSelected(null)}
           onEdit={setEdit}
           onSave={saveRecord}
+          canCancel={user?.role === 'operator'}
+          onCancel={async () => {
+            setSaving(true);
+            try {
+              await api('/admin/trainings/' + selected.id + '/cancel', { method: 'POST' });
+              await search({ page: 1 });
+              setSelected(null);
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setSaving(false);
+            }
+          }}
         />
       )}
     </div>
