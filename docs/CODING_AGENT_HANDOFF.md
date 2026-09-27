@@ -2,7 +2,7 @@
 
 Use this prompt to implement the specification:
 
-> Read `docs/SDD.md` v0.2, `README.md`, and the current code before editing. The owner's meeting decisions define the scope: Malaysia-only CPD discovery and personal sign-up/attendance/progress tracking, three application services, PostgreSQL, real Tavily usage, and open-weight application AI. Preserve the distinction between confirmed requirements, proposed defaults and unresolved decisions.
+> Read `docs/SDD.md` v0.7, `README.md`, and the current code before editing. The owner's meeting decisions define the scope: Malaysia-only CPD discovery and personal sign-up/attendance/progress tracking, three application services, PostgreSQL, real Tavily usage, open-weight application AI, **DEC-09 owned catalogue**, **DEC-10 engagement**, and **DEC-11** (API connect to DB + Jev exists/new/uncertain + save new events). Preserve the distinction between confirmed requirements, proposed defaults and unresolved decisions.
 >
 > **Architecture:** build a Python backend, a separate Python scraper, and a JavaScript-based frontend. Retain the existing TypeScript/Next.js frontend. The backend alone owns PostgreSQL access. The scraper owns Tavily Search/Extract and open-weight model calls, exchanging leased jobs and candidate results through authenticated internal backend APIs.
 >

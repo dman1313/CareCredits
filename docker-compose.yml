@@ -1,67 +1,79 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15
-    container_name: carecredit_postgres
-    env_file:
-      - .env
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: carecredits
+      POSTGRES_USER: carecredits
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "${POSTGRES_PORT}:5432"
-    networks:
-      - backend_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U carecredits -d carecredits"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
-  fastapi:
+  backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: carecredit_fastapi
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://carecredits:${POSTGRES_PASSWORD}@postgres:5432/carecredits
+      APP_ENV: ${APP_ENV:-development}
+      DEMO_MODE: ${DEMO_MODE:-false}
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-false}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      SCRAPER_SERVICE_TOKEN: ${SCRAPER_SERVICE_TOKEN:?Run scripts/setup_integrations.py}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8000:8000"
-    env_file:
-      - .env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  scraper:
+    build:
+      context: .
+      dockerfile: scraper/Dockerfile
     environment:
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:${DB_PORT}/${DB_NAME}
-      SECRET_KEY: ${SECRET_KEY}
-      ALGORITHM: ${ALGORITHM}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      BACKEND_INTERNAL_URL: http://backend:8000
+      SCRAPER_SERVICE_TOKEN: ${SCRAPER_SERVICE_TOKEN}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-https://api.tokenfactory.nebius.com/v1}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      MODEL_ID: ${MODEL_ID:-}
+      MODEL_WEIGHTS_URL: ${MODEL_WEIGHTS_URL:-}
+      MODEL_LICENSE_URL: ${MODEL_LICENSE_URL:-}
+      MODEL_OPEN_WEIGHT_CONFIRMED: ${MODEL_OPEN_WEIGHT_CONFIRMED:-false}
     depends_on:
-      - postgres
-    networks:
-      - backend_network
-    volumes:
-      - ./backend:/app
-    command: >
-      sh -c "
-      pip install -r requirements.txt &&
-      uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-      "
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import time; assert time.time()-Path('/tmp/carecredits-worker').stat().st_mtime < 180"]
+      interval: 30s
+      start_period: 20s
+      timeout: 5s
+      retries: 3
 
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: carecredit_frontend
+      args:
+        BACKEND_URL: http://backend:8000
     ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - "127.0.0.1:3000:3000"
     depends_on:
-      - fastapi
-    networks:
-      - backend_network
-    command: pnpm run dev
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:
-
-networks:
-  backend_network:
-    driver: bridge

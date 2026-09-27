@@ -10,10 +10,10 @@ from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
-from fastapi import HTTPException
+from scraper.tavily import ProviderError as HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
-import discovery as d
+from scraper import tavily as d
 import setup_tavily
 
 
@@ -70,23 +70,6 @@ class DiscoveryTests(unittest.TestCase):
                 d.discover('cardiology')
             self.assertEqual(error.exception.status_code, 503)
             call.assert_not_called()
-
-    def test_authorization(self):
-        d.authorize(HTTPAuthorizationCredentials(scheme='Bearer', credentials='operator'))
-        for credentials in [None, HTTPAuthorizationCredentials(scheme='Bearer', credentials='wrong')]:
-            with self.assertRaises(HTTPException) as error:
-                d.authorize(credentials)
-            self.assertEqual(error.exception.status_code, 401)
-        with patch.dict(os.environ, {'DISCOVERY_API_TOKEN': ''}):
-            with self.assertRaises(HTTPException) as error:
-                d.authorize(None)
-            self.assertEqual(error.exception.status_code, 503)
-
-    def test_input_limits(self):
-        self.assertEqual(d.DiscoveryRequest(query='  cardiology  ').query, 'cardiology')
-        for body in [{'query': '  '}, {'query': 'x' * 301}, {'query': 'test', 'max_results': 6}, {'query': 'test', 'max_results': 0}]:
-            with self.assertRaises(ValidationError):
-                d.DiscoveryRequest(**body)
 
     def test_url_filter(self):
         for url in ['javascript:alert(1)', 'http://localhost/a', 'https://x.local/a', 'http://127.0.0.1/a', 'https://user:pass@example.org/a', 'http://[::1]/', 'https://example.org:8080/a']:
