@@ -1,7 +1,7 @@
 import os
 import unittest
 from unittest.mock import patch
-from scraper.health import ready
+from scraper.health import ready, start
 
 
 class ScraperHealthTests(unittest.TestCase):
@@ -39,3 +39,12 @@ class ScraperHealthTests(unittest.TestCase):
         env['MODEL_MAX_OUTPUT_TOKENS'] = '4000'
         with patch.dict(os.environ, env, clear=False):
             self.assertTrue(ready()['model_ready'])
+
+    def test_health_server_defaults_to_localhost(self):
+        with patch.dict(os.environ, {'SCRAPER_HEALTH_HOST': '', 'SCRAPER_HEALTH_PORT': '18002'}, clear=False):
+            server = start()
+        try:
+            self.assertEqual(server.server_address[0], '127.0.0.1')
+        finally:
+            server.shutdown()
+            server.server_close()

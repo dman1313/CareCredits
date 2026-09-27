@@ -15,6 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
 from scraper import tavily as d
 import setup_tavily
+import setup_integrations
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -47,7 +48,17 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(result['sources'][0]['verification_status'], 'unverified')
         self.assertEqual(len(result['sources']), 1)
         self.assertEqual(result['warnings'], [])
+        self.assertIsNone(result['usage']['tavily_credits'])
         self.assertNotIn('test-only', json.dumps(result))
+
+    def test_discover_records_reported_credits(self):
+        replies = [
+            {'results': [{'url': 'https://example.org/event', 'title': 'Course', 'content': 'Snippet'}], 'usage': {'credits': 1}},
+            {'results': [{'url': 'https://example.org/event', 'raw_content': 'Event details'}], 'usage': {'credits': 2}},
+        ]
+        with patch.object(d, 'urlopen', side_effect=[io.BytesIO(json.dumps(x).encode()) for x in replies]):
+            result = d.discover('cardiology', 5)
+        self.assertEqual(result['usage']['tavily_credits'], 3)
 
     def test_empty_search_skips_extract(self):
         with patch.object(d, 'tavily_post', return_value={'results': []}) as call:
@@ -108,6 +119,38 @@ class DiscoveryTests(unittest.TestCase):
                 self.assertIn('TAVILY_API_KEY=tvly-test-only', first)
                 self.assertNotIn('tvly-test-only', output.getvalue())
                 self.assertEqual((root / '.env').stat().st_mode & 0o777, 0o600)
+
+    def test_setup_integrations_records_model_identity(self):
+        sample = (
+            'TAVILY_API_KEY=\nMODEL_API_KEY=\nTYPESAFE_API_KEY=\nMODEL_ID=\n'
+            'MODEL_WEIGHTS_URL=\nMODEL_LICENSE_URL=\nMODEL_PUBLISHER=\nMODEL_HOST=\n'
+            'MODEL_OPEN_WEIGHT_CONFIRMED=false\n'
+        )
+        answers = iter([
+            'Qwen/Qwen3-test',
+            'https://huggingface.co/Qwen/Qwen3-test',
+            'https://huggingface.co/Qwen/Qwen3-test/blob/main/LICENSE',
+            'Qwen',
+            'Nebius Token Factory',
+            'yes',
+        ])
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / '.env.sample').write_text(sample)
+            with patch.object(setup_integrations, '__file__', str(root / 'scripts' / 'setup_integrations.py')), patch.object(
+                setup_integrations.getpass, 'getpass', return_value='sk-test-only'
+            ), patch.object(setup_integrations, 'input', side_effect=lambda prompt: next(answers)), patch(
+                'sys.stdout', new_callable=io.StringIO
+            ) as output:
+                setup_integrations.main()
+            saved = (root / '.env').read_text()
+            self.assertIn('MODEL_ID=Qwen/Qwen3-test', saved)
+            self.assertIn('MODEL_PUBLISHER=Qwen', saved)
+            self.assertIn('MODEL_HOST=Nebius Token Factory', saved)
+            self.assertIn('MODEL_OPEN_WEIGHT_CONFIRMED=true', saved)
+            self.assertIn('MODEL_API_KEY=sk-test-only', saved)
+            self.assertNotIn('sk-test-only', output.getvalue())
+            self.assertEqual((root / '.env').stat().st_mode & 0o777, 0o600)
 
 
 if __name__ == '__main__':

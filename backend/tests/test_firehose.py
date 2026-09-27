@@ -95,19 +95,47 @@ class FirehoseTests(unittest.TestCase):
             }],
             'warnings': [],
         }
-        with patch('scraper.worker.discover', return_value=tavily), patch('scraper.worker.firehose_configured', return_value=True), patch('scraper.worker.firehose_discover', return_value=extra), patch.dict(os.environ, {'MODEL_API_KEY': ''}):
+        with patch('scraper.worker.discover', return_value=tavily), patch('scraper.worker.firehose_configured', return_value=True), patch('scraper.worker.firehose_discover', return_value=extra) as firehose, patch.dict(os.environ, {'MODEL_API_KEY': ''}):
             result = run_job({'query': 'GP', 'lease_token': 'test'}, lambda: None)
         urls = [item['url'] for item in result['sources']]
         self.assertIn('https://example.org/tavily', urls)
         self.assertIn('https://example.org/firehose', urls)
+        firehose.assert_called_once_with('GP', 4)
+
+    def test_worker_skips_firehose_when_tavily_filled_the_job_limit(self):
+        tavily = {
+            'sources': [
+                {
+                    'url': f'https://example.org/tavily-{i}',
+                    'title': 'Tavily',
+                    'snippet': 'Snippet',
+                    'raw_content': 'Page text',
+                    'extraction_status': 'success',
+                    'verification_status': 'unverified',
+                }
+                for i in range(5)
+            ],
+            'warnings': [],
+        }
+        with patch('scraper.worker.discover', return_value=tavily), patch(
+            'scraper.worker.firehose_configured', return_value=True
+        ), patch('scraper.worker.firehose_discover') as firehose, patch.dict(os.environ, {'MODEL_API_KEY': ''}):
+            result = run_job({'query': 'GP', 'lease_token': 'test', 'max_results': 5}, lambda: None)
+        firehose.assert_not_called()
+        self.assertEqual(len(result['sources']), 5)
 
     def test_merge_sources_dedupes(self):
         merged = merge_sources(
             [{'url': 'https://example.org/a'}],
             [{'url': 'https://example.org/a'}, {'url': 'https://example.org/b'}],
-            limit=10,
+            limit=5,
         )
         self.assertEqual([item['url'] for item in merged], ['https://example.org/a', 'https://example.org/b'])
+
+    def test_merge_sources_stays_within_job_limit(self):
+        extra = [{'url': f'https://example.org/{i}'} for i in range(8)]
+        merged = merge_sources([{'url': 'https://example.org/seed'}], extra, limit=5)
+        self.assertEqual(len(merged), 5)
 
 
 if __name__ == '__main__':

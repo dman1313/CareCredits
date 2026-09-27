@@ -117,11 +117,28 @@ class CatalogueApiTests(unittest.TestCase):
         )
         self.assertEqual(save.status_code, 200, save.text)
         self.assertEqual(save.json()['decision'], 'new')
+        self.assertEqual(save.json()['status'], 'pending')
+        self.assertFalse(save.json().get('course_id'))
+        self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': 'CareCredits-demo-2026'})
+        listed = self.client.get('/api/v1/trainings?period=all&include_unknown=true')
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual(listed.json()['total'], 0)
+        queue = self.client.get('/api/v1/admin/candidates').json()
+        self.assertEqual(queue['items'][0]['status'], 'pending')
+
+    def test_save_new_auto_publishes_only_when_policy_allows(self):
+        training = sample(title='Auto Publish Workshop', source_url='https://example.org/auto-publish-workshop')
+        with patch.dict(os.environ, {'CATALOGUE_AUTO_PUBLISH_NEW': 'true'}):
+            save = self.client.post(
+                '/internal/v1/catalogue/save',
+                json={'candidate': training, 'judgment': {'decision': 'new', 'confidence': 1, 'probabilities': {'new': 1}}},
+                headers=self.service,
+            )
+        self.assertEqual(save.status_code, 200, save.text)
         self.assertEqual(save.json()['status'], 'published')
         self.assertTrue(save.json().get('course_id'))
         self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': 'CareCredits-demo-2026'})
         listed = self.client.get('/api/v1/trainings?period=all&include_unknown=true')
-        self.assertEqual(listed.status_code, 200, listed.text)
         self.assertGreaterEqual(listed.json()['total'], 1)
 
     def test_near_match_without_typesafe_is_uncertain(self):
@@ -161,11 +178,12 @@ class CatalogueApiTests(unittest.TestCase):
 
     def test_changed_content_queues_refresh_without_duplicate(self):
         training = sample()
-        first = self.client.post(
-            '/internal/v1/catalogue/save',
-            json={'candidate': training, 'judgment': {'decision': 'new', 'confidence': 1, 'probabilities': {'new': 1}}},
-            headers=self.service,
-        )
+        with patch.dict(os.environ, {'CATALOGUE_AUTO_PUBLISH_NEW': 'true'}):
+            first = self.client.post(
+                '/internal/v1/catalogue/save',
+                json={'candidate': training, 'judgment': {'decision': 'new', 'confidence': 1, 'probabilities': {'new': 1}}},
+                headers=self.service,
+            )
         self.assertEqual(first.status_code, 200, first.text)
         course_id = first.json()['course_id']
         changed = sample()
@@ -208,11 +226,12 @@ class CatalogueApiTests(unittest.TestCase):
 
     def test_exists_refresh_updates_matched_course_when_source_key_drifts(self):
         training = sample(title='Primary Care Update 2026')
-        first = self.client.post(
-            '/internal/v1/catalogue/save',
-            json={'candidate': training, 'judgment': {'decision': 'new', 'confidence': 1, 'probabilities': {'new': 1}}},
-            headers=self.service,
-        )
+        with patch.dict(os.environ, {'CATALOGUE_AUTO_PUBLISH_NEW': 'true'}):
+            first = self.client.post(
+                '/internal/v1/catalogue/save',
+                json={'candidate': training, 'judgment': {'decision': 'new', 'confidence': 1, 'probabilities': {'new': 1}}},
+                headers=self.service,
+            )
         course_id = first.json()['course_id']
         renamed = sample(title='Primary Care Update KL 2026')
         renamed['evidence'] = {**renamed['evidence'], 'title': QUOTE}

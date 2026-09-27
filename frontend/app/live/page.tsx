@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { TrainingDetail } from '@/components/TrainingDetail';
+import { LiveIngestion } from '@/components/LiveIngestion';
 import { api, Course, emptyRecord, formatDate, Progress, RecordData, User } from '@/lib/portal';
 
 const nav = [
@@ -73,6 +74,12 @@ export default function LiveSearch() {
   const [password, setPassword] = useState('');
   const [query, setQuery] = useState('');
   const [city, setCity] = useState('');
+  const [deliveryMode, setDeliveryMode] = useState('');
+  const [period, setPeriod] = useState('all');
+  const [difficulty, setDifficulty] = useState('');
+  const [maxFee, setMaxFee] = useState('');
+  const [minPoints, setMinPoints] = useState('');
+  const [year, setYear] = useState(() => new Date().getFullYear());
   const [courses, setCourses] = useState<Course[]>([]);
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<Course | null>(null);
@@ -81,9 +88,12 @@ export default function LiveSearch() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [digestOptIn, setDigestOptIn] = useState(false);
-  const [suggestions, setSuggestions] = useState<{ id: string; title: string; start_date?: string | null; city?: string | null; reason?: string }[]>([]);
+  const [suggestions, setSuggestions] = useState<
+    { id: string; title: string; provider?: string; start_date?: string | null; city?: string | null; reason?: string; points?: number | null }[]
+  >([]);
   const [certBusy, setCertBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [locationBusy, setLocationBusy] = useState(false);
   const [opening, setOpening] = useState(false);
 
   useEffect(() => {
@@ -98,18 +108,30 @@ export default function LiveSearch() {
     ]).finally(() => setBooting(false));
   }, []);
 
-  async function search(nextQuery = query, nextCity = city) {
+  async function search(
+    nextQuery = query,
+    nextCity = city,
+    nextMode = deliveryMode,
+    nextPeriod = period,
+    nextDifficulty = difficulty,
+    nextMaxFee = maxFee,
+    nextMinPoints = minPoints,
+  ) {
     setLoading(true);
     setError('');
     try {
       const params = new URLSearchParams({
         q: nextQuery,
         city: nextCity,
-        period: 'all',
+        period: nextPeriod,
         page: '1',
         page_size: '12',
         include_unknown: 'true',
       });
+      if (nextMode) params.set('mode', nextMode);
+      if (nextDifficulty) params.set('difficulty', nextDifficulty);
+      if (nextMaxFee) params.set('max_fee_myr', nextMaxFee);
+      if (nextMinPoints) params.set('min_points', nextMinPoints);
       const data = await api('/trainings?' + params);
       setCourses(data.items);
       setTotal(data.total);
@@ -120,11 +142,11 @@ export default function LiveSearch() {
     }
   }
 
-  async function loadWorkspace() {
-    await search();
+  async function loadWorkspace(nextCity = city) {
+    await search(query, nextCity, deliveryMode, period, difficulty, maxFee, minPoints);
     try {
       const [nextProgress, digest, nextSuggestions] = await Promise.all([
-        api('/me/progress'),
+        api('/me/progress?year=' + year),
         api('/me/digest'),
         api('/me/suggestions'),
       ]);
@@ -136,9 +158,50 @@ export default function LiveSearch() {
     }
   }
 
+  function clearFilters() {
+    setQuery('');
+    setCity(user?.city || '');
+    setDeliveryMode('');
+    setPeriod('all');
+    setDifficulty('');
+    setMaxFee('');
+    setMinPoints('');
+    search('', user?.city || '', '', 'all', '', '', '');
+  }
+
+  async function saveLocation(event: FormEvent) {
+    event.preventDefault();
+    if (!user) return;
+    setLocationBusy(true);
+    setError('');
+    try {
+      const saved = await api('/me', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: user.name,
+          city: user.city || '',
+          state: user.state || '',
+          bio: user.bio || '',
+          public_enabled: user.public_enabled,
+          latitude: user.latitude ?? null,
+          longitude: user.longitude ?? null,
+        }),
+      });
+      setUser(saved);
+      setCity(saved.city || '');
+      await loadWorkspace(saved.city || '');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLocationBusy(false);
+    }
+  }
+
   useEffect(() => {
     if (!user) return;
-    loadWorkspace().catch(() => {});
+    const nextCity = city || user.city || '';
+    if (!city && user.city) setCity(user.city);
+    loadWorkspace(nextCity).catch(() => {});
   }, [user]);
 
   async function toggleDigest(next: boolean) {
@@ -160,7 +223,7 @@ export default function LiveSearch() {
     try {
       const cert = await api('/me/certificates', {
         method: 'POST',
-        body: JSON.stringify({ year: progress?.year || new Date().getFullYear() }),
+        body: JSON.stringify({ year }),
       });
       window.open('/api/v1/me/certificates/' + cert.id, '_blank');
     } catch (e) {
@@ -199,8 +262,8 @@ export default function LiveSearch() {
       const current = await api('/trainings/' + selected.id);
       setSelected(current);
       setEdit(current.record || emptyRecord);
-      await search();
-      setProgress(await api('/me/progress'));
+      await loadWorkspace(city || user?.city || '');
+      setProgress(await api('/me/progress?year=' + year));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -378,6 +441,7 @@ export default function LiveSearch() {
               <Menu />
             </button>
             <form
+              id="live-filters"
               onSubmit={(event) => {
                 event.preventDefault();
                 setTab('Discover');
@@ -400,8 +464,58 @@ export default function LiveSearch() {
                 placeholder="Kuala Lumpur"
                 aria-label="City"
               />
+              <label className="city-search">
+                <select
+                  aria-label="Delivery mode"
+                  value={deliveryMode}
+                  onChange={(e) => setDeliveryMode(e.target.value)}
+                >
+                  <option value="">Any mode</option>
+                  <option value="online">Online</option>
+                  <option value="in_person">In person</option>
+                  <option value="hybrid">Hybrid</option>
+                </select>
+              </label>
+              <label className="city-search">
+                <select aria-label="Period" value={period} onChange={(e) => setPeriod(e.target.value)}>
+                  <option value="all">All dates</option>
+                  <option value="upcoming">Upcoming</option>
+                  <option value="past">Past</option>
+                </select>
+              </label>
+              <label className="city-search">
+                <select aria-label="Difficulty" value={difficulty} onChange={(e) => setDifficulty(e.target.value)}>
+                  <option value="">Any level</option>
+                  <option value="beginner">Beginner</option>
+                  <option value="intermediate">Intermediate</option>
+                  <option value="advanced">Advanced</option>
+                </select>
+              </label>
+              <input
+                className="city-search"
+                type="number"
+                min="0"
+                step="1"
+                value={maxFee}
+                onChange={(e) => setMaxFee(e.target.value)}
+                placeholder="Max fee MYR"
+                aria-label="Maximum fee in MYR"
+              />
+              <input
+                className="city-search"
+                type="number"
+                min="0"
+                step="0.1"
+                value={minPoints}
+                onChange={(e) => setMinPoints(e.target.value)}
+                placeholder="Min points"
+                aria-label="Minimum advertised points"
+              />
               <button className="search-btn" disabled={loading}>
                 {loading ? <Loader2 className="spin" size={16} /> : 'Search'}
+              </button>
+              <button className="text-link" type="button" onClick={clearFilters}>
+                Clear filters
               </button>
             </form>
             <div className="top-actions">
@@ -522,29 +636,83 @@ export default function LiveSearch() {
                 </section>
               </div>
               <div className="right-column">
-                <section className="card">
+                {user.role === 'operator' && (
+                  <LiveIngestion
+                    onPublished={async () => {
+                      await loadWorkspace(city || user.city || '');
+                    }}
+                  />
+                )}
+                <section className="card" id="live-location">
+                  <div className="card-heading">
+                    <div>
+                      <span className="heading-icon">⌖</span>
+                      <h2>Malaysia location</h2>
+                    </div>
+                  </div>
+                  <p className="empty-copy">
+                    Save city and state on your profile. Catalogue search uses that city. Skipping location does not
+                    block the rest of the demo.
+                  </p>
+                  <form onSubmit={saveLocation}>
+                    <label>
+                      City
+                      <input
+                        aria-label="Profile city"
+                        value={user.city || ''}
+                        onChange={(e) => setUser({ ...user, city: e.target.value })}
+                        placeholder="Kuala Lumpur"
+                      />
+                    </label>
+                    <label>
+                      State
+                      <input
+                        aria-label="Profile state"
+                        value={user.state || ''}
+                        onChange={(e) => setUser({ ...user, state: e.target.value })}
+                        placeholder="Optional, e.g. Selangor"
+                      />
+                    </label>
+                    <button className="secondary" disabled={locationBusy}>
+                      {locationBusy ? 'Saving…' : 'Save location and search'}
+                    </button>
+                  </form>
+                </section>
+                <section className="card" id="live-suggestions" data-testid="live-suggestions">
                   <div className="card-heading">
                     <div>
                       <span className="heading-icon">✦</span>
-                      <h2>Recommended for you</h2>
+                      <h2>Consider next</h2>
                     </div>
                   </div>
-                  {courses.slice(0, 3).map((course, index) => (
-                    <article key={course.id} className="recommendation">
-                      <div className={`rec-photo ${index % 2 ? 'speaker' : 'doctor'}`} />
-                      <div>
-                        <h3>{course.title}</h3>
-                        <p>{course.provider}</p>
-                        <small>
-                          ♢ {course.points != null ? `${course.points} points` : 'Points not listed'} ▣ {course.city || 'Online'}
-                        </small>
-                      </div>
-                      <button className="more" onClick={() => openCourse(course)} aria-label={'Open ' + course.title}>
-                        ⋮
-                      </button>
-                    </article>
-                  ))}
-                  {!courses.length && <p className="empty-copy">Search to see listed training here.</p>}
+                  <p className="empty-copy">
+                    Advisory catalogue matches by city and recent learning mode. CareCredits does not decide MMC, MOH, or APC compliance.
+                  </p>
+                  {suggestions.length ? (
+                    suggestions.slice(0, 5).map((item, index) => (
+                      <article key={item.id} className="recommendation">
+                        <div className={`rec-photo ${index % 2 ? 'speaker' : 'doctor'}`} />
+                        <div>
+                          <h3>{item.title}</h3>
+                          <p>{item.provider || 'Catalogue listing'}</p>
+                          <small>
+                            {formatDate(item.start_date || null)} · {item.city || 'Online'}
+                            {item.reason ? ` — ${item.reason}` : ''}
+                            {item.points != null ? ` · ${item.points} points` : ''}
+                          </small>
+                        </div>
+                        <button
+                          className="more"
+                          onClick={() => openCourse({ id: item.id } as Course)}
+                          aria-label={'Open ' + item.title}
+                        >
+                          ⋮
+                        </button>
+                      </article>
+                    ))
+                  ) : (
+                    <p className="empty-copy">No upcoming catalogue suggestions yet. Save a city or browse Discover.</p>
+                  )}
                 </section>
                 <section className="card">
                   <div className="card-heading">
@@ -563,9 +731,31 @@ export default function LiveSearch() {
                       </span>
                     </div>
                     <div>
-                      <p>
-                        Year <strong className="success">{progress?.year}</strong>
-                      </p>
+                      <label>
+                        Year{' '}
+                        <select
+                          aria-label="Progress year"
+                          value={year}
+                          onChange={async (e) => {
+                            const next = Number(e.target.value);
+                            setYear(next);
+                            try {
+                              setProgress(await api('/me/progress?year=' + next));
+                            } catch (err) {
+                              setError((err as Error).message);
+                            }
+                          }}
+                        >
+                          {[0, 1, 2, 3, 4].map((offset) => {
+                            const value = new Date().getFullYear() - offset;
+                            return (
+                              <option key={value} value={value}>
+                                {value}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </label>
                       <p className="missing">{progress?.excluded ? `${progress.excluded} records excluded from the CPD total` : 'Opening a source does not register you with the provider.'}</p>
                       <a className="text-link" href="/">
                         Open full workspace <ChevronRight />
@@ -622,18 +812,6 @@ export default function LiveSearch() {
                       />{' '}
                       Email me the biweekly digest
                     </label>
-                    {!!suggestions.length && (
-                      <>
-                        <h3 style={{ marginTop: 16 }}>Suggested next courses</h3>
-                        <ul className="empty-copy">
-                          {suggestions.slice(0, 5).map((item) => (
-                            <li key={item.id}>
-                              {item.start_date} · {item.title} ({item.city || 'Online'}) — {item.reason}
-                            </li>
-                          ))}
-                        </ul>
-                      </>
-                    )}
                   </section>
                 )}
               </div>

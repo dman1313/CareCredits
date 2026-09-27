@@ -10,23 +10,23 @@ from scraper.extraction import configuration, extract_training, heuristic_extrac
 from scraper.health import start as start_health
 
 
-def merge_sources(primary, extra, limit=10):
+def merge_sources(primary, extra, limit=5):
     seen = {item.get('url') for item in primary if item.get('url')}
-    merged = list(primary)
+    merged = list(primary)[:limit]
     for item in extra:
+        if len(merged) >= limit:
+            break
         url = item.get('url')
         if not url or url in seen:
             continue
         merged.append(item)
         seen.add(url)
-        if len(merged) >= limit:
-            break
     return merged
 
 
 def public_sources(sources):
     items = []
-    for source in sources[:10]:
+    for source in sources[:5]:
         items.append({
             'url': str(source.get('url') or '')[:2000],
             'title': str(source.get('title') or 'Untitled source')[:300],
@@ -98,16 +98,18 @@ def keep_lease(heartbeat, interval=30):
 
 def run_job(job, heartbeat, client=None):
     warnings, candidates, sources = [], [], []
+    tavily_credits = None
     try:
         limit = max(1, min(int(job.get('max_results') or 5), 5))
         result = discover(job['query'], limit)
         warnings.extend(result['warnings'])
         sources = result['sources']
-        if firehose_configured():
+        tavily_credits = (result.get('usage') or {}).get('tavily_credits')
+        if firehose_configured() and len(sources) < limit:
             try:
-                extra = firehose_discover(job['query'], limit)
+                extra = firehose_discover(job['query'], limit - len(sources))
                 warnings.extend(extra.get('warnings') or [])
-                sources = merge_sources(sources, extra.get('sources') or [])
+                sources = merge_sources(sources, extra.get('sources') or [], limit)
             except FirehoseError as exc:
                 warnings.append(str(exc))
         model_ready = True
@@ -117,27 +119,40 @@ def run_job(job, heartbeat, client=None):
             model_ready = False
             warnings.append(str(exc) + ' Using evidence-gated heuristic extraction; Tavily sources are still saved.')
         held = []
-        for source in sources:
-            heartbeat()
-            raw = (source.get('raw_content') or '').strip()
-            snippet = (source.get('snippet') or '').strip()
-            if not raw and not snippet:
-                continue
-            snippet_only = (not raw) or str(source.get('extraction_status') or '') == 'failed'
-            try:
-                if model_ready and not snippet_only:
-                    page_candidates = extract_training(source)
+        model_usage = {}
+        try:
+            for source in sources:
+                heartbeat()
+                raw = (source.get('raw_content') or '').strip()
+                snippet = (source.get('snippet') or '').strip()
+                if not raw and not snippet:
+                    continue
+                snippet_only = (not raw) or str(source.get('extraction_status') or '') == 'failed'
+                hold_for_review = snippet_only or not model_ready
+                try:
+                    if model_ready and not snippet_only:
+                        try:
+                            page_candidates = extract_training(source, usage=model_usage)
+                        except ExtractionError as exc:
+                            warnings.append(str(exc) + ' Heuristic candidate held for review.')
+                            page_candidates = heuristic_extract(source)
+                            hold_for_review = True
+                    else:
+                        page_candidates = heuristic_extract(source)
+                except ExtractionError as exc:
+                    warnings.append(str(exc))
+                    continue
+                if hold_for_review:
+                    held.extend(page_candidates)
+                    if page_candidates:
+                        if not model_ready:
+                            warnings.append('Heuristic extraction held for review; open-weight model is not configured.')
+                        elif snippet_only:
+                            warnings.append('Snippet-only source kept for review; not auto-published.')
                 else:
-                    page_candidates = heuristic_extract(source)
-            except ExtractionError as exc:
-                warnings.append(str(exc))
-                continue
-            if snippet_only:
-                held.extend(page_candidates)
-                if page_candidates:
-                    warnings.append('Snippet-only source kept for review; not auto-published.')
-            else:
-                candidates.extend(page_candidates)
+                    candidates.extend(page_candidates)
+        except ExtractionError as exc:
+            warnings.append(str(exc))
         saved = 0
         if client is not None and candidates:
             try:
@@ -161,12 +176,17 @@ def run_job(job, heartbeat, client=None):
             'sources': public_sources(sources),
             'warnings': warnings,
             'status': 'partial' if warnings else 'succeeded',
-            'usage': {'tavily_credits': None, 'model_tokens': None, 'catalogue_saved': saved},
+            'usage': {
+                'tavily_credits': tavily_credits,
+                'model_tokens': model_usage.get('model_tokens'),
+                'catalogue_saved': saved,
+            },
         }
     except (ProviderError, ExtractionError) as exc:
         return {
             'lease_token': job['lease_token'], 'candidates': [], 'sources': public_sources(sources),
-            'warnings': [str(exc)], 'status': 'failed', 'usage': {},
+            'warnings': [str(exc)], 'status': 'failed',
+            'usage': {'tavily_credits': tavily_credits, 'model_tokens': None, 'catalogue_saved': 0},
         }
 
 

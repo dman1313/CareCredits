@@ -7,6 +7,8 @@ from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from observe import failure_line
+
 
 CODES = {
     400: 'bad_request',
@@ -26,16 +28,19 @@ def request_id(request: Request) -> str:
 
 
 def envelope(status_code: int, message: str, request: Request) -> JSONResponse:
+    rid = request_id(request)
+    if status_code >= 500 or status_code == 429:
+        failure_line(rid, status_code, message)
     return JSONResponse(
         status_code=status_code,
         content={
             'error': {
                 'code': CODES.get(status_code, 'error'),
                 'message': message,
-                'request_id': request_id(request),
+                'request_id': rid,
             }
         },
-        headers={'X-Request-Id': request_id(request)},
+        headers={'X-Request-Id': rid},
     )
 
 

@@ -99,6 +99,25 @@ class DigestCertificateTests(unittest.TestCase):
         skipped = self.client.get('/api/v1/me/suggestions').json()
         self.assertFalse(any(item['title'] == 'Cancelled GP' for item in skipped['items']))
 
+    def test_suggestions_prefer_recent_mode(self):
+        from portal_models import Record
+        with self.Session() as db:
+            online = fill_course(Course(source_key='kl-online'), sample('KL online CME', start='2099-08-01', city='Kuala Lumpur'))
+            online.mode = 'online'
+            online.data = {**online.data, 'mode': 'online'}
+            later_city = fill_course(Course(source_key='kl-later-inperson'), sample('Later KL workshop', start='2099-09-01', city='Kuala Lumpur'))
+            attended = fill_course(Course(source_key='past-online'), sample('Past webinar', start='2020-01-01', city='Penang'))
+            attended.mode = 'online'
+            attended.data = {**attended.data, 'mode': 'online'}
+            db.add_all([online, later_city, attended])
+            db.commit()
+            db.add(Record(account_id=self.doc_id, course_id=attended.id, attended=True, attendance_status='attended', attended_on='2020-01-01'))
+            db.commit()
+        body = self.client.get('/api/v1/me/suggestions').json()
+        self.assertEqual(body['preferred_mode'], 'online')
+        self.assertEqual(body['items'][0]['title'], 'KL online CME')
+        self.assertEqual(body['items'][0]['reason'], 'Matches your city and recent learning mode')
+
     def test_digest_opt_in_and_send(self):
         got = self.client.get('/api/v1/me/digest')
         self.assertEqual(got.status_code, 200)
@@ -196,9 +215,14 @@ class DigestCertificateTests(unittest.TestCase):
         self.assertIn('CERT-01', body['disclaimer_version'])
         download = self.client.get(body['download_path'])
         self.assertEqual(download.status_code, 200)
-        self.assertIn('CareCredits', download.text)
-        self.assertIn('not an mmc', download.text.lower())
-        self.assertIn(str(body['document_hash']), download.text)
+        self.assertEqual(download.headers['content-type'], 'application/pdf')
+        self.assertTrue(download.content.startswith(b'%PDF-1.4'))
+        self.assertIn(b'CareCredits', download.content)
+        self.assertIn(b'not an MMC', download.content)
+        self.assertIn(body['document_hash'].encode(), download.content)
+        html = self.client.get(body['download_path'] + '?format=html')
+        self.assertEqual(html.status_code, 200)
+        self.assertIn('CareCredits', html.text)
         self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': PASSWORD})
         self.assertEqual(self.client.get(body['download_path']).status_code, 404)
 

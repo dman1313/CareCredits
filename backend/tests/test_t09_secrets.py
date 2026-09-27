@@ -48,3 +48,22 @@ class SecretSurfaceTests(unittest.TestCase):
                 if needle in text:
                     hits.append(f'{path.relative_to(ROOT)}:{needle}')
         self.assertEqual(hits, [])
+
+    def test_compose_keeps_paid_secrets_on_scraper(self):
+        text = (ROOT / 'docker-compose.yml').read_text(encoding='utf-8')
+        backend, scraper = text.split('  scraper:', 1)
+        self.assertIn('TYPESAFE_API_KEY', backend)
+        self.assertIn('MODEL_ID', backend)
+        self.assertIn('MODEL_KEY_CONFIGURED', backend)
+        self.assertIn('SCRAPER_HEALTH_URL', backend)
+        self.assertIn('CATALOGUE_AUTO_PUBLISH_NEW', backend)
+        self.assertIn('GOOGLE_CLIENT_ID', backend)
+        self.assertIn('SMTP_HOST', backend)
+        self.assertNotIn('MODEL_API_KEY: ${MODEL_API_KEY', backend)
+        self.assertNotIn('TAVILY_API_KEY', backend)
+        self.assertIn('TAVILY_API_KEY', scraper)
+        self.assertIn('MODEL_API_KEY: ${MODEL_API_KEY:-}', scraper)
+        self.assertIn('SCRAPER_HEALTH_HOST', scraper)
+        self.assertNotIn('TYPESAFE_API_KEY', scraper)
+        self.assertNotIn('GOOGLE_CLIENT', scraper)
+        self.assertNotIn('SMTP_', scraper)

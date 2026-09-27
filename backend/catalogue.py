@@ -1,6 +1,7 @@
 """Owned-catalogue connect helpers: lookup near neighbours and save new events."""
 from __future__ import annotations
 
+import os
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -9,6 +10,10 @@ from security import digest
 from shared.contracts import Training, validate_evidence
 
 REFRESH_FIELDS = FILTER_FIELDS + ('prerequisites', 'registration_url')
+
+
+def auto_publish_new() -> bool:
+    return (os.getenv('CATALOGUE_AUTO_PUBLISH_NEW') or '').strip().lower() == 'true'
 
 
 def training_payload(data: dict) -> dict:

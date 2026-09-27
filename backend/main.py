@@ -1,9 +1,12 @@
 import csv
 import io
+import json
 import math
 import os
 import secrets
 import time
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from email.message import EmailMessage
@@ -31,14 +34,15 @@ from shared.contracts import Training, validate_evidence
 from catalogue import (
     source_key, course_public, exact_course, near_neighbours,
     save_new_candidate, link_existing, publish_new_event,
-    training_payload, resolve_review_course,
+    training_payload, resolve_review_course, auto_publish_new,
 )
+from observe import setup as setup_logs, request_line, job_line
 from jev import decide_existence, JevError, api_key as typesafe_key
 from schedule import enqueue_daily, load_topics, local_today
 from digest import (
     ensure_preference, preference_json, run_due_digests,
 )
-from certificates import issue_certificate, certificate_json, render_html as certificate_html
+from certificates import issue_certificate, certificate_json, render_html as certificate_html, render_pdf as certificate_pdf
 from suggestions import suggestions_for
 from errors import envelope, http_exception_handler, validation_exception_handler, request_id
 from oauth import authorize_url, configured as google_oauth, exchange_code, issue_session, upsert_account, OAuthError
@@ -387,10 +391,12 @@ async def lifespan(app):
 app = FastAPI(title='CareCredits', version='0.5.0', lifespan=lifespan)
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
+setup_logs()
 
 
 @app.middleware('http')
 async def request_boundary(request: Request, call_next):
+    started = time.perf_counter()
     request.state.request_id = secrets.token_hex(8)
     if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') and not request.url.path.startswith('/internal/'):
         origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
@@ -399,7 +405,10 @@ async def request_boundary(request: Request, call_next):
     result = await call_next(request)
     result.headers['Cache-Control'] = 'no-store'
     result.headers['X-Content-Type-Options'] = 'nosniff'
-    result.headers['X-Request-Id'] = request_id(request)
+    rid = request_id(request)
+    result.headers['X-Request-Id'] = rid
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    request_line(rid, request.method, request.url.path, result.status_code, duration_ms)
     return result
 
 
@@ -491,8 +500,8 @@ class Review(BaseModel):
 
     @model_validator(mode='after')
     def require_hold_reason(self):
-        if self.action == 'hold' and len(self.reason.strip()) < 3:
-            raise ValueError('Hold requires a reason of at least 3 characters.')
+        if self.action in ('hold', 'reject') and len(self.reason.strip()) < 3:
+            raise ValueError('Hold and reject require a reason of at least 3 characters.')
         extra = set(self.corrections) - set(REVIEW_FIELDS)
         if extra:
             raise ValueError('Unsupported correction fields.')
@@ -515,6 +524,15 @@ def record_json(record):
             'points', 'points_origin', 'credit_label', 'notes', 'public', 'version',
         )
     }
+
+
+def records_for(db, account_id, course_ids=None):
+    query = db.query(Record).filter_by(account_id=account_id)
+    if course_ids is not None:
+        if not course_ids:
+            return {}
+        query = query.filter(Record.course_id.in_(course_ids))
+    return {row.course_id: row for row in query}
 
 
 def course_json(course, record=None, field_evidence=None):
@@ -584,20 +602,77 @@ def config():
     }
 
 
+def _env_int(name):
+    raw = (os.getenv(name) or '').strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _scraper_service_status():
+    base = (os.getenv('SCRAPER_HEALTH_URL') or '').strip().rstrip('/')
+    if not base:
+        return {'status': 'unconfigured', 'reachable': False, 'tavily_configured': False, 'model_ready': False}
+    try:
+        with urlopen(base + '/health/ready', timeout=2) as response:
+            payload = json.loads(response.read() or b'{}')
+    except HTTPError as exc:
+        raw = exc.read() if exc.code == 503 else b'{}'
+        try:
+            payload = json.loads(raw or b'{}')
+        except (TypeError, ValueError):
+            return {'status': 'unreachable', 'reachable': False, 'tavily_configured': False, 'model_ready': False}
+    except (TimeoutError, URLError, ValueError, TypeError, UnicodeError):
+        return {'status': 'unreachable', 'reachable': False, 'tavily_configured': False, 'model_ready': False}
+    if not isinstance(payload, dict):
+        return {'status': 'unreachable', 'reachable': False, 'tavily_configured': False, 'model_ready': False}
+    return {
+        'status': 'ready' if payload.get('status') == 'ready' else 'not_ready',
+        'reachable': True,
+        'tavily_configured': bool(payload.get('tavily_configured')),
+        'model_ready': bool(payload.get('model_ready')),
+    }
+
+
+@app.get('/api/v1/admin/services')
+def services(user=Depends(operator), db: Session = Depends(get_db)):
+    database = 'ready'
+    try:
+        db.execute(text('SELECT 1'))
+    except Exception:
+        database = 'unavailable'
+    return {
+        'backend': 'ready' if database == 'ready' else 'degraded',
+        'database': database,
+        'database_owner': 'backend',
+        'scraper': _scraper_service_status(),
+        'frontend': 'this portal',
+    }
+
+
 @app.get('/api/v1/admin/integrations')
 def integrations(user=Depends(operator)):
     weights = (os.getenv('MODEL_WEIGHTS_URL') or '').strip() or None
     license_url = (os.getenv('MODEL_LICENSE_URL') or '').strip() or None
+    input_chars = _env_int('MODEL_MAX_INPUT_CHARS')
+    output_tokens = _env_int('MODEL_MAX_OUTPUT_TOKENS')
     return {
         'model_id': (os.getenv('MODEL_ID') or '').strip() or None,
+        'model_publisher': (os.getenv('MODEL_PUBLISHER') or '').strip() or None,
+        'model_host': (os.getenv('MODEL_HOST') or '').strip() or None,
         'model_weights_url': weights,
         'model_license_url': license_url,
         'model_open_weight_confirmed': os.getenv('MODEL_OPEN_WEIGHT_CONFIRMED') == 'true',
-        'model_caps_configured': bool((os.getenv('MODEL_MAX_INPUT_CHARS') or '').strip() and (os.getenv('MODEL_MAX_OUTPUT_TOKENS') or '').strip()),
-        'model_key_configured': bool((os.getenv('MODEL_API_KEY') or '').strip()),
+        'model_caps_configured': bool(input_chars and output_tokens),
+        'model_max_input_chars': input_chars,
+        'model_max_output_tokens': output_tokens,
+        'model_key_configured': bool((os.getenv('MODEL_API_KEY') or '').strip() or os.getenv('MODEL_KEY_CONFIGURED') == 'true'),
         'typesafe_configured': bool(typesafe_key()),
         'scraper_token_configured': bool((os.getenv('SCRAPER_SERVICE_TOKEN') or '').strip()),
         'google_oauth': google_oauth(),
+        'catalogue_auto_publish_new': auto_publish_new(),
     }
 
 
@@ -759,23 +834,24 @@ def trainings(q: str = '', city: str = '', state: str = '', mode: str = '', diff
             nearby.append(and_(Course.mode != 'online', Course.latitude.is_(None)))
         query = query.filter(or_(*nearby))
     query = query.order_by(Course.start_date.is_(None), Course.start_date, Course.id)
-    records = {r.course_id: r for r in db.query(Record).filter_by(account_id=user.id)}
     if latitude is None:
         total = query.count()
         rows = query.offset((page - 1) * page_size).limit(page_size).all()
+        records = records_for(db, user.id, [course.id for course in rows])
         items = [{**course_json(course, records.get(course.id)), 'distance_km': None} for course in rows]
     else:
-        items = []
+        scored = []
         for course in query.all():
-            item = course_json(course, records.get(course.id))
-            item['distance_km'] = None
+            distance_km = None
             if course.mode != 'online' and course.latitude is not None and course.longitude is not None:
-                item['distance_km'] = round(distance(latitude, longitude, course.latitude, course.longitude), 1)
-                if item['distance_km'] > radius_km:
+                distance_km = round(distance(latitude, longitude, course.latitude, course.longitude), 1)
+                if distance_km > radius_km:
                     continue
-            items.append(item)
-        total = len(items)
-        items = items[(page - 1) * page_size:page * page_size]
+            scored.append((course, distance_km))
+        total = len(scored)
+        page_rows = scored[(page - 1) * page_size:page * page_size]
+        records = records_for(db, user.id, [course.id for course, _ in page_rows])
+        items = [{**course_json(course, records.get(course.id)), 'distance_km': distance_km} for course, distance_km in page_rows]
     return {
         'items': items,
         'total': total,
@@ -968,14 +1044,20 @@ def create_certificate(body: CertificateIssue, user=Depends(current_user), db: S
 
 
 @app.get('/api/v1/me/certificates/{certificate_id}')
-def download_certificate(certificate_id: str, user=Depends(current_user), db: Session = Depends(get_db)):
+def download_certificate(certificate_id: str, format: str = 'pdf', user=Depends(current_user), db: Session = Depends(get_db)):
     row = db.get(AffiliationCertificate, certificate_id)
     if not row or row.account_id != user.id:
         raise HTTPException(404, 'Certificate not found.')
+    if format == 'html':
+        return Response(
+            certificate_html(user, row),
+            media_type='text/html; charset=utf-8',
+            headers={'Content-Disposition': f'inline; filename="carecredits-{row.year}-{row.id[:8]}.html"'},
+        )
     return Response(
-        certificate_html(user, row),
-        media_type='text/html; charset=utf-8',
-        headers={'Content-Disposition': f'inline; filename="carecredits-{row.year}-{row.id[:8]}.html"'},
+        certificate_pdf(user, row),
+        media_type='application/pdf',
+        headers={'Content-Disposition': f'inline; filename="carecredits-{row.year}-{row.id[:8]}.pdf"'},
     )
 
 
@@ -1240,15 +1322,18 @@ def cancel_training(course_id: str, user=Depends(operator), db: Session = Depend
 def claim(db: Session = Depends(get_db)):
     expire_jobs(db)
     # One worker process is the default; conditional claims also prevent double ownership.
-    job = db.query(Job).filter_by(status='queued').order_by(Job.created_at).first()
-    if not job:
-        return Response(status_code=204)
-    token = secrets.token_urlsafe(24)
-    result = db.execute(update(Job).where(Job.id == job.id, Job.status == 'queued').values(status='running', lease_token=token, lease_until=time.time()+120, started_at=time.time()))
-    db.commit()
-    if result.rowcount != 1:
-        return Response(status_code=204)
-    return {'id': job.id, 'query': job.query, 'max_results': job.max_results, 'lease_token': token}
+    # Keep walking the queued list when a race loses the first row so leftover jobs
+    # are not skipped until the next poll.
+    while True:
+        job = db.query(Job).filter_by(status='queued').order_by(Job.created_at).first()
+        if not job:
+            return Response(status_code=204)
+        token = secrets.token_urlsafe(24)
+        result = db.execute(update(Job).where(Job.id == job.id, Job.status == 'queued').values(status='running', lease_token=token, lease_until=time.time()+120, started_at=time.time()))
+        db.commit()
+        if result.rowcount == 1:
+            return {'id': job.id, 'query': job.query, 'max_results': job.max_results, 'lease_token': token}
+        db.expire_all()
 
 
 @app.post('/internal/v1/jobs/{job_id}/heartbeat', dependencies=[Depends(worker)])
@@ -1305,6 +1390,14 @@ def complete(job_id: str, body: CompleteJob, db: Session = Depends(get_db)):
                 snippet=item.snippet[:2000],
             ))
     db.commit()
+    job_line(
+        job.id,
+        job.status,
+        len(seen),
+        len(body.sources),
+        body.usage,
+        len(body.warnings),
+    )
     return {'status': job.status}
 
 
@@ -1399,6 +1492,10 @@ def catalogue_save(body: CatalogueSave, db: Session = Depends(get_db)):
         return {'status': 'held', 'candidate_id': candidate.id, 'decision': 'uncertain'}
     if decision != 'new':
         raise HTTPException(422, 'Judgment decision must be exists, new, or uncertain.')
+    if not auto_publish_new():
+        candidate = save_new_candidate(db, account_id, training, judgment, body.job_id)
+        db.commit()
+        return {'status': 'pending', 'candidate_id': candidate.id, 'decision': 'new'}
     try:
         candidate, course = publish_new_event(db, account_id, training, judgment, body.job_id)
     except ValueError as exc:

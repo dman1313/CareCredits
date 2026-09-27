@@ -253,6 +253,7 @@ class PortalTests(unittest.TestCase):
             j=Job(account_id=self.a,request_key='hold-job',query='GP');db.add(j);db.flush()
             c=Candidate(job_id=j.id,source_key='hold-source',data=sample('Held GP session'));db.add(c);db.commit();cid=c.id
         self.assertEqual(self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'hold'}).status_code,422)
+        self.assertEqual(self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'reject'}).status_code,422)
         held=self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'hold','reason':'Need MMC confirmation'})
         self.assertEqual(held.status_code,200,held.text)
         self.assertEqual(held.json()['status'],'held')
@@ -265,6 +266,18 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/v1/admin/candidates').json()['items'],[])
         titles=[item['title'] for item in self.client.get('/api/v1/trainings?period=all').json()['items']]
         self.assertIn('Held GP session',titles)
+
+    def test_reject_requires_reason_and_stays_out_of_catalogue(self):
+        with self.Session() as db:
+            j=Job(account_id=self.a,request_key='reject-job',query='GP');db.add(j);db.flush()
+            c=Candidate(job_id=j.id,source_key='reject-source',data=sample('Rejected GP session'));db.add(c);db.commit();cid=c.id
+        self.assertEqual(self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'reject'}).status_code,422)
+        rejected=self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'reject','reason':'Not a Malaysia CPD event'})
+        self.assertEqual(rejected.status_code,200,rejected.text)
+        self.assertEqual(rejected.json()['status'],'rejected')
+        self.assertEqual(self.client.get('/api/v1/admin/candidates').json()['items'],[])
+        titles=[item['title'] for item in self.client.get('/api/v1/trainings?period=all').json()['items']]
+        self.assertNotIn('Rejected GP session',titles)
 
     def add_course(self, key, **fields):
         data={**sample(fields.pop('title', 'GP training')), **fields}
@@ -566,6 +579,12 @@ class PortalTests(unittest.TestCase):
         body=result.json()
         self.assertIn('model_key_configured', body)
         self.assertIn('model_caps_configured', body)
+        self.assertIn('model_publisher', body)
+        self.assertIn('model_host', body)
+        self.assertIn('model_max_input_chars', body)
+        self.assertIn('model_max_output_tokens', body)
+        self.assertIn('catalogue_auto_publish_new', body)
+        self.assertFalse(body['catalogue_auto_publish_new'])
         blob=result.text
         self.assertNotIn('TAVILY_API_KEY', blob)
         self.assertNotIn('MODEL_API_KEY', blob)
@@ -573,6 +592,45 @@ class PortalTests(unittest.TestCase):
         self.assertNotIn('test-service-token', blob)
         self.login('b@example.com')
         self.assertEqual(self.client.get('/api/v1/admin/integrations').status_code,403)
+
+    def test_operator_services_report_database_owner_without_secrets(self):
+        with patch.dict(os.environ, {'SCRAPER_HEALTH_URL': ''}, clear=False):
+            result = self.client.get('/api/v1/admin/services')
+        self.assertEqual(result.status_code, 200, result.text)
+        body = result.json()
+        self.assertEqual(body['backend'], 'ready')
+        self.assertEqual(body['database'], 'ready')
+        self.assertEqual(body['database_owner'], 'backend')
+        self.assertEqual(body['scraper']['status'], 'unconfigured')
+        self.assertFalse(body['scraper']['reachable'])
+        self.assertNotIn('TAVILY_API_KEY', result.text)
+        self.assertNotIn('MODEL_API_KEY', result.text)
+        self.assertNotIn('test-service-token', result.text)
+        self.login('b@example.com')
+        self.assertEqual(self.client.get('/api/v1/admin/services').status_code, 403)
+
+    def test_operator_services_read_scraper_ready_flags(self):
+        class FakeResponse:
+            def read(self):
+                return b'{"status":"ready","tavily_configured":true,"model_ready":false,"missing":["SECRET"]}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        with patch.dict(os.environ, {'SCRAPER_HEALTH_URL': 'http://127.0.0.1:8002'}, clear=False), patch(
+            'main.urlopen', return_value=FakeResponse()
+        ):
+            self.login()
+            body = self.client.get('/api/v1/admin/services').json()
+        self.assertEqual(body['scraper']['status'], 'ready')
+        self.assertTrue(body['scraper']['reachable'])
+        self.assertTrue(body['scraper']['tavily_configured'])
+        self.assertFalse(body['scraper']['model_ready'])
+        self.assertNotIn('SECRET', str(body))
+        self.assertNotIn('missing', body['scraper'])
 
     def test_public_config_is_login_flags_only(self):
         body = self.client.get('/api/v1/config').json()
@@ -635,6 +693,46 @@ class PortalTests(unittest.TestCase):
         for worker in workers:
             worker.join()
         self.assertEqual(sorted(codes),[200,204])
+
+    def test_concurrent_worker_stress_does_not_duplicate(self):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        service={'Authorization':'Bearer test-service-token'}
+        job_ids=[]
+        for i in range(8):
+            created=self.client.post(
+                '/api/v1/admin/ingestion-jobs',
+                json={'query':'GP stress topic '+str(i)+' extra'},
+                headers={'Idempotency-Key':'stress-key-'+str(i)},
+            )
+            self.assertEqual(created.status_code,202,created.text)
+            job_ids.append(created.json()['id'])
+
+        def worker():
+            owned=[]
+            while True:
+                response=self.client.post('/internal/v1/jobs/claim',headers=service)
+                if response.status_code==204:
+                    break
+                self.assertEqual(response.status_code,200,response.text)
+                job=response.json()
+                complete=self.client.post(
+                    '/internal/v1/jobs/'+job['id']+'/complete',
+                    json={'lease_token':job['lease_token'],'status':'succeeded','candidates':[sample('Stress GP '+job['id'][:8])]},
+                    headers=service,
+                )
+                self.assertEqual(complete.status_code,200,complete.text)
+                owned.append(job['id'])
+            return owned
+
+        with ThreadPoolExecutor(8) as pool:
+            owned=[item for future in as_completed([pool.submit(worker) for _ in range(8)]) for item in future.result()]
+        self.assertEqual(sorted(owned),sorted(job_ids))
+        self.assertEqual(len(set(owned)),8)
+        items=self.client.get('/api/v1/admin/candidates').json()['items']
+        self.assertEqual(len(items),8)
+        self.assertEqual(len({item['data']['title'] for item in items}),8)
+        statuses={row['id']:row['status'] for row in self.client.get('/api/v1/admin/ingestion-jobs').json()['items'] if row['id'] in job_ids}
+        self.assertEqual(set(statuses.values()),{'succeeded'})
 
     def test_signup_and_password_validation(self):
         r=self.client.post('/api/v1/auth/register',json={'email':'new@example.com','password':PASSWORD,'name':'New Doctor'})
@@ -732,3 +830,19 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(detail['end_date'],'2026-01-02')
         self.assertEqual(detail['timezone'],'Asia/Kuala_Lumpur')
         self.assertEqual(detail['venue'],'Menara')
+
+    def test_demo_seed_exposes_provider_registration_urls(self):
+        from seed_demo import seed
+        with self.Session() as db:
+            seed(db)
+            rows=db.query(Course).filter(Course.source_key.like('demo-%')).all()
+            self.assertGreaterEqual(len(rows),6)
+            for row in rows:
+                url=(row.data or {}).get('registration_url')
+                self.assertTrue(url and url.startswith('https://example.org/carecredits-demo-') and url.endswith('/register'), row.source_key)
+            first=rows[0]
+            first.data={**(first.data or {}), 'registration_url': None}
+            db.commit()
+            seed(db)
+            refreshed=db.get(Course, first.id)
+            self.assertTrue((refreshed.data or {}).get('registration_url', '').endswith('/register'))

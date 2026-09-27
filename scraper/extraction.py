@@ -23,10 +23,43 @@ DATE_RE = re.compile(
     r'|\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(20\d{2})\b',
     re.I,
 )
+WEEKDAY_RE = re.compile(
+    r'\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|'
+    r'Isnin|Selasa|Rabu|Khamis|Jumaat|Sabtu|Ahad)\b',
+    re.I,
+)
+EVENT_WORDS = re.compile(
+    r'(conference|course|cme|cpd|symposium|workshop|congress|seminar|training|webinar|'
+    r'kursus|persidangan|bengkel|simposium|latihan|kongres)',
+    re.I,
+)
 MONTHS = {
     'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
     'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12,
 }
+
+
+def reported_model_tokens(payload):
+    usage = payload.get('usage') if isinstance(payload, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    raw = usage.get('total_tokens')
+    if raw is None:
+        prompt = usage.get('prompt_tokens')
+        completion = usage.get('completion_tokens')
+        if prompt is None and completion is None:
+            return None
+        try:
+            raw = int(prompt or 0) + int(completion or 0)
+        except (TypeError, ValueError):
+            return None
+    try:
+        tokens = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if tokens < 0:
+        return None
+    return tokens
 
 
 def model_caps():
@@ -67,10 +100,7 @@ def _malaysia_relevant(text: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
-def _find_date(text: str) -> tuple[str | None, str | None]:
-    match = DATE_RE.search(text)
-    if not match:
-        return None, None
+def _parse_date_match(match) -> tuple[str, str]:
     raw = match.group(0)
     if match.group(1):
         return f'{match.group(1)}-{match.group(2)}-{match.group(3)}', raw
@@ -81,11 +111,139 @@ def _find_date(text: str) -> tuple[str | None, str | None]:
     return f'{match.group(9)}-{month:02d}-{int(match.group(8)):02d}', raw
 
 
+def _find_date(text: str) -> tuple[str | None, str | None]:
+    match = DATE_RE.search(text)
+    if not match:
+        return None, None
+    return _parse_date_match(match)
+
+
+def _end_marker_before(text: str, start: int) -> bool:
+    window = text[max(0, start - 28):start].lower()
+    return bool(re.search(r'\b(end(?:s|ed|ing)?|until|to|hingga)\b', window))
+
+
+def _start_dates(text: str) -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    seen = set()
+    for match in DATE_RE.finditer(text):
+        if _end_marker_before(text, match.start()):
+            continue
+        iso, raw = _parse_date_match(match)
+        if iso in seen:
+            continue
+        seen.add(iso)
+        found.append((iso, raw))
+        if len(found) == 4:
+            break
+    return found
+
+
+def _quote(content: str, value: str) -> str | None:
+    idx = content.lower().find(value.lower())
+    if idx < 0:
+        return None
+    return content[idx:idx + len(value)]
+
+
+def _weekday_session_titles(content: str) -> list[str]:
+    titles = []
+    seen = set()
+    for match in WEEKDAY_RE.finditer(content):
+        rest = content[match.end():]
+        named = re.match(
+            r'\s+(?!and\b|or\b|dan\b)([A-Za-z][A-Za-z0-9 /&\'-]{2,60}?)(?=\s+and\b|\s+by\b|\s+anjuran\b|,|\.|$)',
+            rest,
+            re.I,
+        )
+        if not named:
+            continue
+        title = (match.group(0) + ' ' + named.group(1)).strip()
+        key = title.lower()
+        if key in seen or any(junk in key for junk in ('http', 'cookie', 'privacy')):
+            continue
+        seen.add(key)
+        titles.append(title)
+        if len(titles) == 4:
+            break
+    return titles
+
+
+def _and_session_titles(content: str) -> list[str]:
+    match = re.search(
+        r'([A-Z][^.\n]{5,80}?)\s+and\s+([A-Z][^.\n]{5,80}?)\s+'
+        r'(?:organised\s+by|organized\s+by|hosted\s+by|presented\s+by|anjuran(?:\s+oleh)?|\bby)\b',
+        content,
+        re.I,
+    )
+    if not match:
+        return []
+    titles = [match.group(1).strip(), match.group(2).strip()]
+    if titles[0].lower() == titles[1].lower():
+        return []
+    if not all(EVENT_WORDS.search(title) for title in titles):
+        return []
+    return titles
+
+
+def _explicit_end_date(text: str, start_date: str) -> tuple[str | None, str | None]:
+    for match in DATE_RE.finditer(text):
+        iso, raw = _parse_date_match(match)
+        if iso <= start_date:
+            continue
+        if _end_marker_before(text, match.start()):
+            return iso, raw
+    return None, None
+
+
+def _explicit_timezone(text: str) -> tuple[str | None, str | None]:
+    match = re.search(r'Asia/Kuala_Lumpur', text)
+    if match:
+        return match.group(0), match.group(0)
+    return None, None
+
+
+def _explicit_venue(text: str) -> tuple[str | None, str | None]:
+    match = re.search(r'(?:venue|tempat)\s*[:\-]\s*([A-Z][^\n.]{2,80})', text, re.I)
+    if match:
+        return match.group(1).strip()[:200], match.group(0)
+    match = re.search(r'\bat\s+([A-Z][A-Za-z0-9 .\'-]{2,60}?)(?=\s+(?:in|di)\b|,|\.|$)', text)
+    if not match:
+        return None, None
+    value = match.group(1).strip()
+    cities = {city.lower() for city in MY_CITIES}
+    if value.lower() in cities:
+        return None, None
+    return value[:200], match.group(0)
+
+
+def _explicit_prerequisites(text: str) -> tuple[str | None, str | None]:
+    none = re.search(r'none stated by provider', text, re.I)
+    if none:
+        return none.group(0), none.group(0)
+    stated = re.search(r'prerequisites?\s*[:\-]\s*([^\n.]{3,200})', text, re.I)
+    if not stated:
+        return None, None
+    value = stated.group(1).strip()
+    if value.lower() in ('none', 'n/a', 'not stated', 'unknown', '-'):
+        return None, None
+    return value[:2000], stated.group(0)
+
+
 def _find_city(text: str) -> tuple[str | None, str | None]:
     lowered = text.lower()
-    for city in MY_CITIES:
-        if city.lower() in lowered:
-            idx = lowered.index(city.lower())
+    cities = sorted(MY_CITIES, key=len, reverse=True)
+    for city in cities:
+        needle = city.lower()
+        for prefix in (f'in {needle}', f'di {needle}', f'at {needle}'):
+            if prefix in lowered:
+                idx = lowered.index(prefix) + len(prefix) - len(needle)
+                quote = text[idx:idx + len(city)]
+                return quote, quote
+    for city in cities:
+        needle = city.lower()
+        if needle in lowered:
+            idx = lowered.index(needle)
             quote = text[idx:idx + len(city)]
             return quote, quote
     return None, None
@@ -114,14 +272,12 @@ def heuristic_extract(source) -> list[dict]:
         'upcoming medical conferences', 'medical conferences events',
         'cpd accredited for malaysian', 'things to do in malaysia',
     )
-    event_words = re.compile(r'(conference|course|cme|cpd|symposium|workshop|congress|seminar|training|webinar)', re.I)
-
     title = None
     if (
         title_hint
         and title_hint.lower() in content.lower()
         and not any(j in title_hint.lower() for j in junk)
-        and event_words.search(title_hint)
+        and EVENT_WORDS.search(title_hint)
     ):
         title = title_hint
     if not title:
@@ -130,22 +286,21 @@ def heuristic_extract(source) -> list[dict]:
             if 16 <= len(line) <= 160 and not line.lower().startswith(('http', 'cookie', 'privacy')):
                 if any(j in line.lower() for j in junk):
                     continue
-                if not event_words.search(line):
+                if not EVENT_WORDS.search(line):
                     continue
                 title = line
                 break
-    if not title or title.lower() not in content.lower() or not event_words.search(title):
-        return []
-    if any(j in title.lower() for j in junk):
-        return []
-    t_idx = content.lower().index(title.lower())
-    title_quote = content[t_idx:t_idx + len(title)]
+    if title and (title.lower() not in content.lower() or not EVENT_WORDS.search(title) or any(j in title.lower() for j in junk)):
+        title = None
 
     provider = None
     provider_quote = None
     for pattern in (
         r'(?:organised|organized|presented|hosted)\s+by\s+([A-Z][^.\n]{2,80})',
         r'(?:provider|organiser|organizer)\s*[:\-]\s*([^\n.]{2,80})',
+        r'anjuran(?:\s+oleh)?\s+([A-Z][^,.\n]{2,80}?)(?:\s+di\b|,|\.|$)',
+        r'disampaikan\s+oleh\s+([A-Z][^,.\n]{2,80}?)(?:\s+di\b|,|\.|$)',
+        r'\bby\s+([A-Z][A-Za-z0-9 .&\'-]{2,80}?)(?:\s+in\b|\s+di\b|,|\.|$)',
     ):
         match = re.search(pattern, content, re.I)
         if match:
@@ -163,71 +318,104 @@ def heuristic_extract(source) -> list[dict]:
             return []
 
     lowered = content.lower()
-    online_markers = ('webinar', 'online course', 'virtual', 'zoom')
-    if any(word in lowered for word in online_markers):
-        mode = 'online'
+    online_markers = ('webinar', 'online course', 'virtual', 'zoom', 'atas talian', 'dalam talian')
+    city, city_quote = _find_city(content)
+    if 'hybrid' in lowered:
+        if not city:
+            return []
+        idx = lowered.index('hybrid')
+        mode, mode_quote = 'hybrid', content[idx:idx + 6]
+    elif any(word in lowered for word in online_markers):
         marker = next(w for w in online_markers if w in lowered)
         idx = lowered.index(marker)
-        mode_quote = content[idx:idx + len(marker)]
+        mode, mode_quote = 'online', content[idx:idx + len(marker)]
         city, city_quote = None, None
     else:
-        city, city_quote = _find_city(content)
         if not city:
             return []
         mode, mode_quote = 'in_person', city_quote
 
-    start_date, date_quote = _find_date(content)
-    if not start_date or not date_quote:
+    start_dates = _start_dates(content)
+    if not start_dates:
         return []
+    session_titles = _weekday_session_titles(content) or _and_session_titles(content)
+    if len(session_titles) >= 2 and len(start_dates) >= 2:
+        pairs = list(zip(session_titles, start_dates))[:4]
+        multi = True
+    else:
+        if not title:
+            return []
+        title_quote = _quote(content, title)
+        if not title_quote:
+            return []
+        pairs = [(title_quote, start_dates[0])]
+        multi = False
+
+    tz_name, tz_quote = _explicit_timezone(content)
+    venue, venue_quote = _explicit_venue(content)
     country_quote = next((m for m in ('Malaysia', 'Malaysian') if m in content), None)
     if not country_quote:
         country_quote = city_quote or provider_quote
+    prerequisites, prereq_quote = _explicit_prerequisites(content)
 
-    evidence = {
-        'title': title_quote,
-        'provider': provider_quote,
-        'country': country_quote,
-        'mode': mode_quote,
-    }
-    if start_date and date_quote:
-        evidence['start_date'] = date_quote
-    if city and city_quote:
-        evidence['city'] = city_quote
+    rows = []
+    for session_title, (start_date, date_quote) in pairs:
+        title_quote = _quote(content, session_title)
+        if not title_quote:
+            continue
+        end_date, end_quote = (None, None) if multi else _explicit_end_date(content, start_date)
+        evidence = {
+            'title': title_quote,
+            'provider': provider_quote,
+            'country': country_quote,
+            'mode': mode_quote,
+            'start_date': date_quote,
+        }
+        if end_date and end_quote:
+            evidence['end_date'] = end_quote
+        if tz_name and tz_quote:
+            evidence['timezone'] = tz_quote
+        if venue and venue_quote:
+            evidence['venue'] = venue_quote
+        if city and city_quote:
+            evidence['city'] = city_quote
+        if prerequisites and prereq_quote:
+            evidence['prerequisites'] = prereq_quote
+        row = {
+            'title': title_quote[:200],
+            'provider': provider[:200],
+            'description': '',
+            'start_date': start_date,
+            'end_date': end_date,
+            'timezone': tz_name,
+            'venue': venue,
+            'city': city,
+            'state': None,
+            'country': 'MY',
+            'mode': mode,
+            'fee': None,
+            'currency': None,
+            'points': None,
+            'credit_label': None,
+            'difficulty': None,
+            'prerequisites': prerequisites,
+            'registration_url': None,
+            'source_url': url,
+            'source_text': content,
+            'evidence': evidence,
+            'model_id': 'heuristic-v1',
+            'retrieved_at': datetime.now(timezone.utc).isoformat(),
+            'model_weights_url': None,
+            'model_license_url': None,
+        }
+        try:
+            rows.append(validate_evidence(Training(**row)).model_dump(mode='json'))
+        except (ValueError, TypeError):
+            continue
+    return rows
 
-    row = {
-        'title': title_quote[:200],
-        'provider': provider[:200],
-        'description': '',
-        'start_date': start_date,
-        'end_date': None,
-        'timezone': None,
-        'venue': None,
-        'city': city,
-        'state': None,
-        'country': 'MY',
-        'mode': mode,
-        'fee': None,
-        'currency': None,
-        'points': None,
-        'credit_label': None,
-        'difficulty': None,
-        'prerequisites': None,
-        'registration_url': None,
-        'source_url': url,
-        'source_text': content,
-        'evidence': evidence,
-        'model_id': 'heuristic-v1',
-        'retrieved_at': datetime.now(timezone.utc).isoformat(),
-        'model_weights_url': None,
-        'model_license_url': None,
-    }
-    try:
-        return [validate_evidence(Training(**row)).model_dump(mode='json')]
-    except (ValueError, TypeError):
-        return []
 
-
-def extract_training(source, client=None):
+def extract_training(source, client=None, usage=None):
     base = configuration()
     max_in, max_out = model_caps()
     # Fixed cap protects cost/context; no arbitrary source instructions are executed.
@@ -257,12 +445,16 @@ def extract_training(source, client=None):
     try:
         response = client.post(base + '/chat/completions', json=payload, headers={'Authorization': 'Bearer ' + os.environ['MODEL_API_KEY']})
         response.raise_for_status()
-        raw = response.json()['choices'][0]['message']['content'].strip()
+        data = response.json()
+        raw = data['choices'][0]['message']['content'].strip()
         if raw.startswith('```') and raw.endswith('```'):
             raw = raw.split('\n', 1)[1].rsplit('```', 1)[0]
         rows = json.loads(raw)['trainings']
         if not isinstance(rows, list) or len(rows) > 4:
             raise ValueError('Invalid candidate batch')
+        tokens = reported_model_tokens(data)
+        if usage is not None and tokens is not None:
+            usage['model_tokens'] = (usage.get('model_tokens') or 0) + tokens
         result = []
         for row in rows:
             row.update(

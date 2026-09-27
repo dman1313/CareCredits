@@ -26,8 +26,31 @@ def seed(db):
     ]
     for i, (title, provider, offset, city, mode, fee, points, difficulty, lat, lon) in enumerate(items):
         key = 'demo-' + str(i)
-        if db.query(Course).filter_by(source_key=key).first():
+        registration = 'https://example.org/carecredits-demo-' + str(i) + '/register'
+        training = Training(
+            title=title,
+            provider=provider,
+            description='Fictional demonstration training for testing the CareCredits workflow. This is not a real course or accreditation claim.',
+            start_date=today()+timedelta(days=offset),
+            city=city,
+            state='Selangor' if city and city != 'Kuala Lumpur' else None,
+            mode=mode,
+            latitude=lat,
+            longitude=lon,
+            fee=fee,
+            currency='MYR' if fee is not None else None,
+            points=points,
+            credit_label='CPD' if points is not None else None,
+            difficulty=difficulty,
+            prerequisites='For demonstration purposes only',
+            source_url='https://example.org/carecredits-demo-'+str(i),
+            registration_url=registration,
+        )
+        payload = training.model_dump(mode='json')
+        existing = db.query(Course).filter_by(source_key=key).first()
+        if existing:
+            # Keep demo IDs stable while refreshing labelled registration links for DEMO-01 step 6.
+            fill_course(existing, {**(existing.data or {}), **payload, 'registration_url': registration}, demo=True)
             continue
-        training = Training(title=title, provider=provider, description='Fictional demonstration training for testing the CareCredits workflow. This is not a real course or accreditation claim.', start_date=today()+timedelta(days=offset), city=city, state='Selangor' if city and city != 'Kuala Lumpur' else None, mode=mode, latitude=lat, longitude=lon, fee=fee, currency='MYR' if fee is not None else None, points=points, credit_label='CPD' if points is not None else None, difficulty=difficulty, prerequisites='For demonstration purposes only', source_url='https://example.org/carecredits-demo-'+str(i))
-        db.add(fill_course(Course(source_key=key), training.model_dump(mode='json'), demo=True))
+        db.add(fill_course(Course(source_key=key), payload, demo=True))
     db.commit()

@@ -58,6 +58,7 @@ export type Course = {
   title: string;
   provider: string;
   description: string;
+  model_id?: string | null;
   start_date: string | null;
   end_date?: string | null;
   timezone?: string | null;
@@ -107,14 +108,26 @@ export type Job = {
   status: string;
   max_results?: number;
   attempt?: number;
-  result: { warnings?: string[]; candidate_count?: number; sources?: TavilySource[] } | null;
+  result: {
+    warnings?: string[];
+    candidate_count?: number;
+    sources?: TavilySource[];
+    usage?: { tavily_credits?: number | null; model_tokens?: number | null };
+  } | null;
 };
 
 export type RefreshDiff = { field: string; published: unknown; proposed: unknown };
 
+export type JevJudgment = {
+  decision?: string;
+  confidence?: number;
+  probabilities?: { exists?: number; new?: number; uncertain?: number };
+  warning?: string | null;
+};
+
 export type Candidate = {
   id: string;
-  data: Course & { _refresh_diff?: RefreshDiff[]; _matched_course_id?: string };
+  data: Course & { _refresh_diff?: RefreshDiff[]; _matched_course_id?: string; _judgment?: JevJudgment };
   status: string;
   reason?: string;
   version?: number;

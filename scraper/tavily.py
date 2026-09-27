@@ -43,6 +43,21 @@ def tavily_post(endpoint, payload, key):
         raise ProviderError(502, "Tavily returned an invalid response.") from None
 
 
+def reported_credits(payload):
+    """Keep provider-reported credit counts; never invent a spend figure."""
+    usage = payload.get('usage') if isinstance(payload, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    raw = usage.get('credits')
+    try:
+        credits = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if credits != credits or credits < 0:
+        return None
+    return credits
+
+
 def source_url(value):
     """Reject local/literal IP and non-web links; remove fragments for deduplication."""
     if not isinstance(value, str):
@@ -73,6 +88,7 @@ def discover(query, max_results=5):
         "topic": "general", "search_depth": "basic", "max_results": max_results,
         "include_answer": False, "include_raw_content": False,
     }, key)
+    credits = [reported_credits(search)]
     sources = {}
     for item in search["results"]:
         if not isinstance(item, dict):
@@ -90,6 +106,7 @@ def discover(query, max_results=5):
             extracted = tavily_post("extract", {
                 "urls": list(sources), "extract_depth": "basic", "format": "text",
             }, key)
+            credits.append(reported_credits(extracted))
             for item in extracted["results"]:
                 if not isinstance(item, dict):
                     continue
@@ -102,10 +119,12 @@ def discover(query, max_results=5):
                 warnings.append("Some pages could not be extracted; their search snippets are retained.")
         except ProviderError as error:
             warnings.append(error.detail + " Search snippets are retained; extraction is incomplete.")
+    known = [value for value in credits if value is not None]
     return {
         "provider": "tavily", "query": query,
         "retrieved_at": datetime.now(timezone.utc).isoformat(),
         "sources": list(sources.values()), "warnings": warnings,
+        "usage": {"tavily_credits": sum(known) if known else None},
     }
 
 

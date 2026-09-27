@@ -2,7 +2,7 @@
 
 A hackathon application being developed to help Malaysian doctors discover CPD trainings and track sign-ups, attendance and learning progress. The confirmed design uses **three application services: a Python backend, a JavaScript-based frontend, and a separate Python scraper**, with PostgreSQL owned by the backend.
 
-The project requires **real Tavily Search and Extract API usage** and **open-weight models for application AI**. Official hackathon rules still need to be linked and checked. The current code is a foundation, not the complete implementation.
+The project requires **real Tavily Search and Extract API usage** and **open-weight models for application AI**. Official hackathon rules still need to be linked and checked. The portal, owned catalogue, operator review, and engagement features exist on this branch. Live Tavily + open-weight DEMO-01 still needs owner model keys.
 
 ## Target product
 
@@ -12,7 +12,7 @@ The project requires **real Tavily Search and Extract API usage** and **open-wei
 - Records of courses signed up for and attended, with personal progress. The SDD proposes external registration and self-reported attendance for MVP.
 - Source-backed ingestion using Tavily and an open-weight model to produce structured candidates for review.
 
-[SDD v0.7](docs/SDD.md) defines the full MVP, data model, service contracts, acceptance tests and build sequence. Proposed defaults and unresolved decisions are labelled. User-facing credits are called CPDs; original source labels are retained without assuming CE/CME equivalence.
+[The SDD](docs/SDD.md) defines the full MVP, data model, service contracts, acceptance tests and build sequence. Proposed defaults and unresolved decisions are labelled. User-facing credits are called CPDs; original source labels are retained without assuming CE/CME equivalence.
 
 ## Tavily's role in the current code
 
@@ -36,7 +36,7 @@ Official API references: [Search](https://docs.tavily.com/documentation/api-refe
 - Malaysia catalogue filters, nearby distance when coordinates exist, personal sign-up/attendance, year progress, and an optional public profile are implemented.
 - Operator ingestion uses leased jobs and an explicit retry for interrupted work.
 - Demo fixtures load only with `DEMO_MODE=true` outside production and are labelled fictional.
-- Live UI: http://127.0.0.1:3000/live
+- Live UI: http://127.0.0.1:3000/live — operators can show service/integration status, start a bounded ingestion job, and review/publish or reject candidates; doctors can save city/state, apply FIND-01 filters (mode, period, difficulty, max fee, min points), browse PROG-02 suggestions, select a progress year, and record sign-up/attendance from the same shell.
 - Digests, suggestions, and printable certificates (DEC-10) are in the main workspace and `/live` (`MAIL_PROVIDER=log` by default).
 - API errors use `{error:{code,message,request_id}}`. Personal records have `signup_status` including cancelled, plus attendance change history.
 - Optional Google OAuth when `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are set; email/password remains for local demo.
@@ -84,4 +84,4 @@ With backend dependencies installed:
 PYTHONPATH=.:backend python -m unittest discover -s backend/tests -v
 ```
 
-Tests mock Tavily and the model and do not spend credits. `python3 scripts/happy_path_review.py` walks hold → publish on a labelled candidate without API credits. A live API call, full Docker startup, and browser portal flow must be verified separately.
+Tests mock Tavily and the model and do not spend credits. `python3 scripts/happy_path_review.py` walks reject → hold → publish on labelled candidates without API credits. A live API call, full Docker startup, and browser portal flow must be verified separately.

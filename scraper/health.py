@@ -50,8 +50,9 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def start(port=None):
+    host = (os.getenv('SCRAPER_HEALTH_HOST') or '127.0.0.1').strip() or '127.0.0.1'
     port = int(port or os.getenv('SCRAPER_HEALTH_PORT') or 8002)
-    server = ThreadingHTTPServer(('127.0.0.1', port), HealthHandler)
+    server = ThreadingHTTPServer((host, port), HealthHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server

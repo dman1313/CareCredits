@@ -17,10 +17,16 @@ def main():
             if not re.fullmatch(r'[A-Za-z0-9_.-]+',value):
                 raise SystemExit('Unexpected key format. Configure the server secret directly instead.')
             values[key]=value
-    for key,label in [('MODEL_ID','Model ID from your provider'),('MODEL_WEIGHTS_URL','Official model weights URL'),('MODEL_LICENSE_URL','Official model licence URL')]:
+    for key,label,pattern in [
+        ('MODEL_ID','Model ID from your provider', r'[A-Za-z0-9_./:?=&%#@+~-]+'),
+        ('MODEL_WEIGHTS_URL','Official model weights URL', r'[A-Za-z0-9_./:?=&%#@+~-]+'),
+        ('MODEL_LICENSE_URL','Official model licence URL', r'[A-Za-z0-9_./:?=&%#@+~-]+'),
+        ('MODEL_PUBLISHER','Model publisher', r'[A-Za-z0-9][A-Za-z0-9 ._+/-]{0,80}'),
+        ('MODEL_HOST','Model hosting provider', r'[A-Za-z0-9][A-Za-z0-9 ._+/-]{0,80}'),
+    ]:
         value=input(label+' (blank keeps existing): ').strip()
         if value:
-            if not re.fullmatch(r'[A-Za-z0-9_./:?=&%#@+~-]+',value):
+            if not re.fullmatch(pattern,value):
                 raise SystemExit('Unexpected configuration format.')
             values[key]=value
     if input('Have you verified this model has available weights and a suitable licence? [yes/no]: ').strip().lower()=='yes':

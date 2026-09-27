@@ -193,7 +193,7 @@ def collect_matches(tap_token: str, query: str, max_results=5) -> list[dict]:
         "GET",
         "/v1/stream",
         tap_token,
-        query={"timeout": 8, "since": "24h", "limit": max(1, min(max_results, 20))},
+        query={"timeout": 8, "since": "24h", "limit": max(1, min(max_results, 5))},
         timeout=15,
     )
     events = parse_sse(body.get("sse") or "")
