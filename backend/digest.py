@@ -27,14 +27,21 @@ def local_now() -> datetime:
 def progress_snapshot(db: Session, account_id: str, year: int | None = None) -> dict:
     year = year or local_now().year
     records = db.query(Record).filter_by(account_id=account_id).all()
-    attended = [r for r in records if r.attended and r.attended_on and r.attended_on.startswith(str(year))]
+    attended = [r for r in records if (getattr(r, 'attendance_status', None) == 'attended' or r.attended) and r.attended_on and r.attended_on.startswith(str(year))]
     countable = [r for r in attended if r.points is not None and r.credit_label.strip().upper() == 'CPD']
+    excluded_reasons = []
+    for row in attended:
+        if row.points is None:
+            excluded_reasons.append({'reason': 'unknown_points', 'credit_label': row.credit_label})
+        elif row.credit_label.strip().upper() != 'CPD':
+            excluded_reasons.append({'reason': 'unmapped_credit_label', 'credit_label': row.credit_label})
     return {
         'year': year,
-        'signed_up': sum(1 for r in records if (getattr(r, 'signup_status', None) == 'signed_up' or r.signed_up) and not r.attended),
+        'signed_up': sum(1 for r in records if (getattr(r, 'signup_status', None) == 'signed_up' or r.signed_up) and not (getattr(r, 'attendance_status', None) == 'attended' or r.attended)),
         'attended': len(attended),
         'points': round(sum(r.points for r in countable), 2),
-        'excluded': len(attended) - len(countable),
+        'excluded': len(excluded_reasons),
+        'excluded_reasons': excluded_reasons,
     }
 
 
@@ -184,6 +191,8 @@ def send_digest(db: Session, account: Account, pref: DigestPreference, public_ba
     row = DigestSend(
         account_id=account.id,
         status=result['status'],
+        event_count=len(payload.get('sessions') or []),
+        recorded_points_snapshot=float((payload.get('progress') or {}).get('points') or 0),
         provider_message_id=result.get('provider_message_id'),
         error=result.get('error') or '',
         payload=payload,

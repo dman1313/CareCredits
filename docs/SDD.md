@@ -1,6 +1,6 @@
 # CareCredits — spec-driven development specification
 
-Version: 0.10 · 2026-09-27 · Status: implementation specification; portal and three-service split exist on this branch; DEC-09–11, BUILD-10, cancelled signup_status, attendance history, error envelopes, optional Google OAuth, main-portal digest/suggestions/certificate, doctor city/state profile, and GET job-by-id are implemented. Live TypeSafe Jev is wired when `TYPESAFE_API_KEY` is set. Open-weight model DEMO-01 still needs owner model keys.
+Version: 0.16 · 2026-09-27 · Status: implementation specification; portal and three-service split exist on this branch; DEC-09–11, BUILD-10, cancelled signup_status, attendance_status, FieldEvidence source links, source documents, versioned review, candidate `resulting_course_id`, and main-portal digest/suggestions/certificate are implemented. Live TypeSafe Jev is wired when `TYPESAFE_API_KEY` is set. Open-weight model DEMO-01 still needs owner model keys.
 
 This document expands the initial Tavily discovery specification using the owner's supplied meeting summary. It defines the full Malaysia MVP and the contracts needed to build it. It does not claim that the described application is already implemented.
 
@@ -440,3 +440,7 @@ v0.8 records BUILD-10 delivery: digest preferences + biweekly send loop (log/SMT
 v0.10 wires DEC-10 into the main workspace UI, adds doctor `state`, GET `/api/v1/admin/ingestion-jobs/{id}`, mocked T-04 fixtures, multi-session identity tests, and documents flattened Course as the EVT-02 MVP; schema v6.
 v0.11 stores Google `identity_issuer`/`identity_subject`, shrinks public `/config` to login flags, adds operator daily-scrape control, filter reset, history timeline, future-attendance UI gate, and T-06/T-07 radius/year/detail-does-not-signup tests; schema v7.
 v0.12 adds FieldEvidence + source_reviewed (EVT-03), signed_up_at/points_origin, paginated `/me/trainings`, progress year selector, and concurrent job-claim coverage; schema v8.
+v0.13 adds `attendance_status`, job `attempt`, FieldEvidence `source_document_id`, progress `excluded_reasons`, SourceDocument persistence, `{query,max_results}`, paginated/versioned candidate review, and my-learning filters; schema v10. DEMO-01 / T-10 / BUILD-08 remain owner-blocked without model keys.
+v0.14 adds optional doctor coordinates + `location_consent_at` on GET/PATCH `/me`, nonnegative fee/points guards, and a source-level T-08 accessibility scan; schema v11.
+v0.15 adds `created_at` on accounts/courses and `event_count`/`recorded_points_snapshot` on digest sends; schema v12.
+v0.16 links published candidates to `resulting_course_id` and lets `scripts/dev.py` bind the next free local ports when 8000/3000 are occupied.

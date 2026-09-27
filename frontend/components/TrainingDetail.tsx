@@ -119,28 +119,32 @@ export function TrainingDetail({
               <option value="cancelled">Cancelled sign-up</option>
             </select>
           </label>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={edit.attended}
+          <label>
+            Attendance
+            <select
+              aria-label="Attendance status"
+              value={edit.attendance_status || (edit.attended ? 'attended' : 'not_recorded')}
               disabled={!attendable && !edit.attended}
-              onChange={(e) =>
+              onChange={(e) => {
+                const attendance_status = e.target.value as RecordData['attendance_status'];
+                const attended = attendance_status === 'attended';
                 onEdit({
                   ...edit,
-                  attended: e.target.checked,
-                  attended_on: e.target.checked ? edit.attended_on || todayLocal() : null,
-                  public: e.target.checked ? edit.public : false,
-                })
-              }
-            />
-            <span>
-              I attended this training
-              {!attendable && !edit.attended && (
-                <small> Attendance can be recorded after the session date ({formatDate(course.start_date)}).</small>
-              )}
-            </span>
+                  attendance_status,
+                  attended,
+                  attended_on: attended ? edit.attended_on || todayLocal() : null,
+                  public: attended ? edit.public : false,
+                });
+              }}
+            >
+              <option value="not_recorded">Not recorded</option>
+              <option value="attended">Attended</option>
+            </select>
+            {!attendable && !edit.attended && (
+              <small> Attendance can be recorded after the session date ({formatDate(course.start_date)}).</small>
+            )}
           </label>
-          {edit.attended && (
+          {(edit.attendance_status === 'attended' || edit.attended) && (
             <>
               <div className="form-grid">
                 <label>

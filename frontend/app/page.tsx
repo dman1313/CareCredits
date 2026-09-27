@@ -105,7 +105,7 @@ export default function Home() {
       page_size: '9',
     });
     if (learning.signupStatus) params.set('signup_status', learning.signupStatus);
-    if (learning.attended) params.set('attended', learning.attended);
+    if (learning.attended) params.set('attendance_status', learning.attended);
     setLoading(true);
     try {
       const [r, p, digest, next] = await Promise.all([
@@ -264,6 +264,8 @@ export default function Home() {
           state: user.state || '',
           bio: user.bio,
           public_enabled: user.public_enabled,
+          latitude: user.latitude ?? null,
+          longitude: user.longitude ?? null,
         }),
       });
       setUser(saved);

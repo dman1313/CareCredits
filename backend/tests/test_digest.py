@@ -101,6 +101,11 @@ class DigestCertificateTests(unittest.TestCase):
         run = self.client.post('/api/v1/admin/digests/run')
         self.assertEqual(run.status_code, 200, run.text)
         self.assertEqual(run.json()['sent'], 1)
+        from portal_models import DigestSend
+        with self.Session() as db:
+            send = db.query(DigestSend).one()
+            self.assertGreaterEqual(send.event_count, 1)
+            self.assertEqual(send.recorded_points_snapshot, 0)
         logs = list(Path(self.folder.name, 'digests').glob('*.txt'))
         self.assertEqual(len(logs), 1)
         text = logs[0].read_text()

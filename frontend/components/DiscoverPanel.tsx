@@ -123,8 +123,8 @@ export function DiscoverPanel({
                 onChange={(e) => onLearningFilters({ attended: e.target.value, page: 1 })}
               >
                 <option value="">All records</option>
-                <option value="true">Attended</option>
-                <option value="false">Not attended</option>
+                <option value="attended">Attended</option>
+                <option value="not_recorded">Not recorded</option>
               </select>
             </label>
           </div>

@@ -105,6 +105,26 @@ def migrate_schema(db):
         db.add(SchemaVersion(version=9))
         current = 9
         db.commit()
+    if current == 9:
+        _add_attendance_status_and_attempts(db)
+        db.add(SchemaVersion(version=10))
+        current = 10
+        db.commit()
+    if current == 10:
+        _add_account_coordinates(db)
+        db.add(SchemaVersion(version=11))
+        current = 11
+        db.commit()
+    if current == 11:
+        _add_created_at_and_digest_counts(db)
+        db.add(SchemaVersion(version=12))
+        current = 12
+        db.commit()
+    if current == 12:
+        _add_candidate_resulting_course(db)
+        db.add(SchemaVersion(version=13))
+        current = 13
+        db.commit()
     if current != SCHEMA_VERSION:
         raise RuntimeError('Unsupported portal schema. Apply the matching migration.')
 
@@ -197,6 +217,57 @@ def _add_source_documents_and_job_limits(db):
     db.commit()
 
 
+def _add_attendance_status_and_attempts(db):
+    bind = db.get_bind()
+    records = {column['name'] for column in inspect(bind).get_columns('doctor_records')}
+    if 'attendance_status' not in records:
+        db.execute(text("ALTER TABLE doctor_records ADD COLUMN attendance_status VARCHAR DEFAULT 'not_recorded' NOT NULL"))
+        db.execute(text("UPDATE doctor_records SET attendance_status = 'attended' WHERE attended = 1"))
+    jobs = {column['name'] for column in inspect(bind).get_columns('ingestion_jobs')}
+    if 'attempt' not in jobs:
+        db.execute(text('ALTER TABLE ingestion_jobs ADD COLUMN attempt INTEGER DEFAULT 1 NOT NULL'))
+    evidence = {column['name'] for column in inspect(bind).get_columns('field_evidence')}
+    if 'source_document_id' not in evidence:
+        db.execute(text('ALTER TABLE field_evidence ADD COLUMN source_document_id VARCHAR'))
+    db.commit()
+
+
+def _add_account_coordinates(db):
+    existing = {column['name'] for column in inspect(db.get_bind()).get_columns('accounts')}
+    if 'latitude' not in existing:
+        db.execute(text('ALTER TABLE accounts ADD COLUMN latitude FLOAT'))
+    if 'longitude' not in existing:
+        db.execute(text('ALTER TABLE accounts ADD COLUMN longitude FLOAT'))
+    if 'location_consent_at' not in existing:
+        db.execute(text('ALTER TABLE accounts ADD COLUMN location_consent_at FLOAT'))
+    db.commit()
+
+
+def _add_created_at_and_digest_counts(db):
+    bind = db.get_bind()
+    accounts = {column['name'] for column in inspect(bind).get_columns('accounts')}
+    if 'created_at' not in accounts:
+        db.execute(text('ALTER TABLE accounts ADD COLUMN created_at FLOAT'))
+        db.execute(text('UPDATE accounts SET created_at = 0 WHERE created_at IS NULL'))
+    courses = {column['name'] for column in inspect(bind).get_columns('courses')}
+    if 'created_at' not in courses:
+        db.execute(text('ALTER TABLE courses ADD COLUMN created_at FLOAT'))
+        db.execute(text('UPDATE courses SET created_at = updated_at WHERE created_at IS NULL'))
+    sends = {column['name'] for column in inspect(bind).get_columns('digest_sends')}
+    if 'event_count' not in sends:
+        db.execute(text('ALTER TABLE digest_sends ADD COLUMN event_count INTEGER DEFAULT 0 NOT NULL'))
+    if 'recorded_points_snapshot' not in sends:
+        db.execute(text('ALTER TABLE digest_sends ADD COLUMN recorded_points_snapshot FLOAT DEFAULT 0 NOT NULL'))
+    db.commit()
+
+
+def _add_candidate_resulting_course(db):
+    candidates = {column['name'] for column in inspect(db.get_bind()).get_columns('course_candidates')}
+    if 'resulting_course_id' not in candidates:
+        db.execute(text('ALTER TABLE course_candidates ADD COLUMN resulting_course_id VARCHAR'))
+    db.commit()
+
+
 @asynccontextmanager
 async def lifespan(app):
     initialize()
@@ -281,12 +352,21 @@ class ProfileChange(BaseModel):
     state: str = Field(default='', max_length=100)
     bio: str = Field(max_length=1000)
     public_enabled: bool
+    latitude: float | None = Field(default=None, ge=-90, le=90, allow_inf_nan=False)
+    longitude: float | None = Field(default=None, ge=-180, le=180, allow_inf_nan=False)
+
+    @model_validator(mode='after')
+    def coordinates_together(self):
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError('Latitude and longitude must be supplied together.')
+        return self
 
 
 class RecordChange(BaseModel):
     signed_up: bool = False
     signup_status: Literal['not_recorded', 'signed_up', 'cancelled'] | None = None
     attended: bool = False
+    attendance_status: Literal['not_recorded', 'attended'] | None = None
     attended_on: date | None = None
     points: float | None = Field(default=None, ge=0, le=10000, allow_inf_nan=False)
     credit_label: str = Field(default='CPD', min_length=1, max_length=30)
@@ -337,7 +417,7 @@ class Review(BaseModel):
 
 
 def profile(account):
-    return {k: getattr(account, k) for k in ('id', 'email', 'name', 'city', 'state', 'role', 'bio', 'public_enabled', 'public_slug')}
+    return {k: getattr(account, k) for k in ('id', 'email', 'name', 'city', 'state', 'latitude', 'longitude', 'location_consent_at', 'created_at', 'role', 'bio', 'public_enabled', 'public_slug')}
 
 
 def record_json(record):
@@ -346,7 +426,7 @@ def record_json(record):
     return {
         k: getattr(record, k)
         for k in (
-            'signed_up', 'signup_status', 'signed_up_at', 'attended', 'attended_on',
+            'signed_up', 'signup_status', 'signed_up_at', 'attended', 'attendance_status', 'attended_on',
             'points', 'points_origin', 'credit_label', 'notes', 'public', 'version',
         )
     }
@@ -394,8 +474,11 @@ def health():
 
 @app.get('/health/ready')
 def ready(db: Session = Depends(get_db)):
-    db.execute(text('SELECT 1'))
-    return {'status': 'ready'}
+    try:
+        db.execute(text('SELECT 1'))
+    except Exception:
+        raise HTTPException(503, 'Database is unavailable.')
+    return {'status': 'ready', 'database': 'ready'}
 
 
 @app.get('/api/v1/config')
@@ -487,9 +570,13 @@ def me(user=Depends(current_user)):
 
 @app.patch('/api/v1/me')
 def change_profile(body: ProfileChange, user=Depends(current_user), db: Session = Depends(get_db)):
-    for k, v in body.model_dump().items():
+    values = body.model_dump()
+    user.latitude = values.pop('latitude')
+    user.longitude = values.pop('longitude')
+    user.location_consent_at = time.time() if user.latitude is not None else None
+    for k, v in values.items():
         setattr(user, k, v)
-    audit(db, user.id, 'profile_changed', user.id, {'public_enabled': body.public_enabled})
+    audit(db, user.id, 'profile_changed', user.id, {'public_enabled': body.public_enabled, 'has_coordinates': user.latitude is not None})
     db.commit()
     return profile(user)
 
@@ -606,6 +693,8 @@ def save_record(course_id: str, body: RecordChange, user=Depends(current_user), 
     course = db.get(Course, course_id)
     if not course:
         raise HTTPException(404, 'Training not found.')
+    attendance = body.attendance_status or ('attended' if body.attended else 'not_recorded')
+    body.attended = attendance == 'attended'
     if body.attended:
         if not body.attended_on or body.attended_on > today():
             raise HTTPException(422, 'Choose a completion date that is not in the future.')
@@ -626,6 +715,8 @@ def save_record(course_id: str, body: RecordChange, user=Depends(current_user), 
             status = 'not_recorded'
     values['signup_status'] = status
     values['signed_up'] = status == 'signed_up'
+    values['attendance_status'] = attendance
+    values['attended'] = attendance == 'attended'
     if status == 'signed_up':
         values['signed_up_at'] = (record.signed_up_at if record and record.signed_up_at else time.time())
     elif record:
@@ -640,7 +731,7 @@ def save_record(course_id: str, body: RecordChange, user=Depends(current_user), 
         if changed.rowcount != 1:
             db.rollback()
             raise HTTPException(409, 'This record changed. Reopen it before saving.')
-        db.add(RecordHistory(record_id=record.id, account_id=user.id, changed={k: old[k] for k in ('signup_status', 'attended', 'attended_on', 'points', 'credit_label')}))
+        db.add(RecordHistory(record_id=record.id, account_id=user.id, changed={k: old[k] for k in ('signup_status', 'attendance_status', 'attended', 'attended_on', 'points', 'credit_label')}))
     else:
         if body.version != 0:
             raise HTTPException(409, 'Record version does not match.')
@@ -660,6 +751,7 @@ def save_record(course_id: str, body: RecordChange, user=Depends(current_user), 
 @app.get('/api/v1/me/trainings')
 def my_trainings(
     signup_status: Literal['not_recorded', 'signed_up', 'cancelled'] | None = None,
+    attendance_status: Literal['not_recorded', 'attended'] | None = None,
     attended: bool | None = None,
     page: int = 1,
     page_size: int = 20,
@@ -671,7 +763,9 @@ def my_trainings(
     query = db.query(Record, Course).join(Course, Record.course_id == Course.id).filter(Record.account_id == user.id)
     if signup_status:
         query = query.filter(Record.signup_status == signup_status)
-    if attended is not None:
+    if attendance_status:
+        query = query.filter(Record.attendance_status == attendance_status)
+    elif attended is not None:
         query = query.filter(Record.attended.is_(attended))
     total = query.count()
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
@@ -689,9 +783,22 @@ def progress(year: int | None = None, user=Depends(current_user), db: Session = 
     if not 1900 <= year <= 2200:
         raise HTTPException(422, 'Invalid year.')
     records = db.query(Record).filter_by(account_id=user.id).all()
-    attended = [r for r in records if r.attended and r.attended_on and r.attended_on.startswith(str(year))]
+    attended = [r for r in records if (getattr(r, 'attendance_status', None) == 'attended' or r.attended) and r.attended_on and r.attended_on.startswith(str(year))]
     countable = [r for r in attended if r.points is not None and r.credit_label.strip().upper() == 'CPD']
-    return {'year': year, 'signed_up': sum((getattr(r, 'signup_status', None) == 'signed_up' or r.signed_up) and not r.attended for r in records), 'attended': len(attended), 'points': round(sum(r.points for r in countable), 2), 'excluded': len(attended)-len(countable)}
+    excluded_reasons = []
+    for row in attended:
+        if row.points is None:
+            excluded_reasons.append({'reason': 'unknown_points', 'credit_label': row.credit_label})
+        elif row.credit_label.strip().upper() != 'CPD':
+            excluded_reasons.append({'reason': 'unmapped_credit_label', 'credit_label': row.credit_label})
+    return {
+        'year': year,
+        'signed_up': sum((getattr(r, 'signup_status', None) == 'signed_up' or r.signed_up) and not (getattr(r, 'attendance_status', None) == 'attended' or r.attended) for r in records),
+        'attended': len(attended),
+        'points': round(sum(r.points for r in countable), 2),
+        'excluded': len(excluded_reasons),
+        'excluded_reasons': excluded_reasons,
+    }
 
 
 @app.get('/api/v1/me/trainings/{course_id}/history')
@@ -817,6 +924,7 @@ def job_json(job):
         'status': job.status,
         'created_at': job.created_at,
         'max_results': job.max_results,
+        'attempt': job.attempt,
         'result': job.result,
     }
 
@@ -869,7 +977,7 @@ def retry_job(job_id: str, user=Depends(operator), db: Session = Depends(get_db)
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(404, 'Job not found.')
-    changed = db.execute(update(Job).where(Job.id == job.id, Job.status == 'interrupted').values(status='queued', lease_token=None, lease_until=None, started_at=None))
+    changed = db.execute(update(Job).where(Job.id == job.id, Job.status == 'interrupted').values(status='queued', lease_token=None, lease_until=None, started_at=None, attempt=Job.attempt + 1))
     if changed.rowcount != 1:
         db.rollback()
         raise HTTPException(409, 'Only interrupted jobs can be retried.')
@@ -898,7 +1006,7 @@ def review(candidate_id: str, body: Review, user=Depends(operator), db: Session 
     if not candidate:
         raise HTTPException(404, 'Candidate not found.')
     if candidate.status not in ('pending', 'held'):
-        return {'status': candidate.status, 'reason': candidate.review_reason or '', 'version': candidate.version}
+        return {'status': candidate.status, 'reason': candidate.review_reason or '', 'version': candidate.version, 'resulting_course_id': candidate.resulting_course_id}
     if body.version not in (0, candidate.version):
         raise HTTPException(409, 'This candidate changed. Refresh before reviewing.')
     reason = body.reason.strip()
@@ -916,14 +1024,18 @@ def review(candidate_id: str, body: Review, user=Depends(operator), db: Session 
             db.add(course)
         db.flush()
         now = time.time()
+        candidate.resulting_course_id = course.id
         course.verification_status = 'source_reviewed'
         course.reviewed_by = user.id
         course.reviewed_at = now
         db.query(FieldEvidence).filter_by(course_id=course.id).delete()
+        source_url = str(payload.get('source_url') or '').split('#')[0]
+        source = db.query(SourceDocument).filter_by(canonical_url=source_url).order_by(SourceDocument.retrieved_at.desc()).first() if source_url else None
         for field, excerpt in (payload.get('evidence') or {}).items():
             db.add(FieldEvidence(
                 course_id=course.id,
                 candidate_id=candidate.id,
+                source_document_id=source.id if source else None,
                 field_name=field,
                 excerpt=str(excerpt)[:2000],
                 reviewed_by=user.id,
@@ -944,7 +1056,7 @@ def review(candidate_id: str, body: Review, user=Depends(operator), db: Session 
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, 'Another review published this session. Refresh.')
-    return {'status': candidate.status, 'reason': candidate.review_reason, 'version': candidate.version}
+    return {'status': candidate.status, 'reason': candidate.review_reason, 'version': candidate.version, 'resulting_course_id': candidate.resulting_course_id}
 
 
 @app.post('/internal/v1/jobs/claim', dependencies=[Depends(worker)])
@@ -1021,7 +1133,10 @@ def complete(job_id: str, body: CompleteJob, db: Session = Depends(get_db)):
 
 @app.get('/internal/v1/catalogue/connect', dependencies=[Depends(worker)])
 def catalogue_connect(db: Session = Depends(get_db)):
-    db.execute(text('SELECT 1'))
+    try:
+        db.execute(text('SELECT 1'))
+    except Exception:
+        raise HTTPException(503, 'Catalogue database is unavailable.')
     return {
         'status': 'connected',
         'database': 'ready',

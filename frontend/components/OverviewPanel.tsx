@@ -111,7 +111,16 @@ export function OverviewPanel({
           </div>
           {!!progress?.excluded && (
             <small>
-              {progress.excluded} attended record(s) have unknown or other credit types and are excluded.
+              {progress.excluded} attended record(s) excluded
+              {progress.excluded_reasons?.length
+                ? ': ' +
+                  progress.excluded_reasons
+                    .map((item) =>
+                      item.reason === 'unknown_points' ? 'unknown points' : item.credit_label || 'other credit type',
+                    )
+                    .join(', ')
+                : ' (unknown or other credit types)'}
+              .
             </small>
           )}
         </section>

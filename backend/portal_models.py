@@ -1,10 +1,10 @@
-"""Portal schema v9. Source documents, job max_results, candidate review version."""
+"""Portal schema v13. Candidate resulting course link."""
 import time
 import uuid
 from sqlalchemy import Column, String, Float, Boolean, Integer, JSON, ForeignKey, UniqueConstraint
 from database import Base
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 13
 
 
 def uid():
@@ -20,12 +20,16 @@ class Account(Base):
     password_hash = Column(String, nullable=False)
     city = Column(String, default='Kuala Lumpur', nullable=False)
     state = Column(String, default='', nullable=False)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    location_consent_at = Column(Float, nullable=True)
     identity_issuer = Column(String, nullable=True)
     identity_subject = Column(String, nullable=True)
     role = Column(String, default='doctor', nullable=False)
     public_enabled = Column(Boolean, default=False, nullable=False)
     public_slug = Column(String, unique=True, default=uid, nullable=False)
     bio = Column(String, default='', nullable=False)
+    created_at = Column(Float, default=time.time, nullable=False)
 
 
 class LoginSession(Base):
@@ -41,6 +45,7 @@ class Course(Base):
     source_key = Column(String, unique=True, nullable=False)
     data = Column(JSON, nullable=False)
     demo = Column(Boolean, default=False, nullable=False)
+    created_at = Column(Float, default=time.time, nullable=False)
     updated_at = Column(Float, default=time.time, nullable=False)
     title = Column(String, default='', nullable=False)
     provider = Column(String, default='', nullable=False)
@@ -84,9 +89,15 @@ def fill_course(course, data, demo=None):
     course.mode = payload.get('mode') or 'online'
     course.latitude = payload.get('latitude')
     course.longitude = payload.get('longitude')
-    course.fee = payload.get('fee')
+    fee = payload.get('fee')
+    points = payload.get('points')
+    if fee is not None and fee < 0:
+        raise ValueError('Fee cannot be negative.')
+    if points is not None and points < 0:
+        raise ValueError('Points cannot be negative.')
+    course.fee = fee
     course.currency = payload.get('currency')
-    course.points = payload.get('points')
+    course.points = points
     course.credit_label = payload.get('credit_label')
     course.difficulty = payload.get('difficulty')
     if demo is not None:
@@ -104,6 +115,7 @@ class Record(Base):
     signed_up = Column(Boolean, default=False, nullable=False)
     signup_status = Column(String, default='not_recorded', nullable=False)
     attended = Column(Boolean, default=False, nullable=False)
+    attendance_status = Column(String, default='not_recorded', nullable=False)
     attended_on = Column(String, nullable=True)
     points = Column(Float, nullable=True)
     credit_label = Column(String, default='CPD', nullable=False)
@@ -136,6 +148,7 @@ class Job(Base):
     started_at = Column(Float, nullable=True)
     result = Column(JSON, nullable=True)
     max_results = Column(Integer, default=5, nullable=False)
+    attempt = Column(Integer, default=1, nullable=False)
 
 
 class Candidate(Base):
@@ -150,6 +163,7 @@ class Candidate(Base):
     reviewed_at = Column(Float, nullable=True)
     review_reason = Column(String, default='', nullable=False)
     version = Column(Integer, default=1, nullable=False)
+    resulting_course_id = Column(String, ForeignKey('courses.id'), nullable=True)
 
 
 class SourceDocument(Base):
@@ -170,6 +184,7 @@ class FieldEvidence(Base):
     id = Column(String, primary_key=True, default=uid)
     course_id = Column(String, ForeignKey('courses.id'), nullable=True, index=True)
     candidate_id = Column(String, ForeignKey('course_candidates.id'), nullable=True, index=True)
+    source_document_id = Column(String, ForeignKey('source_documents.id'), nullable=True, index=True)
     field_name = Column(String, nullable=False)
     excerpt = Column(String, nullable=False)
     reviewed_by = Column(String, nullable=True)
@@ -208,6 +223,8 @@ class DigestSend(Base):
     account_id = Column(String, ForeignKey('accounts.id'), nullable=False, index=True)
     sent_at = Column(Float, default=time.time, nullable=False)
     status = Column(String, default='queued', nullable=False)
+    event_count = Column(Integer, default=0, nullable=False)
+    recorded_points_snapshot = Column(Float, default=0, nullable=False)
     provider_message_id = Column(String, nullable=True)
     error = Column(String, default='', nullable=False)
     payload = Column(JSON, nullable=True)

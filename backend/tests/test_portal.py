@@ -91,6 +91,11 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(self.save(attended_on=(today()+timedelta(days=1)).isoformat()).status_code,422)
         self.assertEqual(self.save(points=None,credit_label='CME').status_code,200)
         p=self.client.get('/api/v1/me/progress').json();self.assertEqual((p['points'],p['excluded']),(0,1))
+        self.assertEqual(p['excluded_reasons'][0]['reason'],'unknown_points')
+        self.assertEqual(self.save(points=2,credit_label='CME',version=1).status_code,200)
+        p=self.client.get('/api/v1/me/progress').json()
+        self.assertEqual((p['points'],p['excluded']),(0,1))
+        self.assertEqual(p['excluded_reasons'][0]['reason'],'unmapped_credit_label')
 
     def test_public_opt_in_and_revocation(self):
         self.save()
@@ -264,14 +269,22 @@ class PortalTests(unittest.TestCase):
             migrate_schema(db)
             stored=db.get(Course,self.course)
             self.assertEqual((stored.title, stored.city), ('Backfilled GP','Johor Bahru'))
-            self.assertEqual(max(v.version for v in db.query(SchemaVersion).all()), 9)
+            self.assertEqual(max(v.version for v in db.query(SchemaVersion).all()), 13)
             self.assertIn('identity_issuer', {c['name'] for c in inspect(db.get_bind()).get_columns('accounts')})
             self.assertIn('verification_status', {c['name'] for c in inspect(db.get_bind()).get_columns('courses')})
             self.assertIn('review_reason', {c['name'] for c in inspect(db.get_bind()).get_columns('course_candidates')})
             self.assertIn('signup_status', {c['name'] for c in inspect(db.get_bind()).get_columns('doctor_records')})
             self.assertIn('state', {c['name'] for c in inspect(db.get_bind()).get_columns('accounts')})
             self.assertIn('max_results', {c['name'] for c in inspect(db.get_bind()).get_columns('ingestion_jobs')})
+            self.assertIn('attempt', {c['name'] for c in inspect(db.get_bind()).get_columns('ingestion_jobs')})
             self.assertIn('version', {c['name'] for c in inspect(db.get_bind()).get_columns('course_candidates')})
+            self.assertIn('attendance_status', {c['name'] for c in inspect(db.get_bind()).get_columns('doctor_records')})
+            self.assertIn('latitude', {c['name'] for c in inspect(db.get_bind()).get_columns('accounts')})
+            self.assertIn('location_consent_at', {c['name'] for c in inspect(db.get_bind()).get_columns('accounts')})
+            self.assertIn('created_at', {c['name'] for c in inspect(db.get_bind()).get_columns('accounts')})
+            self.assertIn('event_count', {c['name'] for c in inspect(db.get_bind()).get_columns('digest_sends')})
+            self.assertIn('resulting_course_id', {c['name'] for c in inspect(db.get_bind()).get_columns('course_candidates')})
+            self.assertIn('source_document_id', {c['name'] for c in inspect(db.get_bind()).get_columns('field_evidence')})
             tables = inspect(db.get_bind()).get_table_names()
             self.assertIn('digest_preferences', tables)
             self.assertIn('affiliation_certificates', tables)
@@ -327,6 +340,7 @@ class PortalTests(unittest.TestCase):
         retry=self.client.post('/api/v1/admin/ingestion-jobs/'+job['id']+'/retry')
         self.assertEqual(retry.status_code,202,retry.text)
         self.assertEqual(retry.json()['status'],'queued')
+        self.assertEqual(retry.json()['attempt'],2)
         claim=self.client.post('/internal/v1/jobs/claim',headers=service)
         self.assertEqual(claim.status_code,200)
         self.assertEqual(claim.json()['id'], job['id'])
@@ -341,6 +355,7 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(body['signup_status'], 'cancelled')
         self.assertFalse(body['signed_up'])
         self.assertTrue(body['attended'])
+        self.assertEqual(body['attendance_status'], 'attended')
         history = self.client.get('/api/v1/me/trainings/' + self.course + '/history')
         self.assertEqual(history.status_code, 200, history.text)
         self.assertGreaterEqual(len(history.json()['items']), 1)
@@ -355,6 +370,15 @@ class PortalTests(unittest.TestCase):
         me=self.client.get('/api/v1/me').json()
         self.assertEqual((me['city'],me['state']),('Petaling Jaya','Selangor'))
         self.assertNotIn('password_hash',me)
+        half=self.client.patch('/api/v1/me',json={**body,'latitude':3.139})
+        self.assertEqual(half.status_code,422)
+        located=self.client.patch('/api/v1/me',json={**body,'latitude':3.139,'longitude':101.687})
+        self.assertEqual(located.status_code,200,located.text)
+        self.assertEqual(located.json()['latitude'],3.139)
+        self.assertTrue(located.json()['location_consent_at'])
+        cleared=self.client.patch('/api/v1/me',json=body)
+        self.assertEqual(cleared.json()['latitude'],None)
+        self.assertIsNone(cleared.json()['location_consent_at'])
 
     def test_two_sessions_on_one_page_stay_distinct(self):
         from main import source_key
@@ -424,16 +448,20 @@ class PortalTests(unittest.TestCase):
         self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP evidence'},headers=header)
         service={'Authorization':'Bearer test-service-token'}
         claim=self.client.post('/internal/v1/jobs/claim',headers=service).json()
-        self.client.post('/internal/v1/jobs/'+claim['id']+'/complete',json={'lease_token':claim['lease_token'],'status':'succeeded','candidates':[sample('Reviewed clinic')]},headers=service)
+        payload=sample('Reviewed clinic')
+        self.client.post('/internal/v1/jobs/'+claim['id']+'/complete',json={'lease_token':claim['lease_token'],'status':'succeeded','candidates':[payload],'sources':[{'url':payload['source_url'],'title':payload['title'],'snippet':payload['source_text'][:200],'extraction_status':'success','verification_status':'unverified'}]},headers=service)
         cid=self.client.get('/api/v1/admin/candidates').json()['items'][0]['id']
-        self.assertEqual(self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'publish'}).status_code,200)
+        published=self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'publish'})
+        self.assertEqual(published.status_code,200)
         found=self.client.get('/api/v1/trainings?period=all&q=Reviewed').json()['items'][0]
+        self.assertEqual(published.json()['resulting_course_id'],found['id'])
         self.assertEqual(found['verification_status'],'source_reviewed')
         self.assertIsNotNone(found['reviewed_at'])
         with self.Session() as db:
             rows=db.query(FieldEvidence).filter_by(course_id=found['id']).all()
             self.assertGreaterEqual(len(rows),4)
             self.assertTrue(all(row.reviewed_by and row.reviewed_at for row in rows))
+            self.assertTrue(all(row.source_document_id for row in rows))
 
     def test_signed_up_at_and_points_origin(self):
         saved=self.save(signup_status='signed_up')
@@ -449,8 +477,10 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(page.json()['page_size'],1)
         self.assertEqual(page.json()['total'],1)
         self.assertEqual(len(page.json()['items']),1)
-        empty=self.client.get('/api/v1/me/trainings?attended=false')
+        empty=self.client.get('/api/v1/me/trainings?attendance_status=not_recorded')
         self.assertEqual(empty.json()['total'],0)
+        attended=self.client.get('/api/v1/me/trainings?attendance_status=attended')
+        self.assertEqual(attended.json()['total'],1)
 
     def test_concurrent_claim_gives_one_owner(self):
         import threading
@@ -495,6 +525,8 @@ class PortalTests(unittest.TestCase):
             self.assertEqual(len(rows),1)
             self.assertEqual(rows[0].canonical_url,'https://example.org/afpm')
             self.assertEqual(rows[0].job_id,claim['id'])
+        created=self.client.get('/api/v1/admin/ingestion-jobs/'+claim['id'])
+        self.assertEqual(created.json()['attempt'],1)
 
     def test_candidates_are_paginated_and_review_is_versioned(self):
         with self.Session() as db:

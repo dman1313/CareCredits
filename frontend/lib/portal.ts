@@ -4,6 +4,10 @@ export type User = {
   email: string;
   city: string;
   state: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  location_consent_at?: number | null;
+  created_at?: number;
   bio: string;
   role: string;
   public_enabled: boolean;
@@ -23,11 +27,13 @@ export type Suggestion = {
 };
 
 export type SignupStatus = 'not_recorded' | 'signed_up' | 'cancelled';
+export type AttendanceStatus = 'not_recorded' | 'attended';
 
 export type RecordData = {
   signed_up: boolean;
   signup_status: SignupStatus;
   attended: boolean;
+  attendance_status?: AttendanceStatus;
   attended_on: string | null;
   points: number | null;
   credit_label: string;
@@ -78,6 +84,7 @@ export type Progress = {
   attended: number;
   points: number;
   excluded: number;
+  excluded_reasons?: { reason: string; credit_label?: string }[];
 };
 
 export type TavilySource = {
@@ -93,10 +100,11 @@ export type Job = {
   query: string;
   status: string;
   max_results?: number;
+  attempt?: number;
   result: { warnings?: string[]; candidate_count?: number; sources?: TavilySource[] } | null;
 };
 
-export type Candidate = { id: string; data: Course; status: string; reason?: string; version?: number };
+export type Candidate = { id: string; data: Course; status: string; reason?: string; version?: number; resulting_course_id?: string | null };
 
 export type WorkspaceTab =
   | 'Overview'
@@ -109,6 +117,7 @@ export const emptyRecord: RecordData = {
   signed_up: false,
   signup_status: 'not_recorded',
   attended: false,
+  attendance_status: 'not_recorded',
   attended_on: null,
   points: null,
   credit_label: 'CPD',

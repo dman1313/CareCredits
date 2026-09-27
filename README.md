@@ -68,7 +68,7 @@ Local three-service development without Compose:
 python3 scripts/dev.py --demo
 ```
 
-Demo sign-in is `demo@carecredits.local` / `CareCredits-demo-2026`. That path uses labelled fictional courses and does not call Tavily.
+`scripts/dev.py` binds the next free local ports when 8000 or 3000 are already taken, or you can pass `--backend-port` / `--frontend-port`. Demo sign-in is `demo@carecredits.local` / `CareCredits-demo-2026`. That path uses labelled fictional courses and does not call Tavily.
 
 ## Try live ingestion
 

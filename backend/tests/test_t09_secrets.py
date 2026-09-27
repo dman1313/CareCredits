@@ -33,3 +33,18 @@ class SecretSurfaceTests(unittest.TestCase):
         default = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000')
         self.assertNotIn('*', default)
         self.assertTrue(all(item.startswith('http://localhost') or item.startswith('http://127.0.0.1') for item in default.split(',')))
+
+    def test_built_frontend_assets_omit_service_secret_names(self):
+        built = FRONTEND / '.next'
+        if not built.exists():
+            self.skipTest('No built frontend assets in this checkout')
+        needles = ('TAVILY_API_KEY', 'MODEL_API_KEY', 'SCRAPER_SERVICE_TOKEN', 'POSTGRES_PASSWORD', 'GOOGLE_CLIENT_SECRET')
+        hits = []
+        for path in built.rglob('*'):
+            if not path.is_file() or path.suffix.lower() not in {'.js', '.json', '.html', '.map'}:
+                continue
+            text = path.read_text(encoding='utf-8', errors='ignore')
+            for needle in needles:
+                if needle in text:
+                    hits.append(f'{path.relative_to(ROOT)}:{needle}')
+        self.assertEqual(hits, [])
