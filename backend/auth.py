@@ -1,2 +1,1 @@
-# Auth is disabled for now.
-# We will add third-party OAuth later instead of rolling our own.
+"""Email/password sessions remain for local demo. Google OAuth is optional via GOOGLE_CLIENT_*."""

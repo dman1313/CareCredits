@@ -63,6 +63,8 @@ export default function LiveSearch() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [booting, setBooting] = useState(true);
   const [signup, setSignup] = useState(false);
+  const [oauth, setOauth] = useState(false);
+  const [history, setHistory] = useState<{ at: number }[]>([]);
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<'register' | 'signin'>('register');
   const [tab, setTab] = useState<(typeof nav)[number][1]>('Discover');
@@ -85,7 +87,10 @@ export default function LiveSearch() {
 
   useEffect(() => {
     Promise.all([
-      api('/config').then((c) => setSignup(c.signup_enabled)),
+      api('/config').then((c) => {
+        setSignup(c.signup_enabled);
+        setOauth(!!c.oauth_google);
+      }),
       api('/me')
         .then(setUser)
         .catch(() => {}),
@@ -197,7 +202,10 @@ export default function LiveSearch() {
 
   function openCourse(course: Course) {
     setSelected(course);
-    setEdit(course.record || emptyRecord);
+    setEdit({ ...emptyRecord, ...(course.record || {}) });
+    api('/me/trainings/' + course.id + '/history')
+      .then((d) => setHistory(d.items || []))
+      .catch(() => setHistory([]));
   }
 
   if (booting) {
@@ -254,6 +262,11 @@ export default function LiveSearch() {
               {busy ? 'Please wait…' : mode === 'register' ? 'Create account and search' : 'Sign in and search'}
               <ChevronRight />
             </button>
+            {oauth && (
+              <a className="secondary" href="/api/v1/auth/oauth/google">
+                Continue with Google
+              </a>
+            )}
             <button
               type="button"
               className="text-link"
@@ -586,6 +599,7 @@ export default function LiveSearch() {
           edit={edit}
           error={error}
           saving={saving}
+          history={history}
           onClose={() => setSelected(null)}
           onEdit={setEdit}
           onSave={saveRecord}

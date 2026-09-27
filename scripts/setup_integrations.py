@@ -11,7 +11,7 @@ def main():
     destination=root/'.env'
     content=(destination if destination.exists() else root/'.env.sample').read_text()
     values={}
-    for key, label in [('TAVILY_API_KEY','Tavily API key'),('FIREHOSE_MGMT_KEY','Firehose management key (fhm_)'),('MODEL_API_KEY','Nebius/model API key'),('TYPESAFE_API_KEY','TypeSafe / Jev API key')]:
+    for key, label in [('TAVILY_API_KEY','Tavily API key'),('FIREHOSE_MGMT_KEY','Firehose management key (fhm_)'),('MODEL_API_KEY','Nebius/model API key'),('TYPESAFE_API_KEY','TypeSafe / Jev API key'),('GOOGLE_CLIENT_ID','Google OAuth client ID'),('GOOGLE_CLIENT_SECRET','Google OAuth client secret')]:
         value=getpass.getpass(label+' (hidden; blank keeps existing): ').strip()
         if value:
             if not re.fullmatch(r'[A-Za-z0-9_.-]+',value):

@@ -9,8 +9,11 @@ export type User = {
   public_slug: string;
 };
 
+export type SignupStatus = 'not_recorded' | 'signed_up' | 'cancelled';
+
 export type RecordData = {
   signed_up: boolean;
+  signup_status: SignupStatus;
   attended: boolean;
   attended_on: string | null;
   points: number | null;
@@ -18,6 +21,15 @@ export type RecordData = {
   notes: string;
   public: boolean;
   version: number;
+};
+
+export type RecordHistoryItem = {
+  at: number;
+  signup_status?: SignupStatus;
+  attended?: boolean;
+  attended_on?: string | null;
+  points?: number | null;
+  credit_label?: string;
 };
 
 export type Course = {
@@ -76,6 +88,7 @@ export type WorkspaceTab =
 
 export const emptyRecord: RecordData = {
   signed_up: false,
+  signup_status: 'not_recorded',
   attended: false,
   attended_on: null,
   points: null,
@@ -121,9 +134,8 @@ export async function api(path: string, options: RequestInit = {}) {
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(
-      typeof data.detail === 'string' ? data.detail : 'Please check your entries and try again.',
-    );
+    const message = data?.error?.message || (typeof data.detail === 'string' ? data.detail : '');
+    throw new Error(message || 'Please check your entries and try again.');
   }
   return response.json();
 }

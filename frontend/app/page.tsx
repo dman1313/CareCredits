@@ -57,6 +57,8 @@ export default function Home() {
   const [booting, setBooting] = useState(true);
   const [demo, setDemo] = useState(false);
   const [signup, setSignup] = useState(false);
+  const [oauth, setOauth] = useState(false);
+  const [history, setHistory] = useState<import('@/lib/portal').RecordHistoryItem[]>([]);
   const [tab, setTab] = useState<WorkspaceTab>('Overview');
   const [navOpen, setNavOpen] = useState(false);
   const [error, setError] = useState('');
@@ -81,6 +83,7 @@ export default function Home() {
       api('/config').then((c) => {
         setDemo(c.demo);
         setSignup(c.signup_enabled);
+        setOauth(!!c.oauth_google);
       }),
       api('/me').then(setUser).catch(() => {}),
     ]).finally(() => setBooting(false));
@@ -193,6 +196,8 @@ export default function Home() {
       const current = await api('/trainings/' + course.id);
       setSelected(current);
       setEdit({ ...emptyRecord, ...current.record });
+      const hist = await api('/me/trainings/' + course.id + '/history').catch(() => ({ items: [] }));
+      setHistory(hist.items || []);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -324,7 +329,7 @@ export default function Home() {
       </div>
     );
   }
-  if (!user) return <LoginForm demo={demo} signup={signup} onLogin={setUser} />;
+  if (!user) return <LoginForm demo={demo} signup={signup} oauth={oauth} onLogin={setUser} />;
 
   const nav = [
     [LayoutDashboard, 'Overview'],
@@ -476,6 +481,7 @@ export default function Home() {
           edit={edit}
           error={error}
           saving={saving}
+          history={history}
           onClose={() => setSelected(null)}
           onEdit={setEdit}
           onSave={saveRecord}

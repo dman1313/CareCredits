@@ -17,13 +17,13 @@ def main():
     common={**os.environ,'NEXT_TELEMETRY_DISABLED':'1','PYTHONPATH':str(root)+os.pathsep+str(root/'backend')}
     # Scope provider and DB secrets explicitly to their owning process.
     for key in list(common):
-        if key.startswith(('MODEL_','TAVILY_','TYPESAFE_','JEV_','DAILY_','SCRAPE_','FIREHOSE_')) or key in ('DATABASE_URL','POSTGRES_PASSWORD','SCRAPER_SERVICE_TOKEN'):
+        if key.startswith(('MODEL_','TAVILY_','TYPESAFE_','JEV_','DAILY_','SCRAPE_','FIREHOSE_','GOOGLE_')) or key in ('DATABASE_URL','POSTGRES_PASSWORD','SCRAPER_SERVICE_TOKEN'):
             common.pop(key)
     token=settings.get('SCRAPER_SERVICE_TOKEN') or secrets.token_urlsafe(32)
     (root/'.data').mkdir(exist_ok=True)
     db_url=os.getenv('DATABASE_URL') or settings.get('DATABASE_URL') or 'sqlite:///'+str(root/'.data'/('demo.db' if args.demo else 'carecredits.db'))
     backend={**common,'DATABASE_URL':db_url,'APP_ENV':'development','DEMO_MODE':str(args.demo).lower(),'ALLOW_SIGNUP':'true' if args.demo else settings.get('ALLOW_SIGNUP','false'),'SCRAPER_SERVICE_TOKEN':token,'DAILY_SCRAPE_ENABLED':settings.get('DAILY_SCRAPE_ENABLED','true')}
-    for key in ('TYPESAFE_API_KEY','JEV_CONFIDENCE_FLOOR','DAILY_SCRAPE_JOB_CEILING','SCRAPE_TOPICS_FILE'):
+    for key in ('TYPESAFE_API_KEY','JEV_CONFIDENCE_FLOOR','DAILY_SCRAPE_JOB_CEILING','SCRAPE_TOPICS_FILE','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','GOOGLE_REDIRECT_URI','PUBLIC_API_BASE','PUBLIC_FRONTEND_BASE'):
         if settings.get(key):
             backend[key]=settings[key]
     if not (backend.get('TYPESAFE_API_KEY') or '').strip():

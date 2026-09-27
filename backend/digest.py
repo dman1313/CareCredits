@@ -31,7 +31,7 @@ def progress_snapshot(db: Session, account_id: str, year: int | None = None) -> 
     countable = [r for r in attended if r.points is not None and r.credit_label.strip().upper() == 'CPD']
     return {
         'year': year,
-        'signed_up': sum(1 for r in records if r.signed_up and not r.attended),
+        'signed_up': sum(1 for r in records if (getattr(r, 'signup_status', None) == 'signed_up' or r.signed_up) and not r.attended),
         'attended': len(attended),
         'points': round(sum(r.points for r in countable), 2),
         'excluded': len(attended) - len(countable),

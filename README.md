@@ -37,7 +37,11 @@ Official API references: [Search](https://docs.tavily.com/documentation/api-refe
 - Operator ingestion uses leased jobs and an explicit retry for interrupted work.
 - Demo fixtures load only with `DEMO_MODE=true` outside production and are labelled fictional.
 - Live UI: http://127.0.0.1:3000/live
-- Not yet done: biweekly digests / printable certificates (DEC-10), open-weight model live DEMO-01, OAuth, cancelled sign-up status, target error envelope.
+- Digests, suggestions, and printable certificates (DEC-10) are implemented (`MAIL_PROVIDER=log` by default).
+- API errors use `{error:{code,message,request_id}}`. Personal records have `signup_status` including cancelled, plus attendance change history.
+- Optional Google OAuth when `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are set; email/password remains for local demo.
+- Live TypeSafe Jev is configured when `TYPESAFE_API_KEY` or `~/.typesafe/key` is present.
+- Not yet done: open-weight model live DEMO-01, official hackathon-rule check.
 
 Read [the SDD](docs/SDD.md) and [the coding-agent handoff](docs/CODING_AGENT_HANDOFF.md).
 

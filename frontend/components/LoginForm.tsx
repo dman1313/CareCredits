@@ -8,10 +8,12 @@ import { api, User } from '@/lib/portal';
 export function LoginForm({
   demo,
   signup,
+  oauth,
   onLogin,
 }: {
   demo: boolean;
   signup: boolean;
+  oauth?: boolean;
   onLogin: (u: User) => void;
 }) {
   const [email, setEmail] = useState(demo ? 'demo@carecredits.local' : '');
@@ -118,6 +120,11 @@ export function LoginForm({
             <button className="primary full" disabled={busy}>
               {busy ? 'Please wait…' : register ? 'Create account' : 'Sign in'} <ArrowRight size={17} />
             </button>
+            {oauth && (
+              <a className="secondary full" href="/api/v1/auth/oauth/google">
+                Continue with Google
+              </a>
+            )}
           </form>
           {signup && (
             <button

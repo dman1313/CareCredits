@@ -1,10 +1,10 @@
-"""Portal schema v4. Digests, certificates, and catalogue filters."""
+"""Portal schema v5. Sign-up status, attendance history, digests, certificates."""
 import time
 import uuid
 from sqlalchemy import Column, String, Float, Boolean, Integer, JSON, ForeignKey, UniqueConstraint
 from database import Base
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def uid():
@@ -95,6 +95,7 @@ class Record(Base):
     account_id = Column(String, ForeignKey('accounts.id'), nullable=False, index=True)
     course_id = Column(String, ForeignKey('courses.id'), nullable=False)
     signed_up = Column(Boolean, default=False, nullable=False)
+    signup_status = Column(String, default='not_recorded', nullable=False)
     attended = Column(Boolean, default=False, nullable=False)
     attended_on = Column(String, nullable=True)
     points = Column(Float, nullable=True)
@@ -102,6 +103,15 @@ class Record(Base):
     notes = Column(String, default='', nullable=False)
     public = Column(Boolean, default=False, nullable=False)
     version = Column(Integer, default=1, nullable=False)
+
+
+class RecordHistory(Base):
+    __tablename__ = 'record_history'
+    id = Column(String, primary_key=True, default=uid)
+    record_id = Column(String, ForeignKey('doctor_records.id'), nullable=False, index=True)
+    account_id = Column(String, ForeignKey('accounts.id'), nullable=False, index=True)
+    changed = Column(JSON, nullable=False)
+    created_at = Column(Float, default=time.time, nullable=False)
 
 
 class Job(Base):

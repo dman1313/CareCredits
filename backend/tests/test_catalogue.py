@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -72,8 +73,12 @@ class CatalogueApiTests(unittest.TestCase):
             db.commit()
         self.client = TestClient(app, headers={'X-Care-Client': '1'})
         self.service = {'Authorization': 'Bearer test-service-token'}
+        self.keyfile = patch('jev.keyfile_path')
+        mocked = self.keyfile.start()
+        mocked.return_value.is_file.return_value = False
 
     def tearDown(self):
+        self.keyfile.stop()
         app.dependency_overrides.clear()
 
     def test_connect_and_lookup_exact(self):

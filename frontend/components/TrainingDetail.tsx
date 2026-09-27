@@ -5,6 +5,7 @@ import { Check, ExternalLink, X } from 'lucide-react';
 import {
   Course,
   RecordData,
+  RecordHistoryItem,
   feeLabel,
   formatDate,
   modeName,
@@ -16,6 +17,7 @@ export function TrainingDetail({
   edit,
   error,
   saving,
+  history = [],
   onClose,
   onEdit,
   onSave,
@@ -24,6 +26,7 @@ export function TrainingDetail({
   edit: RecordData;
   error: string;
   saving: boolean;
+  history?: RecordHistoryItem[];
   onClose: () => void;
   onEdit: (next: RecordData) => void;
   onSave: (event: FormEvent) => void;
@@ -86,6 +89,7 @@ export function TrainingDetail({
         </div>
         <p className="small-note">
           Confirm details and CPD eligibility with the provider. Opening a link does not register you.
+          Attendance you record here is self-reported and is not MMC, MOH, or APC proof.
         </p>
         <hr />
         <form onSubmit={onSave}>
@@ -95,13 +99,22 @@ export function TrainingDetail({
               {error}
             </p>
           )}
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={edit.signed_up}
-              onChange={(e) => onEdit({ ...edit, signed_up: e.target.checked })}
-            />
-            I have signed up with the provider
+          <label>
+            Provider sign-up
+            <select
+              value={edit.signup_status || (edit.signed_up ? 'signed_up' : 'not_recorded')}
+              onChange={(e) =>
+                onEdit({
+                  ...edit,
+                  signup_status: e.target.value as RecordData['signup_status'],
+                  signed_up: e.target.value === 'signed_up',
+                })
+              }
+            >
+              <option value="not_recorded">Not recorded</option>
+              <option value="signed_up">Signed up with the provider</option>
+              <option value="cancelled">Cancelled sign-up</option>
+            </select>
           </label>
           <label className="check-row">
             <input
@@ -183,6 +196,12 @@ export function TrainingDetail({
           <button className="primary" disabled={saving}>
             {saving ? 'Saving…' : 'Save my record'} <Check size={16} />
           </button>
+          {history.length > 0 && (
+            <p className="small-note">
+              Previous values kept: {history.length} correction{history.length === 1 ? '' : 's'}. Cancelling
+              sign-up does not erase attendance.
+            </p>
+          )}
         </form>
       </section>
     </div>

@@ -11,7 +11,8 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Depends, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import and_, or_, update, text
 from sqlalchemy.exc import IntegrityError
@@ -20,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from database import Base, engine, get_db, SessionLocal
 from portal_models import (
-    Account, LoginSession, Course, Record, Job, Candidate, Audit, SchemaVersion,
+    Account, LoginSession, Course, Record, RecordHistory, Job, Candidate, Audit, SchemaVersion,
     DigestPreference, AffiliationCertificate,
     SCHEMA_VERSION, FILTER_FIELDS, fill_course,
 )
@@ -37,6 +38,8 @@ from digest import (
 )
 from certificates import issue_certificate, certificate_json, render_html as certificate_html
 from suggestions import suggestions_for
+from errors import envelope, http_exception_handler, validation_exception_handler, request_id
+from oauth import authorize_url, configured as google_oauth, exchange_code, issue_session, upsert_account, OAuthError
 
 
 def today():
@@ -77,7 +80,11 @@ def migrate_schema(db):
         db.add(SchemaVersion(version=4))
         current = 4
         db.commit()
-        return
+    if current == 4:
+        _add_signup_status(db)
+        db.add(SchemaVersion(version=5))
+        current = 5
+        db.commit()
     if current != SCHEMA_VERSION:
         raise RuntimeError('Unsupported portal schema. Apply the matching migration.')
 
@@ -111,6 +118,14 @@ def _add_candidate_review_reason(db):
     existing = {column['name'] for column in inspect(db.get_bind()).get_columns('course_candidates')}
     if 'review_reason' not in existing:
         db.execute(text("ALTER TABLE course_candidates ADD COLUMN review_reason VARCHAR DEFAULT '' NOT NULL"))
+    db.commit()
+
+
+def _add_signup_status(db):
+    existing = {column['name'] for column in inspect(db.get_bind()).get_columns('doctor_records')}
+    if 'signup_status' not in existing:
+        db.execute(text("ALTER TABLE doctor_records ADD COLUMN signup_status VARCHAR DEFAULT 'not_recorded' NOT NULL"))
+        db.execute(text("UPDATE doctor_records SET signup_status = 'signed_up' WHERE signed_up = 1"))
     db.commit()
 
 
@@ -160,17 +175,21 @@ async def lifespan(app):
 
 
 app = FastAPI(title='CareCredits', version='0.5.0', lifespan=lifespan)
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 
 @app.middleware('http')
 async def request_boundary(request: Request, call_next):
+    request.state.request_id = secrets.token_hex(8)
     if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') and not request.url.path.startswith('/internal/'):
         origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
         if request.headers.get('x-care-client') != '1' or (request.headers.get('origin') and request.headers['origin'] not in origins):
-            return JSONResponse({'detail': 'Request origin not allowed.'}, status_code=403)
+            return envelope(403, 'Request origin not allowed.', request)
     result = await call_next(request)
     result.headers['Cache-Control'] = 'no-store'
     result.headers['X-Content-Type-Options'] = 'nosniff'
+    result.headers['X-Request-Id'] = request_id(request)
     return result
 
 
@@ -197,6 +216,7 @@ class ProfileChange(BaseModel):
 
 class RecordChange(BaseModel):
     signed_up: bool = False
+    signup_status: Literal['not_recorded', 'signed_up', 'cancelled'] | None = None
     attended: bool = False
     attended_on: date | None = None
     points: float | None = Field(default=None, ge=0, le=10000, allow_inf_nan=False)
@@ -252,7 +272,10 @@ def profile(account):
 def record_json(record):
     if not record:
         return None
-    return {k: getattr(record, k) for k in ('signed_up', 'attended', 'attended_on', 'points', 'credit_label', 'notes', 'public', 'version')}
+    return {
+        k: getattr(record, k)
+        for k in ('signed_up', 'signup_status', 'attended', 'attended_on', 'points', 'credit_label', 'notes', 'public', 'version')
+    }
 
 
 def course_json(course, record=None):
@@ -304,6 +327,7 @@ def config():
         'local_day': local_today(),
         'digest_enabled': os.getenv('DIGEST_ENABLED', 'true').lower() == 'true',
         'mail_provider': (os.getenv('MAIL_PROVIDER') or 'log').strip().lower(),
+        'oauth_google': google_oauth(),
     }
 
 
@@ -338,6 +362,38 @@ def login(body: Credentials, request: Request, response: Response, db: Session =
     db.commit()
     response.set_cookie('care_session', token, httponly=True, secure=os.getenv('APP_ENV') == 'production', samesite='lax', max_age=28800, path='/')
     return profile(account)
+
+
+@app.get('/api/v1/auth/oauth/google')
+def google_start(response: Response):
+    state = secrets.token_urlsafe(24)
+    try:
+        url = authorize_url(state)
+    except OAuthError as exc:
+        raise HTTPException(exc.status_code, exc.detail)
+    response = RedirectResponse(url, status_code=302)
+    response.set_cookie('oauth_state', state, httponly=True, samesite='lax', max_age=600, path='/')
+    return response
+
+
+@app.get('/api/v1/auth/oauth/google/callback')
+def google_callback(request: Request, db: Session = Depends(get_db), code: str = '', state: str = '', error: str = ''):
+    expected = request.cookies.get('oauth_state', '')
+    frontend = (os.getenv('PUBLIC_FRONTEND_BASE') or 'http://127.0.0.1:3000').rstrip('/')
+    if error:
+        return RedirectResponse(frontend + '/live?oauth=denied', status_code=302)
+    if not code or not state or not expected or not secrets.compare_digest(state, expected):
+        raise HTTPException(401, 'Google sign-in state did not match. Try again.')
+    try:
+        identity = exchange_code(code)
+        account = upsert_account(db, identity, os.getenv('ALLOW_SIGNUP') == 'true')
+        token = issue_session(db, account)
+    except OAuthError as exc:
+        raise HTTPException(exc.status_code, exc.detail)
+    dest = RedirectResponse(frontend + '/live', status_code=302)
+    dest.set_cookie('care_session', token, httponly=True, secure=os.getenv('APP_ENV') == 'production', samesite='lax', max_age=28800, path='/')
+    dest.delete_cookie('oauth_state', path='/')
+    return dest
 
 
 @app.post('/api/v1/auth/logout')
@@ -484,14 +540,26 @@ def save_record(course_id: str, body: RecordChange, user=Depends(current_user), 
         body.public = False
     values = body.model_dump(mode='json', exclude={'version'})
     record = db.query(Record).filter_by(account_id=user.id, course_id=course_id).first()
+    status = values.pop('signup_status', None)
+    if status not in ('not_recorded', 'signed_up', 'cancelled'):
+        if values.get('signed_up'):
+            status = 'signed_up'
+        elif record and record.signup_status == 'signed_up':
+            status = 'cancelled'
+        else:
+            status = 'not_recorded'
+    values['signup_status'] = status
+    values['signed_up'] = status == 'signed_up'
     if record:
         old = record_json(record)
-        if all(old[k] == v for k, v in values.items()):
+        comparable = {k: v for k, v in values.items() if k in old}
+        if all(old[k] == comparable[k] for k in comparable):
             return old
         changed = db.execute(update(Record).where(Record.id == record.id, Record.version == body.version).values(**values, version=Record.version+1))
         if changed.rowcount != 1:
             db.rollback()
             raise HTTPException(409, 'This record changed. Reopen it before saving.')
+        db.add(RecordHistory(record_id=record.id, account_id=user.id, changed={k: old[k] for k in ('signup_status', 'attended', 'attended_on', 'points', 'credit_label')}))
     else:
         if body.version != 0:
             raise HTTPException(409, 'Record version does not match.')
@@ -521,7 +589,16 @@ def progress(year: int | None = None, user=Depends(current_user), db: Session = 
     records = db.query(Record).filter_by(account_id=user.id).all()
     attended = [r for r in records if r.attended and r.attended_on and r.attended_on.startswith(str(year))]
     countable = [r for r in attended if r.points is not None and r.credit_label.strip().upper() == 'CPD']
-    return {'year': year, 'signed_up': sum(r.signed_up and not r.attended for r in records), 'attended': len(attended), 'points': round(sum(r.points for r in countable), 2), 'excluded': len(attended)-len(countable)}
+    return {'year': year, 'signed_up': sum((getattr(r, 'signup_status', None) == 'signed_up' or r.signed_up) and not r.attended for r in records), 'attended': len(attended), 'points': round(sum(r.points for r in countable), 2), 'excluded': len(attended)-len(countable)}
+
+
+@app.get('/api/v1/me/trainings/{course_id}/history')
+def record_history(course_id: str, user=Depends(current_user), db: Session = Depends(get_db)):
+    record = db.query(Record).filter_by(account_id=user.id, course_id=course_id).first()
+    if not record:
+        return {'items': []}
+    rows = db.query(RecordHistory).filter_by(record_id=record.id, account_id=user.id).order_by(RecordHistory.created_at.desc()).limit(20).all()
+    return {'items': [{'at': row.created_at, **(row.changed or {})} for row in rows]}
 
 
 @app.get('/api/v1/me/suggestions')

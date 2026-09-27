@@ -1,6 +1,6 @@
 # CareCredits — spec-driven development specification
 
-Version: 0.8 · 2026-09-24 · Status: implementation specification; portal and three-service split exist on this branch; DEC-09–11 and BUILD-10 (digests/suggestions/certificates) are implemented on the working path. Live TypeSafe Jev and open-weight model DEMO-01 still need owner API keys.
+Version: 0.9 · 2026-09-27 · Status: implementation specification; portal and three-service split exist on this branch; DEC-09–11, BUILD-10, cancelled signup_status, attendance history, error envelopes, and optional Google OAuth are implemented. Live TypeSafe Jev is wired when `TYPESAFE_API_KEY` is set. Open-weight model DEMO-01 still needs owner model keys.
 
 This document expands the initial Tavily discovery specification using the owner's supplied meeting summary. It defines the full Malaysia MVP and the contracts needed to build it. It does not claim that the described application is already implemented.
 
@@ -173,7 +173,7 @@ Statuses describe this branch: **existing** means implemented code, not live-pro
 
 | ID | Requirement | Acceptance criterion | Status |
 | --- | --- | --- | --- |
-| AUTH-01 | Doctor sign-in/out | Selected provider session is validated server-side; logout invalidates local session; unauthenticated personal requests return 401 | Existing email/password sessions on this branch; third-party OAuth remains OPEN-04 |
+| AUTH-01 | Doctor sign-in/out | Selected provider session is validated server-side; logout invalidates local session; unauthenticated personal requests return 401 | Existing email/password sessions; optional Google OAuth when `GOOGLE_CLIENT_*` are set (OPEN-04 still allows another provider) |
 | AUTH-02 | Ownership isolation | A doctor cannot read or change another doctor's profile, registrations, attendance, notes or totals by changing IDs | Existing; covered by portal isolation tests |
 | GEO-01 | Malaysia location | City/state entry works without GPS; exact coordinates are optional; non-Malaysian in-person events cannot publish | Existing city/state profile and catalogue filters; extraction rejects non-MY country |
 | GEO-02 | Nearby search | Use distance only when user and venue coordinates exist; otherwise use city/state and show distance unavailable | Existing; distance is approximate and omitted when venue coordinates are missing |
@@ -187,8 +187,8 @@ Statuses describe this branch: **existing** means implemented code, not live-pro
 | EVT-02 | Event identity and updates | Same source/session does not duplicate; different sessions on one page remain distinct; ambiguous matches require review | Partial: source_key deduplicates; no separate Training/Session tables |
 | EVT-03 | Claim verification | Advertised points, publication and accreditation verification remain separate; verified claims have evidence/reviewer/time | Partial: publication requires source excerpts and stays `unverified` |
 | FIND-01 | Catalogue filters | Combine text, date, city/state or radius, mode, points, difficulty and fee filters with pagination; clearing filters resets results | Existing SQL filters on indexed columns; unknown dates/fees/points need `include_unknown` |
-| REG-01 | Sign-up record | Explicit user action records external sign-up once per doctor/session; opening provider link does not create a record | Existing boolean sign-up; cancelled status not modelled |
-| ATT-01 | Attendance record | User can mark eligible past/started session attended and correct it; future sessions cannot be marked attended | Existing; optimistic versioning on save |
+| REG-01 | Sign-up record | Explicit user action records external sign-up once per doctor/session; opening provider link does not create a record | Implemented `signup_status` `not_recorded` / `signed_up` / `cancelled`; cancelling does not erase attendance |
+| ATT-01 | Attendance record | User can mark eligible past/started session attended and correct it; future sessions cannot be marked attended | Existing; optimistic versioning; corrections append `record_history` |
 | PROG-01 | Personal progress | Selected-year counts and recorded points derive from attendance; corrections cannot double count; unknown/unapproved values are excluded and disclosed | Existing year dashboard with excluded-count disclosure |
 | PROG-02 | Suggested next courses | Portal shows upcoming owned-catalogue sessions filtered by doctor profile (city/mode) and recent gaps; copy is advisory (“consider”), never a compliance verdict | Implemented |
 | NTF-01 | Biweekly digest email | Opted-in doctors receive an email every 14 days with upcoming events, known prices, and current recorded CPD totals; unsubscribe works; no Tavily call per send | Implemented (MAIL_PROVIDER=log default; SMTP optional) |
@@ -199,7 +199,7 @@ Statuses describe this branch: **existing** means implemented code, not live-pro
 | OPS-01 | Controlled ingestion | Durable leased jobs, bounded workers, pagination, usage metadata and an explicit run budget; doctor search never calls Tavily | Existing claim/heartbeat/complete plus explicit interrupted-job retry |
 | OPS-02 | Daily owned-catalogue scrape | A schedule enqueues bounded jobs for the curated Malaysia medical source/topic list once per day (timezone Asia/Kuala_Lumpur); usage is attributed to the operator budget; failures stay honest and never auto-replay paid calls | Existing: `backend/schedule.py`, lifespan tick, `POST /api/v1/admin/daily-scrape`, `config/scrape_topics.json` |
 | CAT-01 | API connect to owned DB | Scraper/agent authenticates to backend connect endpoints; only the backend opens PostgreSQL; connect readiness fails closed if the DB is unreachable | Existing: `/internal/v1/catalogue/connect|lookup|decide|save` |
-| JEV-01 | Jev existence judgment | For each validated candidate without an exact `source_key` match, backend queries Jev with candidate + match set; outcomes are `exists`, `new`, or `uncertain` with stored probabilities; doctor search never calls Jev | Existing adapter; live TypeSafe call needs `TYPESAFE_API_KEY` (OPEN-11). Without the key, near matches stay `uncertain` |
+| JEV-01 | Jev existence judgment | For each validated candidate without an exact `source_key` match, backend queries Jev with candidate + match set; outcomes are `exists`, `new`, or `uncertain` with stored probabilities; doctor search never calls Jev | Implemented; live TypeSafe call uses `TYPESAFE_API_KEY` or `~/.typesafe/key`. Without the key, near matches stay `uncertain` |
 | CAT-02 | Save new events | When judgment is `new` (or operator publishes an uncertain/new candidate), persist the event into the owned catalogue with evidence; never duplicate an exact `source_key` | Existing: `decision=new` publishes a searchable course; uncertain stays held; heuristic extract is used when no open-weight model is configured |
 | DEMO-01 | Real demonstration | Show one live Search/Extract run, one eligible model run, published results and personal tracking flow; separate live from fixture evidence | Pending |
 
@@ -297,9 +297,9 @@ Defaults: one active worker, five source pages per job, maximum ten manually sta
 
 This branch implements the three-service target: FastAPI owns PostgreSQL (or SQLite demo), the scraper owns Tavily plus model extraction, and the Next.js portal talks only to `/api/v1`. The transitional `POST /discovery/search` adapter was moved to `scraper/tavily.py` and the synchronous operator endpoint was removed rather than given a job-shaped response.
 
-Doctor journeys use httponly session cookies, CSRF origin/`X-Care-Client` checks, catalogue filters, personal sign-up/attendance records, year progress, catalogue suggestions, opt-in biweekly digests, printable affiliation certificates, and an optional public profile. Operators create idempotent ingestion jobs; the scraper claims a 120-second lease, calls Tavily Search/Extract, and stores source URLs on the job even when model extraction is not configured. Candidates still require source excerpts before publish. Interrupted jobs stay interrupted until `POST /api/v1/admin/ingestion-jobs/{id}/retry`. Daily scrape enqueue (OPS-02) and catalogue connect/lookup/decide/save with Jev (DEC-11) are wired; live TypeSafe and open-weight model DEMO-01 still require owner API keys.
+Doctor journeys use httponly session cookies, CSRF origin/`X-Care-Client` checks, catalogue filters, personal sign-up/attendance records, year progress, catalogue suggestions, opt-in biweekly digests, printable affiliation certificates, and an optional public profile. Operators create idempotent ingestion jobs; the scraper claims a 120-second lease, calls Tavily Search/Extract, and stores source URLs on the job even when model extraction is not configured. Candidates still require source excerpts before publish. Interrupted jobs stay interrupted until `POST /api/v1/admin/ingestion-jobs/{id}/retry`. Daily scrape enqueue (OPS-02) and catalogue connect/lookup/decide/save with Jev (DEC-11) are wired. Live TypeSafe uses `TYPESAFE_API_KEY` when set. Open-weight model DEMO-01 still requires owner model keys.
 
-Mocked tests cover Tavily bounds, extraction validation, two-user isolation, filter semantics, nearby city fallback, unknown-value inclusion, explicit job retry, digest opt-in/unsubscribe/send, suggestions, and certificates. They do not spend API credits. No live open-weight model run has been recorded (DEMO-01). Identity is local email/password until OPEN-04 is resolved. Candidate `hold` now requires a review reason and stays out of the catalogue until publish. Target `{error:{code,message,request_id}}` envelopes and cancelled `signup_status` are still unimplemented. Demo fixtures load only when `DEMO_MODE=true` outside production and are labelled fictional.
+Mocked tests cover Tavily bounds, extraction validation, two-user isolation, filter semantics, nearby city fallback, unknown-value inclusion, explicit job retry, digest opt-in/unsubscribe/send, suggestions, certificates, error envelopes, cancelled signup, and Google OAuth start. They do not spend API credits. No live open-weight model run has been recorded (DEMO-01). Identity is local email/password plus optional Google OAuth. Candidate `hold` requires a review reason and stays out of the catalogue until publish. Target `{error:{code,message,request_id}}` envelopes and cancelled `signup_status` are implemented. Demo fixtures load only when `DEMO_MODE=true` outside production and are labelled fictional.
 
 ## 12. Security, privacy and operational requirements
 
@@ -338,15 +338,15 @@ Mock tests run without secrets. Live tests are separate, explicitly use configur
 | --- | --- | --- |
 | BUILD-01 | None | Blocked on OPEN-01–04. Obtain official rules; resolve Nebius, identity provider and eligible open-weight model; document decisions without claiming unverified compliance |
 | BUILD-02 | None | Existing on branch. Split Python scraper from backend; add containers, narrow secrets, durable job schema/contracts; mocked T-02/T-03 pass; interrupted-job retry added; concurrent-worker stress not live |
-| BUILD-03 | BUILD-01 identity choice | Existing local sessions and isolation tests; OAuth still OPEN-04. Unauthenticated user endpoints removed |
+| BUILD-03 | BUILD-01 identity choice | Existing local sessions and isolation tests; optional Google OAuth implemented. Another provider remains OPEN-04. Unauthenticated user endpoints removed |
 | BUILD-04 | BUILD-01 model choice, BUILD-02 | Adapter and evidence gate exist; T-04 20-page fixture evaluation not run |
 | BUILD-05 | BUILD-02, BUILD-04 | Existing publish + SQL catalogue filters on indexed columns; evidence remains in JSON. Training/Session are not separate tables yet |
-| BUILD-06 | BUILD-03, BUILD-05 | Existing records and progress; cancelled signup_status and change-history entity still missing |
+| BUILD-06 | BUILD-03, BUILD-05 | Existing records and progress; `signup_status` includes cancelled; `record_history` stores corrections |
 | BUILD-07 | BUILD-03, BUILD-05, BUILD-06 | Existing portal; demo fixtures labelled; T-08/T-09 not fully exercised in a browser/security pass |
 | BUILD-08 | BUILD-01–07 | Not started. Run three-service deployment, live integration and complete demo; record T-10 evidence and known limitations |
 | BUILD-09 | BUILD-02, BUILD-05, OPEN-05, OPEN-09 | Done. Curated `config/scrape_topics.json` + daily enqueue (OPS-02) with `DAILY_SCRAPE_JOB_CEILING`; doctors search the owned catalogue only |
 | BUILD-10 | BUILD-06, OPEN-10 | Done. Digest preferences + biweekly send (NTF-01), catalogue suggestions (PROG-02), printable affiliation certificate (CERT-01) with non-regulator disclaimer. Default mailer is file log; set MAIL_PROVIDER=smtp for real email |
-| BUILD-11 | BUILD-02, BUILD-05, OPEN-11 | Done except live TypeSafe. Connect/lookup/decide/save exist; exact `source_key` short-circuits; no matches → `new` and publish; near matches without `TYPESAFE_API_KEY` stay `uncertain` |
+| BUILD-11 | BUILD-02, BUILD-05, OPEN-11 | Done. Connect/lookup/decide/save exist; exact `source_key` short-circuits; no matches → `new` and publish; live Jev when `TYPESAFE_API_KEY` is set; near matches without the key stay `uncertain` |
 
 Do not estimate a delivery date until team size and remaining hackathon time are known. If time is short, propose reducing optional polish or tracking detail; do not silently drop the three-service, Tavily, open-weight, Malaysia, personal-tracking, owned-catalogue (DEC-09), engagement (DEC-10) or Jev-gated connect/save (DEC-11) decisions.
 
@@ -369,14 +369,14 @@ Release gate: confirmed meeting requirements have working implementations and li
 | OPEN-01 | Which hackathon and exact rules? | Owner requirements guide work; official eligibility/submission requirements still need verification |
 | OPEN-02 | Required Nebius role? | **Provisional for DEMO-01 (2026-09-20):** Nebius Token Factory used for **inference only**. Application hosting remains local Docker/dev; not yet Nebius-hosted. |
 | OPEN-03 | Which open-weight model/host/licence? | **Provisional DEMO-01 choice (2026-09-20):** Nebius Token Factory host; model `Qwen/Qwen3-30B-A3B-Instruct-2507`; weights https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507 ; licence https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507/blob/main/LICENSE (Apache 2.0 per model card family). Owner still must run `setup_integrations.py`, set keys, and confirm `MODEL_OPEN_WEIGHT_CONFIRMED=true`. |
-| OPEN-04 | Identity provider? | Follow repository intent for third-party sign-in; provider selection unresolved |
+| OPEN-04 | Identity provider? | Google OAuth implemented as the first third-party provider (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`). Email/password remains for local demo. |
 | OPEN-05 | Which providers/accreditation sources? | **Working position (2026-09-24):** build a curated Malaysia medical training source list that the daily agent scrapes into the owned catalogue (DEC-09). Start with public conference/CME portals and known associations; no automatic official eligibility claim |
 | OPEN-06 | Does sign-up mean integrated registration? | Default is external registration plus personal record; integration would expand scope |
 | OPEN-07 | What proves attendance and credits? | Self-report MVP. CareCredits may issue an **affiliation certificate** (DEC-10 / CERT-01) stating platform-tracked credits; it is not MMC/regulator proof. Third-party verification remains a later decision |
 | OPEN-08 | Location/geocoding source and approved online scope? | Manual city/state works first; no geocoder vendor chosen |
 | OPEN-09 | Team, deadline, credit budget and hosting? | Required to prioritize work and set daily scrape ceilings |
 | OPEN-10 | Email provider for biweekly digests? | Partially resolved: `MAIL_PROVIDER=log` writes digests under `.data/digests/` for local/demo; set `smtp` + SMTP_* for production sends |
-| OPEN-11 | TypeSafe / Jev credentials and confidence floor? | Needed for DEC-11 / JEV-01; store `TYPESAFE_API_KEY` on the backend only; confirm auto-apply confidence threshold (default 0.7) |
+| OPEN-11 | TypeSafe / Jev credentials and confidence floor? | Store `TYPESAFE_API_KEY` on the backend only (or `~/.typesafe/key`). Auto-apply confidence floor defaults to 0.7 via `JEV_CONFIDENCE_FLOOR`. |
 
 ## 17. Recommended next steps (owner-facing)
 

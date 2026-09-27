@@ -257,11 +257,13 @@ class PortalTests(unittest.TestCase):
             migrate_schema(db)
             stored=db.get(Course,self.course)
             self.assertEqual((stored.title, stored.city), ('Backfilled GP','Johor Bahru'))
-            self.assertEqual(max(v.version for v in db.query(SchemaVersion).all()), 4)
+            self.assertEqual(max(v.version for v in db.query(SchemaVersion).all()), 5)
             self.assertIn('review_reason', {c['name'] for c in inspect(db.get_bind()).get_columns('course_candidates')})
+            self.assertIn('signup_status', {c['name'] for c in inspect(db.get_bind()).get_columns('doctor_records')})
             tables = inspect(db.get_bind()).get_table_names()
             self.assertIn('digest_preferences', tables)
             self.assertIn('affiliation_certificates', tables)
+            self.assertIn('record_history', tables)
 
     def test_catalogue_filters_use_columns_not_json(self):
         with self.Session() as db:
@@ -314,6 +316,23 @@ class PortalTests(unittest.TestCase):
         claim=self.client.post('/internal/v1/jobs/claim',headers=service)
         self.assertEqual(claim.status_code,200)
         self.assertEqual(claim.json()['id'], job['id'])
+
+    def test_cancelled_signup_keeps_attendance_and_history(self):
+        first = self.save(signup_status='signed_up')
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()['signup_status'], 'signed_up')
+        cancelled = self.save(signup_status='cancelled', attended=True, attended_on=today().isoformat(), version=1)
+        self.assertEqual(cancelled.status_code, 200, cancelled.text)
+        body = cancelled.json()
+        self.assertEqual(body['signup_status'], 'cancelled')
+        self.assertFalse(body['signed_up'])
+        self.assertTrue(body['attended'])
+        history = self.client.get('/api/v1/me/trainings/' + self.course + '/history')
+        self.assertEqual(history.status_code, 200, history.text)
+        self.assertGreaterEqual(len(history.json()['items']), 1)
+        progress = self.client.get('/api/v1/me/progress').json()
+        self.assertEqual(progress['attended'], 1)
+        self.assertEqual(progress['signed_up'], 0)
 
     def test_signup_and_password_validation(self):
         r=self.client.post('/api/v1/auth/register',json={'email':'new@example.com','password':PASSWORD,'name':'New Doctor'})

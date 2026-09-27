@@ -26,8 +26,12 @@ export function CourseCard({ course: c, onOpen }: { course: Course; onOpen: () =
             <span className="record-status">
               <Check size={13} /> Attended
             </span>
+          ) : c.record?.signup_status === 'cancelled' ? (
+            <span className="record-status">Sign-up cancelled</span>
           ) : (
-            c.record?.signed_up && <span className="record-status">Signed up</span>
+            (c.record?.signup_status === 'signed_up' || c.record?.signed_up) && (
+              <span className="record-status">Signed up</span>
+            )
           )}
         </div>
         <h3>
