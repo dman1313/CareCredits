@@ -4,7 +4,7 @@ from __future__ import annotations
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from portal_models import Candidate, Course, Job, uid, fill_course
+from portal_models import Candidate, Course, Job, uid, fill_course, CANDIDATE_SCHEMA_VERSION
 from security import digest
 from shared.contracts import Training, validate_evidence
 
@@ -101,6 +101,7 @@ def save_new_candidate(db: Session, account_id: str, training: Training, judgmen
         source_key=key,
         data={**data, '_judgment': judgment},
         status=status,
+        schema_version=CANDIDATE_SCHEMA_VERSION,
         review_reason=('Jev uncertain: ' + str(judgment.get('warning') or 'needs operator review'))[:500]
         if status == 'held'
         else '',
@@ -125,6 +126,8 @@ def publish_new_event(db: Session, account_id: str, training: Training, judgment
         source_key=key,
         data={**data, '_judgment': judgment},
         status='published',
+        schema_version=CANDIDATE_SCHEMA_VERSION,
+        resulting_course_id=course.id,
         review_reason='Published via Jev decision=new',
     )
     db.add(candidate)
@@ -142,6 +145,8 @@ def link_existing(db: Session, account_id: str, training: Training, course: Cour
         source_key=key,
         data={**data, '_judgment': judgment, '_matched_course_id': course.id},
         status='held',
+        schema_version=CANDIDATE_SCHEMA_VERSION,
+        resulting_course_id=course.id,
         review_reason='Jev marked exists; review refresh before overwriting published fields.',
     )
     db.add(candidate)

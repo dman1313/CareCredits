@@ -35,7 +35,14 @@ export function IngestionPanel({
   onSubmit: (event: FormEvent) => void;
   onRefresh: () => void;
   onRetry: (id: string) => void;
-  onReview: (id: string, action: string, reason: string, version?: number) => void;
+  onReview: (
+    id: string,
+    action: string,
+    reason: string,
+    version?: number,
+    corrections?: Record<string, string>,
+    evidence?: Record<string, string>,
+  ) => void;
   onDailyScrape?: () => void;
 }) {
   return (
@@ -145,9 +152,11 @@ export function IngestionPanel({
         <h2>Review candidates</h2>
         <span>{candidateTotal ?? candidates.length} awaiting review</span>
       </div>
-      {candidates.map((c) => (
-        <CandidateCard key={c.id} candidate={c} saving={saving} onReview={onReview} />
-      ))}
+      {candidates.length ? (
+        candidates.map((c) => <CandidateCard key={c.id} candidate={c} saving={saving} onReview={onReview} />)
+      ) : (
+        <Empty title="No candidates awaiting review" text="Queued jobs will appear here after the scraper finishes." />
+      )}
     </>
   );
 }
@@ -159,9 +168,18 @@ function CandidateCard({
 }: {
   candidate: Candidate;
   saving: boolean;
-  onReview: (id: string, action: string, reason: string, version?: number) => void;
+  onReview: (
+    id: string,
+    action: string,
+    reason: string,
+    version?: number,
+    corrections?: Record<string, string>,
+    evidence?: Record<string, string>,
+  ) => void;
 }) {
   const [reason, setReason] = useState(candidate.reason || '');
+  const [title, setTitle] = useState(candidate.data.title);
+  const [excerpt, setExcerpt] = useState(candidate.data.evidence?.title || '');
   return (
     <section className="panel candidate">
       <div className="section-heading">
@@ -169,6 +187,7 @@ function CandidateCard({
           <h3>{candidate.data.title}</h3>
           <p>
             {candidate.data.provider} · {formatDate(candidate.data.start_date)} · {feeLabel(candidate.data)}
+          {candidate.schema_version ? ` · schema ${candidate.schema_version}` : ''}
           </p>
         </div>
         <div className="button-row">
@@ -188,6 +207,19 @@ function CandidateCard({
         ))}
       </dl>
       <label>
+        Corrected title
+        <input value={title} onChange={(e) => setTitle(e.target.value)} />
+      </label>
+      <label>
+        Title evidence excerpt
+        <textarea
+          rows={2}
+          value={excerpt}
+          onChange={(e) => setExcerpt(e.target.value)}
+          placeholder="Verbatim source sentence that supports the corrected title"
+        />
+      </label>
+      <label>
         Review reason
         <textarea
           maxLength={500}
@@ -206,7 +238,16 @@ function CandidateCard({
         <button
           disabled={saving}
           className="primary"
-          onClick={() => onReview(candidate.id, 'publish', reason, candidate.version)}
+          onClick={() =>
+            onReview(
+              candidate.id,
+              'publish',
+              reason,
+              candidate.version,
+              title !== candidate.data.title ? { title } : {},
+              title !== candidate.data.title ? { title: excerpt } : {},
+            )
+          }
         >
           <Check size={16} /> Publish reviewed training
         </button>

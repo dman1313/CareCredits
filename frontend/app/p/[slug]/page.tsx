@@ -17,7 +17,9 @@ export default function PublicProfile() {
   const [data, setData] = useState<PublicData | null>(null);
   const [error, setError] = useState('');
 
-  useEffect(() => {
+  function load() {
+    setError('');
+    setData(null);
     fetch('/api/v1/public/' + encodeURIComponent(slug), { cache: 'no-store' })
       .then(async (r) => {
         if (!r.ok) throw new Error('This training profile is private or unavailable.');
@@ -25,7 +27,9 @@ export default function PublicProfile() {
       })
       .then(setData)
       .catch((e) => setError(e.message));
-  }, [slug]);
+  }
+
+  useEffect(load, [slug]);
 
   return (
     <main className="public-page">
@@ -36,6 +40,9 @@ export default function PublicProfile() {
         <div className="empty-state">
           <h1>Private by choice.</h1>
           <p>{error}</p>
+          <button className="text-btn" type="button" onClick={load}>
+            Retry
+          </button>
         </div>
       ) : !data ? (
         <p className="empty-state">Loading training profile…</p>

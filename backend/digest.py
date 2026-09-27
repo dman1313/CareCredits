@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from portal_models import Account, Course, DigestPreference, DigestSend, Record, uid
+from portal_models import Account, Course, DigestPreference, DigestSend, Record, uid, counts_toward_cpd
 from security import digest as hash_digest
 
 
@@ -28,12 +28,12 @@ def progress_snapshot(db: Session, account_id: str, year: int | None = None) -> 
     year = year or local_now().year
     records = db.query(Record).filter_by(account_id=account_id).all()
     attended = [r for r in records if (getattr(r, 'attendance_status', None) == 'attended' or r.attended) and r.attended_on and r.attended_on.startswith(str(year))]
-    countable = [r for r in attended if r.points is not None and r.credit_label.strip().upper() == 'CPD']
+    countable = [r for r in attended if counts_toward_cpd(r)]
     excluded_reasons = []
     for row in attended:
         if row.points is None:
             excluded_reasons.append({'reason': 'unknown_points', 'credit_label': row.credit_label})
-        elif row.credit_label.strip().upper() != 'CPD':
+        elif not counts_toward_cpd(row):
             excluded_reasons.append({'reason': 'unmapped_credit_label', 'credit_label': row.credit_label})
     return {
         'year': year,

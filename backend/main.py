@@ -23,7 +23,8 @@ from database import Base, engine, get_db, SessionLocal
 from portal_models import (
     Account, LoginSession, Course, Record, RecordHistory, Job, Candidate, Audit, SchemaVersion,
     DigestPreference, AffiliationCertificate, FieldEvidence, SourceDocument,
-    SCHEMA_VERSION, FILTER_FIELDS, fill_course,
+    SCHEMA_VERSION, FILTER_FIELDS, fill_course, CANDIDATE_SCHEMA_VERSION,
+    counts_toward_cpd, purge_expired_source_text,
 )
 from security import current_user, operator, worker, password_hash, password_matches, digest, throttle
 from shared.contracts import Training, validate_evidence
@@ -124,6 +125,11 @@ def migrate_schema(db):
         _add_candidate_resulting_course(db)
         db.add(SchemaVersion(version=13))
         current = 13
+        db.commit()
+    if current == 13:
+        _add_candidate_schema_version(db)
+        db.add(SchemaVersion(version=14))
+        current = 14
         db.commit()
     if current != SCHEMA_VERSION:
         raise RuntimeError('Unsupported portal schema. Apply the matching migration.')
@@ -268,6 +274,13 @@ def _add_candidate_resulting_course(db):
     db.commit()
 
 
+def _add_candidate_schema_version(db):
+    candidates = {column['name'] for column in inspect(db.get_bind()).get_columns('course_candidates')}
+    if 'schema_version' not in candidates:
+        db.execute(text('ALTER TABLE course_candidates ADD COLUMN schema_version INTEGER DEFAULT 1 NOT NULL'))
+    db.commit()
+
+
 @asynccontextmanager
 async def lifespan(app):
     initialize()
@@ -300,10 +313,23 @@ async def lifespan(app):
             except asyncio.TimeoutError:
                 continue
 
+    async def retention_loop():
+        while not stop.is_set():
+            try:
+                with SessionLocal() as db:
+                    purge_expired_source_text(db)
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=86400)
+            except asyncio.TimeoutError:
+                continue
+
     if os.getenv('DAILY_SCRAPE_ENABLED', 'true').lower() == 'true':
         tasks.append(asyncio.create_task(daily_scrape_loop()))
     if os.getenv('DIGEST_ENABLED', 'true').lower() == 'true':
         tasks.append(asyncio.create_task(digest_loop()))
+    tasks.append(asyncio.create_task(retention_loop()))
     yield
     stop.set()
     for task in tasks:
@@ -404,15 +430,28 @@ class CompleteJob(BaseModel):
     usage: dict = Field(default_factory=dict)
 
 
+REVIEW_FIELDS = (
+    'title', 'provider', 'description', 'start_date', 'city', 'state', 'mode',
+    'fee', 'currency', 'points', 'credit_label', 'difficulty', 'prerequisites', 'registration_url',
+)
+
+
 class Review(BaseModel):
     action: Literal['publish', 'reject', 'hold']
     reason: str = Field(default='', max_length=500)
     version: int = Field(default=0, ge=0)
+    corrections: dict[str, str] = Field(default_factory=dict)
+    evidence: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode='after')
     def require_hold_reason(self):
         if self.action == 'hold' and len(self.reason.strip()) < 3:
             raise ValueError('Hold requires a reason of at least 3 characters.')
+        extra = set(self.corrections) - set(REVIEW_FIELDS)
+        if extra:
+            raise ValueError('Unsupported correction fields.')
+        if len(self.corrections) > 20 or len(self.evidence) > 20:
+            raise ValueError('Too many corrections.')
         return self
 
 
@@ -784,12 +823,12 @@ def progress(year: int | None = None, user=Depends(current_user), db: Session = 
         raise HTTPException(422, 'Invalid year.')
     records = db.query(Record).filter_by(account_id=user.id).all()
     attended = [r for r in records if (getattr(r, 'attendance_status', None) == 'attended' or r.attended) and r.attended_on and r.attended_on.startswith(str(year))]
-    countable = [r for r in attended if r.points is not None and r.credit_label.strip().upper() == 'CPD']
+    countable = [r for r in attended if counts_toward_cpd(r)]
     excluded_reasons = []
     for row in attended:
         if row.points is None:
             excluded_reasons.append({'reason': 'unknown_points', 'credit_label': row.credit_label})
-        elif row.credit_label.strip().upper() != 'CPD':
+        elif not counts_toward_cpd(row):
             excluded_reasons.append({'reason': 'unmapped_credit_label', 'credit_label': row.credit_label})
     return {
         'year': year,
@@ -993,7 +1032,15 @@ def candidates(page: int = 1, page_size: int = 20, user=Depends(operator), db: S
     total = query.count()
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
     return {
-        'items': [{'id': c.id, 'data': c.data, 'status': c.status, 'reason': c.review_reason or '', 'version': c.version} for c in rows],
+        'items': [{
+            'id': c.id,
+            'data': c.data,
+            'status': c.status,
+            'reason': c.review_reason or '',
+            'version': c.version,
+            'schema_version': c.schema_version,
+            'resulting_course_id': c.resulting_course_id,
+        } for c in rows],
         'total': total,
         'page': page,
         'page_size': page_size,
@@ -1011,8 +1058,26 @@ def review(candidate_id: str, body: Review, user=Depends(operator), db: Session 
         raise HTTPException(409, 'This candidate changed. Refresh before reviewing.')
     reason = body.reason.strip()
     if body.action == 'publish':
+        data = dict(candidate.data or {})
+        if body.corrections:
+            source_text = str(data.get('source_text') or '')
+            evidence = dict(data.get('evidence') or {})
+            for field, value in body.corrections.items():
+                excerpt = str(body.evidence.get(field) or '').strip()
+                if not excerpt or excerpt not in source_text:
+                    raise HTTPException(422, 'Correction for ' + field + ' needs a verbatim source excerpt.')
+                if field in ('fee', 'points') and value not in ('', None):
+                    try:
+                        data[field] = float(value)
+                    except ValueError:
+                        raise HTTPException(422, 'Correction for ' + field + ' must be a number.')
+                else:
+                    data[field] = value
+                evidence[field] = excerpt
+            data['evidence'] = evidence
+            candidate.data = data
         try:
-            training = validate_evidence(Training(**candidate.data))
+            training = validate_evidence(Training(**data))
         except ValueError:
             raise HTTPException(422, 'Source evidence is incomplete. Reject or ingest a better source.')
         payload = training.model_dump(mode='json')
@@ -1106,7 +1171,7 @@ def complete(job_id: str, body: CompleteJob, db: Session = Depends(get_db)):
         data = training.model_dump(mode='json')
         key = source_key(data)
         if key not in seen:
-            db.add(Candidate(job_id=job.id, source_key=key, data=data))
+            db.add(Candidate(job_id=job.id, source_key=key, data=data, schema_version=CANDIDATE_SCHEMA_VERSION))
             seen.add(key)
     job.status = body.status
     job.result = {

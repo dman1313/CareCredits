@@ -222,7 +222,10 @@ export default function LiveSearch() {
     return (
       <div className="dash">
         <div className="gate">
-          <form className="gate-card" onSubmit={submitAccount}>
+          <a className="skip-link" href="#live-sign-in">
+            Skip to sign in
+          </a>
+          <form id="live-sign-in" className="gate-card" onSubmit={submitAccount} aria-busy={busy}>
             <div className="brand">
               <Mark />
               <div>
@@ -240,13 +243,14 @@ export default function LiveSearch() {
             )}
             <label>
               Email address
-              <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <input required type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
             </label>
             <label>
               Password
               <input
                 required
                 type="password"
+                autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
                 minLength={12}
                 maxLength={128}
                 value={password}

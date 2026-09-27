@@ -1,6 +1,6 @@
 # CareCredits — spec-driven development specification
 
-Version: 0.16 · 2026-09-27 · Status: implementation specification; portal and three-service split exist on this branch; DEC-09–11, BUILD-10, cancelled signup_status, attendance_status, FieldEvidence source links, source documents, versioned review, candidate `resulting_course_id`, and main-portal digest/suggestions/certificate are implemented. Live TypeSafe Jev is wired when `TYPESAFE_API_KEY` is set. Open-weight model DEMO-01 still needs owner model keys.
+Version: 0.19 · 2026-09-27 · Status: implementation specification; portal and three-service split exist on this branch; DEC-09–11, BUILD-10, cancelled signup_status, attendance_status, FieldEvidence source links, source documents, versioned review, candidate `resulting_course_id`/`schema_version`, scraper HTTP ready, 30s job heartbeat, 30-day raw-source retention, and a runtime frontend `/api/v1` proxy are implemented. Live TypeSafe Jev is wired when `TYPESAFE_API_KEY` is set. Open-weight model DEMO-01 still needs owner model keys.
 
 This document expands the initial Tavily discovery specification using the owner's supplied meeting summary. It defines the full Malaysia MVP and the contracts needed to build it. It does not claim that the described application is already implemented.
 
@@ -135,7 +135,7 @@ PostgreSQL is infrastructure, not a fourth application service. External identit
 
 The existing `backend/discovery.py` implements synchronous operator discovery inside FastAPI. Move its Tavily adapter and tests into the scraper service without losing provenance, bounds or error behavior. Add job contracts and backend-owned candidate storage. The existing `/discovery/search` is transitional and must be removed or explicitly disabled in the public release after migration; do not silently change its synchronous response into a job response. Update the setup command and Compose secret routing when the service moves.
 
-The existing backend user-list/create endpoints are unauthenticated, and `backend/auth.py` says authentication is disabled. Restrict or replace them as part of sign-in work before a doctor pilot. A discovery bearer token does not solve user authentication.
+The earlier unauthenticated `/users/` endpoints and disabled-auth adapter are gone; doctor sessions and optional Google OAuth now own identity. A scraper bearer token does not solve user authentication.
 
 ## 6. Tavily and open-weight model pipeline
 
@@ -267,7 +267,7 @@ Routes in this section are implemented on this branch unless marked pending. JSO
 | GET `/api/v1/admin/ingestion-jobs/{id}` | Operator | State, counts, warnings and usage; no credentials |
 | POST `/api/v1/admin/ingestion-jobs/{id}/retry` | Operator | Re-queue an `interrupted` job only; 409 otherwise; never auto-replays paid calls |
 | GET `/api/v1/admin/candidates` | Operator | Paginated review queue |
-| POST `/api/v1/admin/candidates/{id}/review` | Operator | publish/reject/hold, reason, version and evidence-backed corrections |
+| POST `/api/v1/admin/candidates/{id}/review` | Operator | publish/reject/hold, reason, version and evidence-backed corrections. Corrections require a verbatim `evidence` excerpt from the stored source text |
 | POST `/internal/v1/jobs/claim` | Scraper | Atomically lease one queued job; 204 if none; return lease_token and bounded job payload |
 | POST `/internal/v1/jobs/{id}/heartbeat` | Scraper | Matching lease token extends lease within job deadline |
 | POST `/internal/v1/jobs/{id}/complete` | Scraper | Matching lease + candidate batch + outcomes; idempotent completion |
@@ -321,11 +321,11 @@ Mocked tests cover Tavily bounds, extraction validation, two-user isolation, fil
 | T-02 | DISC-01, DISC-02, DISC-05 | Mock Search/Extract contract; deduplicate URLs; no Extract on empty Search; input/result/time bounds preserved after migration |
 | T-03 | DISC-03, DISC-04, OPS-01 | Partial extraction, malformed payload, missing key, timeout, 401/429/credit limits, process crash; preserve evidence and accurate terminal state |
 | T-04 | AI-01, EVT-01, EVT-03 | Reviewed 20-page fixture set including English/Malay, missing fees/points, several sessions, ambiguous dates and malicious instructions; all accepted outputs schema-valid, every published non-null factual field has supporting evidence, no unsupported points/fees published. Mocked evaluation is in `backend/tests/test_t04_fixtures.py`; live model accuracy remains DEMO-01 |
-| T-05 | EVT-02, OPS-01 | Re-import same page, changed content, several sessions per page, expired lease, duplicate completion and concurrent workers; no double publication or silent merge |
+| T-05 | EVT-02, OPS-01 | Re-import same page, changed content, several sessions per page, expired lease, duplicate completion and concurrent workers; no double publication or silent merge. Covered by `test_two_sessions_on_one_page_stay_distinct`, `test_changed_content_queues_refresh_without_duplicate`, `test_expired_lease_complete_does_not_publish`, `test_concurrent_complete_does_not_duplicate_candidates`, and concurrent claim |
 | T-06 | GEO-01, GEO-02, FIND-01 | Malaysia/non-Malaysia, radius boundary, denied location, missing venue coordinates, online eligibility, unknown fees and pagination; results match defined filters |
 | T-07 | REG-01, ATT-01, PROG-01 | Link click does not sign up; repeated save does not duplicate; future attendance rejected; corrections and year boundary recalculate once; unknown/unmapped credits excluded visibly |
-| T-08 | UI-01 | Keyboard-accessible sign-in/search/detail/portal, readable mobile layout, loading/empty/error states and retry; no fake success toast |
-| T-09 | SEC-01, SEC-02, OPS-01 | Check built client assets/logs for test secrets, internal route access, database ownership, origin policy and spending limits. Source-tree secret scan and origin default are covered by `backend/tests/test_t09_secrets.py`; a live built-asset pass remains |
+| T-08 | UI-01 | Keyboard-accessible sign-in/search/detail/portal, readable mobile layout, loading/empty/error states and retry; no fake success toast. Source labels and a live frontend-proxy sign-in/search/detail walk are in `test_t08_ui.py` / `test_t08_live.py`; a full keyboard browser pass remains |
+| T-09 | SEC-01, SEC-02, OPS-01 | Check built client assets/logs for test secrets, internal route access, database ownership, origin policy and spending limits. Source-tree scan, origin default, and a built `.next` asset scan are covered by `backend/tests/test_t09_secrets.py` |
 | T-10 | DEMO-01, AI-01 | Real Tavily and selected open-weight inference calls; preserve redacted request evidence and model identity; demonstrate publish/search/track flow |
 
 T-04 reports field accuracy and rejection rate in addition to its publication gate; a review step must not conceal a nonfunctional extractor. Empty/rejected output for all pages does not pass. Require correct usable candidates from at least 8 of 10 clearly specified, in-scope event fixtures; include the other 10 as edge/negative cases.
@@ -342,7 +342,7 @@ Mock tests run without secrets. Live tests are separate, explicitly use configur
 | BUILD-04 | BUILD-01 model choice, BUILD-02 | Adapter, evidence gate, and mocked T-04 20-page fixture evaluation exist; live accuracy still DEMO-01 |
 | BUILD-05 | BUILD-02, BUILD-04 | Existing publish + SQL catalogue filters on indexed columns; evidence remains in JSON. Flattened `Course` is the documented MVP of Training+Session |
 | BUILD-06 | BUILD-03, BUILD-05 | Existing records and progress; `signup_status` includes cancelled; `record_history` stores corrections |
-| BUILD-07 | BUILD-03, BUILD-05, BUILD-06 | Existing portal including digest/suggestions/certificate and retry; demo fixtures labelled; T-08/T-09 still need a live browser/security pass |
+| BUILD-07 | BUILD-03, BUILD-05, BUILD-06 | Existing portal including digest/suggestions/certificate and retry; demo fixtures labelled; T-09 built-asset scan exists; T-08 keyboard browser pass remains |
 | BUILD-08 | BUILD-01–07 | Not started. Run three-service deployment, live integration and complete demo; record T-10 evidence and known limitations |
 | BUILD-09 | BUILD-02, BUILD-05, OPEN-05, OPEN-09 | Done. Curated `config/scrape_topics.json` + daily enqueue (OPS-02) with `DAILY_SCRAPE_JOB_CEILING`; doctors search the owned catalogue only |
 | BUILD-10 | BUILD-06, OPEN-10 | Done. Digest preferences + biweekly send (NTF-01), catalogue suggestions (PROG-02), printable affiliation certificate (CERT-01) with non-regulator disclaimer. Default mailer is file log; set MAIL_PROVIDER=smtp for real email |
@@ -444,3 +444,6 @@ v0.13 adds `attendance_status`, job `attempt`, FieldEvidence `source_document_id
 v0.14 adds optional doctor coordinates + `location_consent_at` on GET/PATCH `/me`, nonnegative fee/points guards, and a source-level T-08 accessibility scan; schema v11.
 v0.15 adds `created_at` on accounts/courses and `event_count`/`recorded_points_snapshot` on digest sends; schema v12.
 v0.16 links published candidates to `resulting_course_id` and lets `scripts/dev.py` bind the next free local ports when 8000/3000 are occupied.
+v0.17 adds per-journey Retry, scraper `/health/live`+`/health/ready`, 30s lease heartbeats, candidate `schema_version`, 30-day raw-source purge, configurable `AGGREGATE_CREDIT_LABELS`, and scraper-token isolation / hourly job-limit tests; schema v14. DEMO-01 / T-10 / BUILD-08 remain owner-blocked without model keys.
+v0.18 adds T-03 lease-expiry-does-not-publish and T-05 same-source changed-content refresh-without-duplicate coverage. T-08 live keyboard walk and DEMO-01 remain.
+v0.19 proxies `/api/v1` through a runtime Next route so `BACKEND_URL` is not baked at build time, removes unused pre-portal `models.py`/`schemas.py`, and adds a live T-08 sign-in/search/detail walk through the frontend proxy when the portal is running.

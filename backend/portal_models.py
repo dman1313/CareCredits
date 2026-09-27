@@ -1,10 +1,12 @@
-"""Portal schema v13. Candidate resulting course link."""
+"""Portal schema v14. Candidate schema_version and source retention."""
+import os
 import time
 import uuid
 from sqlalchemy import Column, String, Float, Boolean, Integer, JSON, ForeignKey, UniqueConstraint
 from database import Base
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
+CANDIDATE_SCHEMA_VERSION = 1
 
 
 def uid():
@@ -95,6 +97,9 @@ def fill_course(course, data, demo=None):
         raise ValueError('Fee cannot be negative.')
     if points is not None and points < 0:
         raise ValueError('Points cannot be negative.')
+    end = payload.get('end_date')
+    if end and course.start_date and str(end) < str(course.start_date):
+        raise ValueError('End date cannot be before start date.')
     course.fee = fee
     course.currency = payload.get('currency')
     course.points = points
@@ -163,6 +168,7 @@ class Candidate(Base):
     reviewed_at = Column(Float, nullable=True)
     review_reason = Column(String, default='', nullable=False)
     version = Column(Integer, default=1, nullable=False)
+    schema_version = Column(Integer, default=CANDIDATE_SCHEMA_VERSION, nullable=False)
     resulting_course_id = Column(String, ForeignKey('courses.id'), nullable=True)
 
 
@@ -244,3 +250,36 @@ class AffiliationCertificate(Base):
 class SchemaVersion(Base):
     __tablename__ = 'portal_schema_version'
     version = Column(Integer, primary_key=True)
+
+
+def aggregate_credit_labels():
+    raw = os.getenv('AGGREGATE_CREDIT_LABELS', 'CPD')
+    return {item.strip().upper() for item in raw.split(',') if item.strip()} or {'CPD'}
+
+
+def counts_toward_cpd(record):
+    return record.points is not None and (record.credit_label or '').strip().upper() in aggregate_credit_labels()
+
+
+def purge_expired_source_text(db, now=None, retain_days=30):
+    cutoff = (now or time.time()) - retain_days * 86400
+    kept = {row.source_document_id for row in db.query(FieldEvidence.source_document_id).filter(FieldEvidence.source_document_id.isnot(None))}
+    for document in db.query(SourceDocument).filter(SourceDocument.retrieved_at < cutoff).all():
+        if document.id in kept:
+            continue
+        db.delete(document)
+    for candidate in db.query(Candidate).all():
+        retrieved = (candidate.data or {}).get('retrieved_at')
+        if not retrieved:
+            continue
+        try:
+            stamp = time.mktime(time.strptime(str(retrieved)[:19], '%Y-%m-%dT%H:%M:%S'))
+        except ValueError:
+            continue
+        if stamp >= cutoff:
+            continue
+        payload = dict(candidate.data or {})
+        if 'source_text' in payload:
+            payload['source_text'] = ''
+            candidate.data = payload
+    db.commit()

@@ -159,6 +159,37 @@ class CatalogueApiTests(unittest.TestCase):
         forced = self.client.post('/api/v1/admin/daily-scrape?force=true')
         self.assertEqual(forced.status_code, 202, forced.text)
 
+    def test_changed_content_queues_refresh_without_duplicate(self):
+        training = sample()
+        first = self.client.post(
+            '/internal/v1/catalogue/save',
+            json={'candidate': training, 'judgment': {'decision': 'new', 'confidence': 1, 'probabilities': {'new': 1}}},
+            headers=self.service,
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        course_id = first.json()['course_id']
+        changed = sample()
+        changed['description'] = 'Updated brochure copy with a new fee note.'
+        changed['fee'] = 150
+        changed['currency'] = 'MYR'
+        changed['evidence'] = {**changed['evidence'], 'fee': QUOTE, 'currency': QUOTE, 'description': QUOTE}
+        again = self.client.post(
+            '/internal/v1/catalogue/save',
+            json={
+                'candidate': changed,
+                'judgment': {'decision': 'exists', 'confidence': 1, 'matched_session_id': course_id, 'probabilities': {'exists': 1}},
+            },
+            headers=self.service,
+        )
+        self.assertEqual(again.status_code, 200, again.text)
+        self.assertEqual(again.json()['status'], 'exists')
+        self.assertEqual(again.json()['course_id'], course_id)
+        self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': 'CareCredits-demo-2026'})
+        listed = self.client.get('/api/v1/trainings?period=all&q=Primary%20Care%20Update').json()
+        self.assertEqual(listed['total'], 1)
+        queue = self.client.get('/api/v1/admin/candidates').json()['items']
+        self.assertTrue(any(item['status'] == 'held' and item['id'] == again.json()['candidate_id'] for item in queue))
+
 
 if __name__ == '__main__':
     unittest.main()

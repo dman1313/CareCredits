@@ -87,6 +87,12 @@ export default function Home() {
   const [learning, setLearning] = useState<LearningFilters>({ signupStatus: '', attended: '', page: 1 });
   const [recordsTotal, setRecordsTotal] = useState(0);
   const jobKey = useRef('');
+  const retryRef = useRef<() => void>(() => {});
+
+  function fail(err: unknown, retry: () => void) {
+    setError((err as Error).message);
+    retryRef.current = retry;
+  }
 
   useEffect(() => {
     Promise.all([
@@ -108,17 +114,17 @@ export default function Home() {
     if (learning.attended) params.set('attendance_status', learning.attended);
     setLoading(true);
     try {
-      const [r, p, digest, next] = await Promise.all([
-        api('/me/trainings?' + params),
-        api('/me/progress?year=' + year),
-        api('/me/digest').catch(() => ({ opted_in: false })),
-        api('/me/suggestions').catch(() => ({ items: [] })),
-      ]);
+      const [r, p] = await Promise.all([api('/me/trainings?' + params), api('/me/progress?year=' + year)]);
       setRecords(r.items);
       setRecordsTotal(r.total || 0);
       setProgress(p);
+      const [digest, next] = await Promise.all([api('/me/digest'), api('/me/suggestions')]);
       setDigestOptIn(!!digest.opted_in);
       setSuggestions(next.items || []);
+    } catch (e) {
+      fail(e, () => {
+        refreshRecords().catch((err) => fail(err, () => refreshRecords()));
+      });
     } finally {
       setLoading(false);
     }
@@ -152,14 +158,16 @@ export default function Home() {
       setCourses(data.items);
       setTotal(data.total);
     } catch (e) {
-      setError((e as Error).message);
+      fail(e, () => {
+        loadCourses();
+      });
     } finally {
       setLoading(false);
     }
   }, [filters]);
 
   useEffect(() => {
-    if (user) refreshRecords().catch((e) => setError(e.message));
+    if (user) refreshRecords().catch((e) => fail(e, () => refreshRecords()));
   }, [user, refreshRecords]);
 
   useEffect(() => {
@@ -177,7 +185,7 @@ export default function Home() {
 
   useEffect(() => {
     if (user?.role !== 'operator' || tab !== 'Ingestion') return;
-    refreshOperator().catch((e) => setError(e.message));
+    refreshOperator().catch((e) => fail(e, () => refreshOperator()));
     const timer = setInterval(() => refreshOperator().catch(() => {}), 5000);
     return () => clearInterval(timer);
   }, [user, tab, refreshOperator]);
@@ -229,7 +237,7 @@ export default function Home() {
       const hist = await api('/me/trainings/' + course.id + '/history').catch(() => ({ items: [] }));
       setHistory(hist.items || []);
     } catch (e) {
-      setError((e as Error).message);
+      fail(e, () => openCourse(course));
     }
   }
 
@@ -245,7 +253,7 @@ export default function Home() {
       setSelected(null);
       setNotice('Training record saved.');
     } catch (e) {
-      setError((e as Error).message);
+      fail(e, () => saveRecord({ preventDefault() {} } as FormEvent));
     } finally {
       setSaving(false);
     }
@@ -271,7 +279,7 @@ export default function Home() {
       setUser(saved);
       setNotice('Profile settings saved.');
     } catch (e) {
-      setError((e as Error).message);
+      fail(e, () => saveProfile({ preventDefault() {} } as FormEvent));
     } finally {
       setSaving(false);
     }
@@ -310,18 +318,25 @@ export default function Home() {
       await refreshOperator();
       setNotice('Job queued. The scraper will process it when running.');
     } catch (e) {
-      setError((e as Error).message);
+      fail(e, () => newJob({ preventDefault() {} } as FormEvent));
     } finally {
       setSubmitting(false);
     }
   }
 
-  async function review(id: string, action: string, reason = '', version = 0) {
+  async function review(
+    id: string,
+    action: string,
+    reason = '',
+    version = 0,
+    corrections: Record<string, string> = {},
+    evidence: Record<string, string> = {},
+  ) {
     setSaving(true);
     try {
       await api('/admin/candidates/' + id + '/review', {
         method: 'POST',
-        body: JSON.stringify({ action, reason, version }),
+        body: JSON.stringify({ action, reason, version, corrections, evidence }),
       });
       await refreshOperator();
       await loadCourses();
@@ -333,7 +348,7 @@ export default function Home() {
             : 'Candidate rejected.',
       );
     } catch (e) {
-      setError((e as Error).message);
+      fail(e, () => review(id, action, reason, version, corrections, evidence));
     } finally {
       setSaving(false);
     }
@@ -347,7 +362,7 @@ export default function Home() {
       await refreshOperator();
       setNotice('Interrupted job queued again. Paid calls will not repeat until the scraper claims it.');
     } catch (e) {
-      setError((e as Error).message);
+      fail(e, () => retryJob(id));
     } finally {
       setSaving(false);
     }
@@ -451,7 +466,7 @@ export default function Home() {
           {error && (
             <div className="alert error" role="alert">
               {error}
-              <button className="text-btn" type="button" onClick={() => loadCourses()}>
+              <button className="text-btn" type="button" onClick={() => retryRef.current()}>
                 Retry
               </button>
               <button className="icon-btn" aria-label="Dismiss error" onClick={() => setError('')}>
@@ -492,7 +507,7 @@ export default function Home() {
                   setDigestOptIn(!!d.opted_in);
                   setNotice(d.opted_in ? 'Biweekly digest enabled.' : 'Digest emails turned off.');
                 } catch (e) {
-                  setError((e as Error).message);
+                  fail(e, () => refreshRecords());
                 } finally {
                   setDigestBusy(false);
                 }
@@ -508,7 +523,7 @@ export default function Home() {
                   window.open('/api/v1/me/certificates/' + cert.id, '_blank', 'noopener');
                   setNotice('Affiliation certificate ready to print. It is not a regulator document.');
                 } catch (e) {
-                  setError((e as Error).message);
+                  fail(e, () => refreshRecords());
                 } finally {
                   setCertBusy(false);
                 }
@@ -534,7 +549,13 @@ export default function Home() {
             />
           )}
           {tab === 'Public profile' && (
-            <ProfilePanel user={user} saving={saving} onUser={setUser} onSave={saveProfile} />
+            <ProfilePanel
+              user={user}
+              saving={saving}
+              onUser={setUser}
+              onSave={saveProfile}
+              onLocateError={(message) => fail(new Error(message), locate)}
+            />
           )}
           {tab === 'Ingestion' && (
             <IngestionPanel
@@ -549,7 +570,7 @@ export default function Home() {
               onJobQuery={setJobQuery}
               onJobMaxResults={setJobMaxResults}
               onSubmit={newJob}
-              onRefresh={() => refreshOperator().catch((e) => setError(e.message))}
+              onRefresh={() => refreshOperator().catch((e) => fail(e, () => refreshOperator()))}
               onRetry={retryJob}
               onReview={review}
               onDailyScrape={async () => {
@@ -560,7 +581,7 @@ export default function Home() {
                   await refreshOperator();
                   setNotice('Daily scrape topics queued for the owned catalogue.');
                 } catch (e) {
-                  setError((e as Error).message);
+                  fail(e, () => refreshOperator());
                 } finally {
                   setSaving(false);
                 }

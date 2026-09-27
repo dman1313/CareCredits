@@ -48,6 +48,8 @@ class Training(BaseModel):
     retrieved_at: str | None = None
     model_weights_url: str | None = None
     model_license_url: str | None = None
+    model_publisher: str | None = Field(default=None, max_length=200)
+    model_host: str | None = Field(default=None, max_length=200)
 
     @field_validator('source_url', 'registration_url', 'model_weights_url', 'model_license_url')
     @classmethod

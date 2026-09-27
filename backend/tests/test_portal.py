@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 from datetime import timedelta
 from pathlib import Path
@@ -13,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from main import app, today, migrate_schema
 from database import Base, get_db
-from portal_models import Account, Course, Record, Job, Candidate, SchemaVersion, fill_course
+from portal_models import Account, Course, Record, Job, Candidate, SchemaVersion, SourceDocument, fill_course, purge_expired_source_text
 from security import password_hash
 
 PASSWORD = 'Testing-strong-password'
@@ -140,6 +141,20 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(review.status_code,200,review.text)
         self.assertEqual(self.client.get('/api/v1/admin/candidates').json()['items'],[])
 
+    def test_concurrent_complete_does_not_duplicate_candidates(self):
+        from concurrent.futures import ThreadPoolExecutor
+        header={'Idempotency-Key':'concurrent-complete-key'}
+        self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP concurrent complete'},headers=header)
+        service={'Authorization':'Bearer test-service-token'}
+        claim=self.client.post('/internal/v1/jobs/claim',headers=service).json()
+        payload={'lease_token':claim['lease_token'],'status':'succeeded','candidates':[sample('Concurrent GP')]}
+        url='/internal/v1/jobs/'+claim['id']+'/complete'
+        with ThreadPoolExecutor(2) as pool:
+            first, second = pool.submit(self.client.post, url, json=payload, headers=service), pool.submit(self.client.post, url, json=payload, headers=service)
+            codes=sorted([first.result().status_code, second.result().status_code])
+        self.assertTrue(all(code in (200, 409) for code in codes))
+        self.assertEqual(len(self.client.get('/api/v1/admin/candidates').json()['items']),1)
+
     def test_job_completion_keeps_tavily_sources(self):
         header={'Idempotency-Key':'tavily-sources-key'}
         self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP Tavily sources'},headers=header)
@@ -163,11 +178,44 @@ class PortalTests(unittest.TestCase):
         self.login('b@example.com')
         self.assertEqual(self.client.get('/api/v1/admin/ingestion-jobs/'+claim['id']).status_code,403)
 
+    def test_expired_lease_complete_does_not_publish(self):
+        header={'Idempotency-Key':'expired-lease-key'}
+        self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP lease timeout'},headers=header)
+        service={'Authorization':'Bearer test-service-token'}
+        claim=self.client.post('/internal/v1/jobs/claim',headers=service).json()
+        with self.Session() as db:
+            job=db.get(Job, claim['id'])
+            job.lease_until=1
+            db.commit()
+        complete=self.client.post(
+            '/internal/v1/jobs/'+claim['id']+'/complete',
+            json={'lease_token':claim['lease_token'],'status':'succeeded','candidates':[sample('Late crash')]},
+            headers=service,
+        )
+        self.assertEqual(complete.status_code,409)
+        listed=self.client.get('/api/v1/trainings?period=all&q=Late%20crash').json()
+        self.assertEqual(listed['total'],0)
+        stored=self.client.get('/api/v1/admin/ingestion-jobs/'+claim['id']).json()
+        self.assertEqual(stored['status'],'interrupted')
+
     def test_invalid_evidence_cannot_publish(self):
         with self.Session() as db:
             j=Job(account_id=self.a,request_key='j',query='GP');db.add(j);db.flush()
             c=Candidate(job_id=j.id,source_key='fake',data={**sample(),'evidence':{'title':'invented'}});db.add(c);db.commit();cid=c.id
         self.assertEqual(self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'publish'}).status_code,422)
+
+    def test_review_corrections_require_source_excerpts(self):
+        quote='Corrected GP Day by Learning Institute in Malaysia Kuala Lumpur online. 2026-01-01. CPD points 2.'
+        payload={**sample('Wrong title'),'source_text':quote,'evidence':{key:quote for key in ['title','provider','mode','country','start_date','points','credit_label']}}
+        with self.Session() as db:
+            j=Job(account_id=self.a,request_key='corr',query='GP');db.add(j);db.flush()
+            c=Candidate(job_id=j.id,source_key='corr-source',data=payload);db.add(c);db.commit();cid=c.id
+        missing=self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'publish','corrections':{'title':'Corrected GP Day'}})
+        self.assertEqual(missing.status_code,422)
+        published=self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'publish','corrections':{'title':'Corrected GP Day'},'evidence':{'title':quote}})
+        self.assertEqual(published.status_code,200,published.text)
+        found=self.client.get('/api/v1/trainings?period=all&q=Corrected').json()['items']
+        self.assertEqual(found[0]['title'],'Corrected GP Day')
 
     def test_hold_requires_reason_and_stays_out_of_catalogue(self):
         with self.Session() as db:
@@ -269,7 +317,7 @@ class PortalTests(unittest.TestCase):
             migrate_schema(db)
             stored=db.get(Course,self.course)
             self.assertEqual((stored.title, stored.city), ('Backfilled GP','Johor Bahru'))
-            self.assertEqual(max(v.version for v in db.query(SchemaVersion).all()), 13)
+            self.assertEqual(max(v.version for v in db.query(SchemaVersion).all()), 14)
             self.assertIn('identity_issuer', {c['name'] for c in inspect(db.get_bind()).get_columns('accounts')})
             self.assertIn('verification_status', {c['name'] for c in inspect(db.get_bind()).get_columns('courses')})
             self.assertIn('review_reason', {c['name'] for c in inspect(db.get_bind()).get_columns('course_candidates')})
@@ -284,6 +332,7 @@ class PortalTests(unittest.TestCase):
             self.assertIn('created_at', {c['name'] for c in inspect(db.get_bind()).get_columns('accounts')})
             self.assertIn('event_count', {c['name'] for c in inspect(db.get_bind()).get_columns('digest_sends')})
             self.assertIn('resulting_course_id', {c['name'] for c in inspect(db.get_bind()).get_columns('course_candidates')})
+            self.assertIn('schema_version', {c['name'] for c in inspect(db.get_bind()).get_columns('course_candidates')})
             self.assertIn('source_document_id', {c['name'] for c in inspect(db.get_bind()).get_columns('field_evidence')})
             tables = inspect(db.get_bind()).get_table_names()
             self.assertIn('digest_preferences', tables)
@@ -407,6 +456,8 @@ class PortalTests(unittest.TestCase):
         detail = self.client.get('/api/v1/trainings/' + self.course)
         self.assertEqual(detail.status_code, 200, detail.text)
         self.assertIsNone(detail.json()['record'])
+        self.assertNotIn('source_text', detail.json())
+        self.assertNotIn('model_license_url', detail.json())
         after = self.client.get('/api/v1/me/trainings').json()['items']
         self.assertEqual(len(before), len(after))
 
@@ -542,8 +593,37 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(page.json()['page_size'],1)
         self.assertEqual(len(page.json()['items']),1)
         self.assertEqual(page.json()['items'][0]['version'],1)
+        self.assertEqual(page.json()['items'][0]['schema_version'],1)
         stale=self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'hold','reason':'Need MMC confirmation','version':99})
         self.assertEqual(stale.status_code,409)
         held=self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'hold','reason':'Need MMC confirmation','version':1})
         self.assertEqual(held.status_code,200,held.text)
         self.assertEqual(held.json()['version'],2)
+
+    def test_scraper_token_cannot_read_personal_data(self):
+        self.save()
+        self.client.cookies.clear()
+        headers={'Authorization':'Bearer test-service-token'}
+        self.assertEqual(self.client.get('/api/v1/me',headers=headers).status_code,401)
+        self.assertEqual(self.client.get('/api/v1/me/trainings',headers=headers).status_code,401)
+        self.assertEqual(self.client.get('/api/v1/me/export/csv',headers=headers).status_code,401)
+
+    def test_operator_job_hourly_limit(self):
+        for i in range(10):
+            result=self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP CPD topic '+str(i)+' extra'},headers={'Idempotency-Key':'limit-key-'+str(i)})
+            self.assertEqual(result.status_code,202,result.text)
+        blocked=self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP CPD extra topic overflow'},headers={'Idempotency-Key':'limit-key-10'})
+        self.assertEqual(blocked.status_code,429)
+
+    def test_expired_source_documents_are_purged(self):
+        with self.Session() as db:
+            old=SourceDocument(canonical_url='https://example.org/old',content_hash='abc',retrieved_at=1,snippet='old page')
+            db.add(old)
+            db.commit()
+            old_id=old.id
+            purge_expired_source_text(db, now=time.time())
+            self.assertIsNone(db.get(SourceDocument, old_id))
+
+    def test_end_date_cannot_precede_start(self):
+        with self.assertRaises(ValueError):
+            fill_course(Course(source_key='bad-dates'), {**sample(), 'end_date':'2025-01-01'})

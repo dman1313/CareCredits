@@ -49,11 +49,12 @@ services:
       MODEL_WEIGHTS_URL: ${MODEL_WEIGHTS_URL:-}
       MODEL_LICENSE_URL: ${MODEL_LICENSE_URL:-}
       MODEL_OPEN_WEIGHT_CONFIRMED: ${MODEL_OPEN_WEIGHT_CONFIRMED:-false}
+      SCRAPER_HEALTH_PORT: 8002
     depends_on:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "from pathlib import Path; import time; assert time.time()-Path('/tmp/carecredits-worker').stat().st_mtime < 180"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health/ready')"]
       interval: 30s
       start_period: 20s
       timeout: 5s
@@ -64,6 +65,8 @@ services:
       context: ./frontend
       args:
         BACKEND_URL: http://backend:8000
+    environment:
+      BACKEND_URL: http://backend:8000
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:

@@ -104,7 +104,7 @@ export type Job = {
   result: { warnings?: string[]; candidate_count?: number; sources?: TavilySource[] } | null;
 };
 
-export type Candidate = { id: string; data: Course; status: string; reason?: string; version?: number; resulting_course_id?: string | null };
+export type Candidate = { id: string; data: Course; status: string; reason?: string; version?: number; schema_version?: number; resulting_course_id?: string | null };
 
 export type WorkspaceTab =
   | 'Overview'

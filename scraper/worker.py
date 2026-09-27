@@ -1,11 +1,13 @@
 """Run with python -m scraper.worker; communicates with backend over scoped HTTP."""
 import os
 from pathlib import Path
+import threading
 import time
 import httpx
 from scraper.tavily import discover, ProviderError
 from scraper.firehose import discover as firehose_discover, configured as firehose_configured, FirehoseError
 from scraper.extraction import configuration, extract_training, heuristic_extract, ExtractionError
+from scraper.health import start as start_health
 
 
 def merge_sources(primary, extra, limit=10):
@@ -79,6 +81,21 @@ def catalogue_pipeline(client, job_id, candidates):
     return saved, warnings
 
 
+def keep_lease(heartbeat, interval=30):
+    stop = threading.Event()
+
+    def loop():
+        while not stop.wait(interval):
+            try:
+                heartbeat()
+            except Exception:
+                break
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+    return stop
+
+
 def run_job(job, heartbeat, client=None):
     warnings, candidates, sources = [], [], []
     try:
@@ -145,6 +162,7 @@ def main():
     token = os.getenv('SCRAPER_SERVICE_TOKEN', '')
     if not token:
         raise SystemExit('Set SCRAPER_SERVICE_TOKEN before starting the scraper.')
+    start_health()
     with httpx.Client(base_url=base, headers={'Authorization': 'Bearer ' + token}, timeout=20) as client:
         while True:
             Path('/tmp/carecredits-worker').touch()
@@ -165,7 +183,11 @@ def main():
                         json={'lease_token': job['lease_token']},
                     ).raise_for_status()
 
-                payload = run_job(job, heartbeat, client)
+                lease = keep_lease(heartbeat)
+                try:
+                    payload = run_job(job, heartbeat, client)
+                finally:
+                    lease.set()
                 client.post('/internal/v1/jobs/' + job['id'] + '/complete', json=payload).raise_for_status()
                 print('Ingestion job ' + job['id'] + ': ' + payload['status'], flush=True)
             except (httpx.HTTPError, ValueError):

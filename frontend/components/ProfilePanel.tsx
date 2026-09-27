@@ -9,11 +9,13 @@ export function ProfilePanel({
   saving,
   onUser,
   onSave,
+  onLocateError,
 }: {
   user: User;
   saving: boolean;
   onUser: (next: User) => void;
   onSave: (event: FormEvent) => void;
+  onLocateError?: (message: string) => void;
 }) {
   return (
     <>
@@ -52,7 +54,10 @@ export function ProfilePanel({
               className="secondary"
               type="button"
               onClick={() => {
-                if (!navigator.geolocation) return;
+                if (!navigator.geolocation) {
+                  onLocateError?.('Location is unavailable. Choose your city instead.');
+                  return;
+                }
                 navigator.geolocation.getCurrentPosition(
                   (position) =>
                     onUser({
@@ -60,7 +65,7 @@ export function ProfilePanel({
                       latitude: position.coords.latitude,
                       longitude: position.coords.longitude,
                     }),
-                  () => {},
+                  () => onLocateError?.('Location was not available. You can still search by city.'),
                   { timeout: 10000 },
                 );
               }}
