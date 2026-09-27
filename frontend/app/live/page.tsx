@@ -289,6 +289,9 @@ export default function LiveSearch() {
 
   return (
     <div className="dash">
+      <a className="skip-link" href="#live-main">
+        Skip to content
+      </a>
       <div className="app-shell">
         <aside className={open ? 'sidebar sidebar-open' : 'sidebar'}>
           <div className="brand">
@@ -347,7 +350,7 @@ export default function LiveSearch() {
           </div>
         </aside>
         {open && <button className="veil" onClick={() => setOpen(false)} aria-label="Close navigation" />}
-        <main className="main">
+        <main className="main" id="live-main">
           <header className="topbar">
             <button className="menu-button" onClick={() => setOpen(true)} aria-label="Open navigation">
               <Menu />
@@ -360,8 +363,9 @@ export default function LiveSearch() {
               }}
             >
               <label className="search">
-                <Search />
+                <Search aria-hidden="true" />
                 <input
+                  aria-label="Search training"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search conferences, webinars, workshops..."
@@ -389,7 +393,10 @@ export default function LiveSearch() {
           <div className="content">
             {error && (
               <p role="alert" className="alert">
-                {error}
+                {error}{' '}
+                <button className="text-link" type="button" onClick={() => search()}>
+                  Retry
+                </button>
               </p>
             )}
             {tab === 'Overview' && (
@@ -555,7 +562,7 @@ export default function LiveSearch() {
                     </button>
                   </section>
                 )}
-                {(tab === 'Settings' || tab === 'My Credits') && (
+                {tab === 'My Credits' && (
                   <section className="card">
                     <div className="card-heading">
                       <div>

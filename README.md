@@ -32,12 +32,12 @@ Official API references: [Search](https://docs.tavily.com/documentation/api-refe
 - **Daily scrape** (OPS-02): curated topics in `config/scrape_topics.json` enqueue once per `Asia/Kuala_Lumpur` day; operator can also `POST /api/v1/admin/daily-scrape`.
 - Catalogue **connect / lookup / decide / save** APIs (`/internal/v1/catalogue/*`) with exact `source_key` short-circuit and **Jev** (TypeSafe System One SDK) existence judgments when `TYPESAFE_API_KEY` or `~/.typesafe/key` is set (near matches stay `uncertain` without it).
 - Daily scrape uses Tavily Search/Extract plus Firehose (`FIREHOSE_MGMT_KEY`) when configured; doctors still only search the owned catalogue.
-- Doctor sign-in uses httponly email/password sessions. Third-party OAuth is still an open decision.
+- Doctor sign-in uses httponly email/password sessions. Optional Google OAuth when `GOOGLE_CLIENT_*` are set.
 - Malaysia catalogue filters, nearby distance when coordinates exist, personal sign-up/attendance, year progress, and an optional public profile are implemented.
 - Operator ingestion uses leased jobs and an explicit retry for interrupted work.
 - Demo fixtures load only with `DEMO_MODE=true` outside production and are labelled fictional.
 - Live UI: http://127.0.0.1:3000/live
-- Digests, suggestions, and printable certificates (DEC-10) are implemented (`MAIL_PROVIDER=log` by default).
+- Digests, suggestions, and printable certificates (DEC-10) are in the main workspace and `/live` (`MAIL_PROVIDER=log` by default).
 - API errors use `{error:{code,message,request_id}}`. Personal records have `signup_status` including cancelled, plus attendance change history.
 - Optional Google OAuth when `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are set; email/password remains for local demo.
 - Live TypeSafe Jev is configured when `TYPESAFE_API_KEY` or `~/.typesafe/key` is present.

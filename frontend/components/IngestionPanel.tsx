@@ -7,28 +7,36 @@ import { Empty } from '@/components/CourseList';
 
 export function IngestionPanel({
   jobQuery,
+  jobMaxResults,
   jobs,
   candidates,
+  candidateTotal,
   submitting,
   saving,
   jobKey,
   onJobQuery,
+  onJobMaxResults,
   onSubmit,
   onRefresh,
   onRetry,
   onReview,
+  onDailyScrape,
 }: {
   jobQuery: string;
+  jobMaxResults: number;
   jobs: Job[];
   candidates: Candidate[];
+  candidateTotal?: number;
   submitting: boolean;
   saving: boolean;
   jobKey: MutableRefObject<string>;
   onJobQuery: (value: string) => void;
+  onJobMaxResults: (value: number) => void;
   onSubmit: (event: FormEvent) => void;
   onRefresh: () => void;
   onRetry: (id: string) => void;
-  onReview: (id: string, action: string, reason: string) => void;
+  onReview: (id: string, action: string, reason: string, version?: number) => void;
+  onDailyScrape?: () => void;
 }) {
   return (
     <>
@@ -53,9 +61,33 @@ export function IngestionPanel({
             }}
           />
         </label>
-        <button className="primary" disabled={submitting}>
-          {submitting ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />} Start discovery
-        </button>
+        <label>
+          Source pages
+          <select
+            aria-label="Maximum source pages"
+            value={jobMaxResults}
+            onChange={(e) => {
+              onJobMaxResults(Number(e.target.value));
+              jobKey.current = '';
+            }}
+          >
+            {[1, 2, 3, 4, 5].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="button-row">
+          <button className="primary" disabled={submitting}>
+            {submitting ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />} Start discovery
+          </button>
+          {onDailyScrape && (
+            <button className="secondary" type="button" disabled={saving || submitting} onClick={onDailyScrape}>
+              Queue daily scrape
+            </button>
+          )}
+        </div>
         <p className="small-note">
           A live run uses Tavily Search and Extract for up to five sources. Missing Tavily credentials fail honestly.
           Structured candidates still need a configured open-weight model.
@@ -74,7 +106,8 @@ export function IngestionPanel({
               <div>
                 <strong>{j.query}</strong>
                 <small>
-                  {j.result?.sources?.length ?? 0} Tavily sources · {j.result?.candidate_count ?? 0} candidates{' '}
+                  Up to {j.max_results ?? 5} pages · {j.result?.sources?.length ?? 0} Tavily sources ·{' '}
+                  {j.result?.candidate_count ?? 0} candidates{' '}
                   {j.result?.warnings?.map((w, i) => (
                     <span className="job-warning" key={i}>
                       {w}
@@ -110,7 +143,7 @@ export function IngestionPanel({
       </div>
       <div className="section-heading">
         <h2>Review candidates</h2>
-        <span>{candidates.length} awaiting review</span>
+        <span>{candidateTotal ?? candidates.length} awaiting review</span>
       </div>
       {candidates.map((c) => (
         <CandidateCard key={c.id} candidate={c} saving={saving} onReview={onReview} />
@@ -126,7 +159,7 @@ function CandidateCard({
 }: {
   candidate: Candidate;
   saving: boolean;
-  onReview: (id: string, action: string, reason: string) => void;
+  onReview: (id: string, action: string, reason: string, version?: number) => void;
 }) {
   const [reason, setReason] = useState(candidate.reason || '');
   return (
@@ -170,13 +203,25 @@ function CandidateCard({
         accreditation verification.
       </p>
       <div className="button-row">
-        <button disabled={saving} className="primary" onClick={() => onReview(candidate.id, 'publish', reason)}>
+        <button
+          disabled={saving}
+          className="primary"
+          onClick={() => onReview(candidate.id, 'publish', reason, candidate.version)}
+        >
           <Check size={16} /> Publish reviewed training
         </button>
-        <button disabled={saving} className="secondary" onClick={() => onReview(candidate.id, 'hold', reason)}>
+        <button
+          disabled={saving}
+          className="secondary"
+          onClick={() => onReview(candidate.id, 'hold', reason, candidate.version)}
+        >
           <Pause size={16} /> Hold
         </button>
-        <button disabled={saving} className="secondary" onClick={() => onReview(candidate.id, 'reject', reason)}>
+        <button
+          disabled={saving}
+          className="secondary"
+          onClick={() => onReview(candidate.id, 'reject', reason, candidate.version)}
+        >
           Reject
         </button>
       </div>

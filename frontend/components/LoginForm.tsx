@@ -42,6 +42,9 @@ export function LoginForm({
 
   return (
     <div className="login-page">
+      <a className="skip-link" href="#login-form">
+        Skip to sign in
+      </a>
       <section className="login-story">
         <Brand />
         <div>
@@ -73,7 +76,7 @@ export function LoginForm({
         </div>
         <small>A little learning can make a lasting difference.</small>
       </section>
-      <section className="login-form">
+      <section className="login-form" id="login-form">
         <div>
           <span className="round-icon">
             <GraduationCap />
@@ -117,7 +120,7 @@ export function LoginForm({
                 {error}
               </p>
             )}
-            <button className="primary full" disabled={busy}>
+            <button className="primary full" disabled={busy} aria-busy={busy}>
               {busy ? 'Please wait…' : register ? 'Create account' : 'Sign in'} <ArrowRight size={17} />
             </button>
             {oauth && (

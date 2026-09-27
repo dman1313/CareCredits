@@ -8,6 +8,7 @@ import {
   RecordHistoryItem,
   feeLabel,
   formatDate,
+  locationLabel,
   modeName,
   todayLocal,
 } from '@/lib/portal';
@@ -31,13 +32,14 @@ export function TrainingDetail({
   onEdit: (next: RecordData) => void;
   onSave: (event: FormEvent) => void;
 }) {
+  const attendable = !course.start_date || course.start_date <= todayLocal();
   return (
     <div className="modal-shade" onClick={onClose}>
       <section
         className="modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Training details"
+        aria-labelledby="training-title"
         onClick={(e) => e.stopPropagation()}
       >
         <button autoFocus className="modal-close icon-btn" aria-label="Close training details" onClick={onClose}>
@@ -45,8 +47,9 @@ export function TrainingDetail({
         </button>
         <span className="pill">
           {modeName(course.mode)} {course.demo ? '· Demo course' : ''}
+          {course.verification_status === 'source_reviewed' ? ' · Source reviewed' : ' · Unverified claims'}
         </span>
-        <h2>{course.title}</h2>
+        <h2 id="training-title">{course.title}</h2>
         <p className="muted">{course.provider}</p>
         <p>{course.description}</p>
         <div className="detail-grid">
@@ -56,7 +59,7 @@ export function TrainingDetail({
           </div>
           <div>
             <small>Location</small>
-            <strong>{course.city || 'Online'}</strong>
+            <strong>{locationLabel(course)}</strong>
           </div>
           <div>
             <small>Fee</small>
@@ -70,11 +73,11 @@ export function TrainingDetail({
           </div>
           <div>
             <small>Level</small>
-            <strong>{course.difficulty || 'Not specified'}</strong>
+            <strong>{course.difficulty || 'Not listed'}</strong>
           </div>
           <div>
             <small>Prerequisites</small>
-            <strong>{course.prerequisites || 'Not specified'}</strong>
+            <strong>{course.prerequisites || 'Unknown'}</strong>
           </div>
         </div>
         <div className="button-row">
@@ -120,6 +123,7 @@ export function TrainingDetail({
             <input
               type="checkbox"
               checked={edit.attended}
+              disabled={!attendable && !edit.attended}
               onChange={(e) =>
                 onEdit({
                   ...edit,
@@ -129,7 +133,12 @@ export function TrainingDetail({
                 })
               }
             />
-            I attended this training
+            <span>
+              I attended this training
+              {!attendable && !edit.attended && (
+                <small> Attendance can be recorded after the session date ({formatDate(course.start_date)}).</small>
+              )}
+            </span>
           </label>
           {edit.attended && (
             <>
@@ -197,10 +206,20 @@ export function TrainingDetail({
             {saving ? 'Saving…' : 'Save my record'} <Check size={16} />
           </button>
           {history.length > 0 && (
-            <p className="small-note">
-              Previous values kept: {history.length} correction{history.length === 1 ? '' : 's'}. Cancelling
-              sign-up does not erase attendance.
-            </p>
+            <div className="small-note">
+              <p>Correction history. Cancelling sign-up does not erase attendance.</p>
+              <ol className="source-list">
+                {history.map((item, index) => (
+                  <li key={`${item.at}-${index}`}>
+                    {item.at ? new Date(item.at * 1000).toLocaleString('en-MY') : 'Earlier'}
+                    {item.signup_status ? ` · sign-up ${item.signup_status.replace('_', ' ')}` : ''}
+                    {item.attended != null ? ` · ${item.attended ? 'attended' : 'not attended'}` : ''}
+                    {item.attended_on ? ` · ${item.attended_on}` : ''}
+                    {item.points != null ? ` · ${item.points} ${item.credit_label || ''}`.trim() : ''}
+                  </li>
+                ))}
+              </ol>
+            </div>
           )}
         </form>
       </section>

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from database import Base, engine, get_db, SessionLocal
 from portal_models import (
     Account, LoginSession, Course, Record, RecordHistory, Job, Candidate, Audit, SchemaVersion,
-    DigestPreference, AffiliationCertificate,
+    DigestPreference, AffiliationCertificate, FieldEvidence, SourceDocument,
     SCHEMA_VERSION, FILTER_FIELDS, fill_course,
 )
 from security import current_user, operator, worker, password_hash, password_matches, digest, throttle
@@ -85,6 +85,26 @@ def migrate_schema(db):
         db.add(SchemaVersion(version=5))
         current = 5
         db.commit()
+    if current == 5:
+        _add_account_state(db)
+        db.add(SchemaVersion(version=6))
+        current = 6
+        db.commit()
+    if current == 6:
+        _add_account_identity(db)
+        db.add(SchemaVersion(version=7))
+        current = 7
+        db.commit()
+    if current == 7:
+        _add_review_and_record_origin(db)
+        db.add(SchemaVersion(version=8))
+        current = 8
+        db.commit()
+    if current == 8:
+        _add_source_documents_and_job_limits(db)
+        db.add(SchemaVersion(version=9))
+        current = 9
+        db.commit()
     if current != SCHEMA_VERSION:
         raise RuntimeError('Unsupported portal schema. Apply the matching migration.')
 
@@ -126,6 +146,54 @@ def _add_signup_status(db):
     if 'signup_status' not in existing:
         db.execute(text("ALTER TABLE doctor_records ADD COLUMN signup_status VARCHAR DEFAULT 'not_recorded' NOT NULL"))
         db.execute(text("UPDATE doctor_records SET signup_status = 'signed_up' WHERE signed_up = 1"))
+    db.commit()
+
+
+def _add_account_state(db):
+    existing = {column['name'] for column in inspect(db.get_bind()).get_columns('accounts')}
+    if 'state' not in existing:
+        db.execute(text("ALTER TABLE accounts ADD COLUMN state VARCHAR DEFAULT '' NOT NULL"))
+    db.commit()
+
+
+def _add_account_identity(db):
+    existing = {column['name'] for column in inspect(db.get_bind()).get_columns('accounts')}
+    if 'identity_issuer' not in existing:
+        db.execute(text('ALTER TABLE accounts ADD COLUMN identity_issuer VARCHAR'))
+    if 'identity_subject' not in existing:
+        db.execute(text('ALTER TABLE accounts ADD COLUMN identity_subject VARCHAR'))
+    db.commit()
+
+
+def _add_review_and_record_origin(db):
+    courses = {column['name'] for column in inspect(db.get_bind()).get_columns('courses')}
+    if 'verification_status' not in courses:
+        db.execute(text("ALTER TABLE courses ADD COLUMN verification_status VARCHAR DEFAULT 'unverified' NOT NULL"))
+    if 'reviewed_by' not in courses:
+        db.execute(text('ALTER TABLE courses ADD COLUMN reviewed_by VARCHAR'))
+    if 'reviewed_at' not in courses:
+        db.execute(text('ALTER TABLE courses ADD COLUMN reviewed_at FLOAT'))
+    records = {column['name'] for column in inspect(db.get_bind()).get_columns('doctor_records')}
+    if 'signed_up_at' not in records:
+        db.execute(text('ALTER TABLE doctor_records ADD COLUMN signed_up_at FLOAT'))
+    if 'points_origin' not in records:
+        db.execute(text("ALTER TABLE doctor_records ADD COLUMN points_origin VARCHAR DEFAULT '' NOT NULL"))
+    candidates = {column['name'] for column in inspect(db.get_bind()).get_columns('course_candidates')}
+    if 'reviewed_at' not in candidates:
+        db.execute(text('ALTER TABLE course_candidates ADD COLUMN reviewed_at FLOAT'))
+    db.commit()
+
+
+def _add_source_documents_and_job_limits(db):
+    bind = db.get_bind()
+    jobs = {column['name'] for column in inspect(bind).get_columns('ingestion_jobs')}
+    if 'max_results' not in jobs:
+        db.execute(text('ALTER TABLE ingestion_jobs ADD COLUMN max_results INTEGER DEFAULT 5 NOT NULL'))
+    candidates = {column['name'] for column in inspect(bind).get_columns('course_candidates')}
+    if 'version' not in candidates:
+        db.execute(text('ALTER TABLE course_candidates ADD COLUMN version INTEGER DEFAULT 1 NOT NULL'))
+    if 'source_documents' not in inspect(bind).get_table_names():
+        SourceDocument.__table__.create(bind)
     db.commit()
 
 
@@ -210,6 +278,7 @@ class Credentials(BaseModel):
 class ProfileChange(BaseModel):
     name: str = Field(min_length=2, max_length=100)
     city: str = Field(max_length=100)
+    state: str = Field(default='', max_length=100)
     bio: str = Field(max_length=1000)
     public_enabled: bool
 
@@ -228,6 +297,7 @@ class RecordChange(BaseModel):
 
 class NewJob(BaseModel):
     query: str = Field(min_length=3, max_length=300)
+    max_results: int = Field(default=5, ge=1, le=5)
 
     @field_validator('query')
     @classmethod
@@ -257,6 +327,7 @@ class CompleteJob(BaseModel):
 class Review(BaseModel):
     action: Literal['publish', 'reject', 'hold']
     reason: str = Field(default='', max_length=500)
+    version: int = Field(default=0, ge=0)
 
     @model_validator(mode='after')
     def require_hold_reason(self):
@@ -266,7 +337,7 @@ class Review(BaseModel):
 
 
 def profile(account):
-    return {k: getattr(account, k) for k in ('id', 'email', 'name', 'city', 'role', 'bio', 'public_enabled', 'public_slug')}
+    return {k: getattr(account, k) for k in ('id', 'email', 'name', 'city', 'state', 'role', 'bio', 'public_enabled', 'public_slug')}
 
 
 def record_json(record):
@@ -274,7 +345,10 @@ def record_json(record):
         return None
     return {
         k: getattr(record, k)
-        for k in ('signed_up', 'signup_status', 'attended', 'attended_on', 'points', 'credit_label', 'notes', 'public', 'version')
+        for k in (
+            'signed_up', 'signup_status', 'signed_up_at', 'attended', 'attended_on',
+            'points', 'points_origin', 'credit_label', 'notes', 'public', 'version',
+        )
     }
 
 
@@ -283,7 +357,14 @@ def course_json(course, record=None):
     data = {k: v for k, v in (course.data or {}).items() if k not in ('source_text', 'model_weights_url', 'model_license_url')}
     for field in FILTER_FIELDS:
         data[field] = getattr(course, field)
-    return {'id': course.id, **data, 'demo': course.demo, 'verification_status': 'unverified', 'record': record_json(record)}
+    return {
+        'id': course.id,
+        **data,
+        'demo': course.demo,
+        'verification_status': course.verification_status or 'unverified',
+        'reviewed_at': course.reviewed_at,
+        'record': record_json(record),
+    }
 
 
 def audit(db, account_id, action, entity, changed):
@@ -322,11 +403,6 @@ def config():
     return {
         'demo': os.getenv('DEMO_MODE') == 'true',
         'signup_enabled': os.getenv('ALLOW_SIGNUP') == 'true',
-        'typesafe_configured': bool(typesafe_key()),
-        'daily_scrape_topics': len(load_topics()),
-        'local_day': local_today(),
-        'digest_enabled': os.getenv('DIGEST_ENABLED', 'true').lower() == 'true',
-        'mail_provider': (os.getenv('MAIL_PROVIDER') or 'log').strip().lower(),
         'oauth_google': google_oauth(),
     }
 
@@ -430,7 +506,7 @@ def _contains(column, value):
 
 
 @app.get('/api/v1/trainings')
-def trainings(q: str = '', city: str = '', state: str = '', mode: str = '', difficulty: str = '', max_fee: float | None = None, max_fee_myr: float | None = None, min_points: float | None = None, period: Literal['upcoming', 'past', 'all'] = 'upcoming', date_from: date | None = None, date_to: date | None = None, include_unknown: bool = False, latitude: float | None = None, longitude: float | None = None, radius_km: int = 25, page: int = 1, page_size: int = 12, user=Depends(current_user), db: Session = Depends(get_db)):
+def trainings(q: str = '', city: str = '', state: str = '', mode: str = '', difficulty: str = '', max_fee: float | None = None, max_fee_myr: float | None = None, min_points: float | None = None, period: Literal['upcoming', 'past', 'all'] = 'upcoming', date_from: date | None = None, date_to: date | None = None, include_unknown: bool = False, latitude: float | None = None, longitude: float | None = None, radius_km: int = 25, page: int = 1, page_size: int = 20, user=Depends(current_user), db: Session = Depends(get_db)):
     if page < 1 or not 1 <= page_size <= 50 or radius_km not in (10, 25, 50, 100) or (latitude is None) != (longitude is None):
         raise HTTPException(422, 'Invalid pagination or location filter.')
     if latitude is not None and (not -90 <= latitude <= 90 or not -180 <= longitude <= 180):
@@ -550,6 +626,11 @@ def save_record(course_id: str, body: RecordChange, user=Depends(current_user), 
             status = 'not_recorded'
     values['signup_status'] = status
     values['signed_up'] = status == 'signed_up'
+    if status == 'signed_up':
+        values['signed_up_at'] = (record.signed_up_at if record and record.signed_up_at else time.time())
+    elif record:
+        values['signed_up_at'] = record.signed_up_at
+    values['points_origin'] = 'self_reported' if values.get('points') is not None else ''
     if record:
         old = record_json(record)
         comparable = {k: v for k, v in values.items() if k in old}
@@ -577,8 +658,29 @@ def save_record(course_id: str, body: RecordChange, user=Depends(current_user), 
 
 
 @app.get('/api/v1/me/trainings')
-def my_trainings(user=Depends(current_user), db: Session = Depends(get_db)):
-    return {'items': [course_json(c, r) for r, c in db.query(Record, Course).join(Course, Record.course_id == Course.id).filter(Record.account_id == user.id).all()]}
+def my_trainings(
+    signup_status: Literal['not_recorded', 'signed_up', 'cancelled'] | None = None,
+    attended: bool | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    user=Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    if page < 1 or not 1 <= page_size <= 50:
+        raise HTTPException(422, 'Invalid pagination.')
+    query = db.query(Record, Course).join(Course, Record.course_id == Course.id).filter(Record.account_id == user.id)
+    if signup_status:
+        query = query.filter(Record.signup_status == signup_status)
+    if attended is not None:
+        query = query.filter(Record.attended.is_(attended))
+    total = query.count()
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        'items': [course_json(c, r) for r, c in rows],
+        'total': total,
+        'page': page,
+        'page_size': page_size,
+    }
 
 
 @app.get('/api/v1/me/progress')
@@ -709,7 +811,14 @@ def public_profile(slug: str, db: Session = Depends(get_db)):
 
 
 def job_json(job):
-    return {'id':job.id, 'query':job.query, 'status':job.status, 'created_at':job.created_at, 'result':job.result}
+    return {
+        'id': job.id,
+        'query': job.query,
+        'status': job.status,
+        'created_at': job.created_at,
+        'max_results': job.max_results,
+        'result': job.result,
+    }
 
 
 @app.post('/api/v1/admin/ingestion-jobs', status_code=202)
@@ -720,11 +829,11 @@ def create_job(body: NewJob, request: Request, user=Depends(operator), db: Sessi
     request_key = digest(user.id + ':' + key)
     existing = db.query(Job).filter_by(request_key=request_key).first()
     if existing:
-        if existing.query != body.query:
+        if existing.query != body.query or existing.max_results != body.max_results:
             raise HTTPException(409, 'That request key belongs to another query.')
         return job_json(existing)
     throttle(db, 'jobs:' + user.id, 10, 3600)
-    job = Job(account_id=user.id, request_key=request_key, query=body.query)
+    job = Job(account_id=user.id, request_key=request_key, query=body.query, max_results=body.max_results)
     db.add(job)
     try:
         db.commit()
@@ -745,6 +854,15 @@ def jobs(user=Depends(operator), db: Session = Depends(get_db)):
     return {'items': [job_json(j) for j in db.query(Job).order_by(Job.created_at.desc()).limit(50)]}
 
 
+@app.get('/api/v1/admin/ingestion-jobs/{job_id}')
+def job_detail(job_id: str, user=Depends(operator), db: Session = Depends(get_db)):
+    expire_jobs(db)
+    job = db.get(Job, job_id)
+    if not job:
+        raise HTTPException(404, 'Job not found.')
+    return job_json(job)
+
+
 @app.post('/api/v1/admin/ingestion-jobs/{job_id}/retry', status_code=202)
 def retry_job(job_id: str, user=Depends(operator), db: Session = Depends(get_db)):
     expire_jobs(db)
@@ -760,8 +878,18 @@ def retry_job(job_id: str, user=Depends(operator), db: Session = Depends(get_db)
 
 
 @app.get('/api/v1/admin/candidates')
-def candidates(user=Depends(operator), db: Session = Depends(get_db)):
-    return {'items':[{'id':c.id, 'data':c.data, 'status':c.status, 'reason':c.review_reason or ''} for c in db.query(Candidate).filter(Candidate.status.in_(['pending','held'])).limit(100)]}
+def candidates(page: int = 1, page_size: int = 20, user=Depends(operator), db: Session = Depends(get_db)):
+    if page < 1 or not 1 <= page_size <= 50:
+        raise HTTPException(422, 'Invalid pagination.')
+    query = db.query(Candidate).filter(Candidate.status.in_(['pending', 'held'])).order_by(Candidate.id)
+    total = query.count()
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        'items': [{'id': c.id, 'data': c.data, 'status': c.status, 'reason': c.review_reason or '', 'version': c.version} for c in rows],
+        'total': total,
+        'page': page,
+        'page_size': page_size,
+    }
 
 
 @app.post('/api/v1/admin/candidates/{candidate_id}/review')
@@ -770,7 +898,9 @@ def review(candidate_id: str, body: Review, user=Depends(operator), db: Session 
     if not candidate:
         raise HTTPException(404, 'Candidate not found.')
     if candidate.status not in ('pending', 'held'):
-        return {'status': candidate.status, 'reason': candidate.review_reason or ''}
+        return {'status': candidate.status, 'reason': candidate.review_reason or '', 'version': candidate.version}
+    if body.version not in (0, candidate.version):
+        raise HTTPException(409, 'This candidate changed. Refresh before reviewing.')
     reason = body.reason.strip()
     if body.action == 'publish':
         try:
@@ -782,21 +912,39 @@ def review(candidate_id: str, body: Review, user=Depends(operator), db: Session 
         if course:
             fill_course(course, payload)
         else:
-            db.add(fill_course(Course(source_key=candidate.source_key), payload))
+            course = fill_course(Course(source_key=candidate.source_key), payload)
+            db.add(course)
+        db.flush()
+        now = time.time()
+        course.verification_status = 'source_reviewed'
+        course.reviewed_by = user.id
+        course.reviewed_at = now
+        db.query(FieldEvidence).filter_by(course_id=course.id).delete()
+        for field, excerpt in (payload.get('evidence') or {}).items():
+            db.add(FieldEvidence(
+                course_id=course.id,
+                candidate_id=candidate.id,
+                field_name=field,
+                excerpt=str(excerpt)[:2000],
+                reviewed_by=user.id,
+                reviewed_at=now,
+            ))
         candidate.status = 'published'
+        candidate.reviewed_at = now
     elif body.action == 'hold':
         candidate.status = 'held'
     else:
         candidate.status = 'rejected'
     candidate.review_reason = reason
     candidate.reviewed_by = user.id
+    candidate.version = candidate.version + 1
     audit(db, user.id, 'candidate_' + candidate.status, candidate.id, {'reason': reason})
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, 'Another review published this session. Refresh.')
-    return {'status': candidate.status, 'reason': candidate.review_reason}
+    return {'status': candidate.status, 'reason': candidate.review_reason, 'version': candidate.version}
 
 
 @app.post('/internal/v1/jobs/claim', dependencies=[Depends(worker)])
@@ -811,7 +959,7 @@ def claim(db: Session = Depends(get_db)):
     db.commit()
     if result.rowcount != 1:
         return Response(status_code=204)
-    return {'id':job.id, 'query':job.query, 'lease_token':token}
+    return {'id': job.id, 'query': job.query, 'max_results': job.max_results, 'lease_token': token}
 
 
 @app.post('/internal/v1/jobs/{job_id}/heartbeat', dependencies=[Depends(worker)])
@@ -855,6 +1003,18 @@ def complete(job_id: str, body: CompleteJob, db: Session = Depends(get_db)):
         'usage': body.usage,
         'sources': [item.model_dump() for item in body.sources],
     }
+    for item in body.sources:
+        url = item.url.split('#')[0]
+        digest_key = digest(url + '|' + (item.snippet or '')[:500])
+        if not db.query(SourceDocument).filter_by(canonical_url=url, content_hash=digest_key).first():
+            db.add(SourceDocument(
+                job_id=job.id,
+                canonical_url=url,
+                content_hash=digest_key,
+                extraction_status=item.extraction_status,
+                title=item.title[:300],
+                snippet=item.snippet[:2000],
+            ))
     db.commit()
     return {'status': job.status}
 

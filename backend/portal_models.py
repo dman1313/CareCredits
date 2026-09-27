@@ -1,10 +1,10 @@
-"""Portal schema v5. Sign-up status, attendance history, digests, certificates."""
+"""Portal schema v9. Source documents, job max_results, candidate review version."""
 import time
 import uuid
 from sqlalchemy import Column, String, Float, Boolean, Integer, JSON, ForeignKey, UniqueConstraint
 from database import Base
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 9
 
 
 def uid():
@@ -13,11 +13,15 @@ def uid():
 
 class Account(Base):
     __tablename__ = 'accounts'
+    __table_args__ = (UniqueConstraint('identity_issuer', 'identity_subject'),)
     id = Column(String, primary_key=True, default=uid)
     email = Column(String, unique=True, nullable=False)
     name = Column(String, nullable=False)
     password_hash = Column(String, nullable=False)
     city = Column(String, default='Kuala Lumpur', nullable=False)
+    state = Column(String, default='', nullable=False)
+    identity_issuer = Column(String, nullable=True)
+    identity_subject = Column(String, nullable=True)
     role = Column(String, default='doctor', nullable=False)
     public_enabled = Column(Boolean, default=False, nullable=False)
     public_slug = Column(String, unique=True, default=uid, nullable=False)
@@ -53,6 +57,9 @@ class Course(Base):
     points = Column(Float, nullable=True)
     credit_label = Column(String, nullable=True)
     difficulty = Column(String, nullable=True, index=True)
+    verification_status = Column(String, default='unverified', nullable=False)
+    reviewed_by = Column(String, nullable=True)
+    reviewed_at = Column(Float, nullable=True)
 
 
 FILTER_FIELDS = (
@@ -103,6 +110,8 @@ class Record(Base):
     notes = Column(String, default='', nullable=False)
     public = Column(Boolean, default=False, nullable=False)
     version = Column(Integer, default=1, nullable=False)
+    signed_up_at = Column(Float, nullable=True)
+    points_origin = Column(String, default='', nullable=False)
 
 
 class RecordHistory(Base):
@@ -126,6 +135,7 @@ class Job(Base):
     lease_until = Column(Float, nullable=True)
     started_at = Column(Float, nullable=True)
     result = Column(JSON, nullable=True)
+    max_results = Column(Integer, default=5, nullable=False)
 
 
 class Candidate(Base):
@@ -137,7 +147,33 @@ class Candidate(Base):
     data = Column(JSON, nullable=False)
     status = Column(String, default='pending', nullable=False)
     reviewed_by = Column(String, nullable=True)
+    reviewed_at = Column(Float, nullable=True)
     review_reason = Column(String, default='', nullable=False)
+    version = Column(Integer, default=1, nullable=False)
+
+
+class SourceDocument(Base):
+    __tablename__ = 'source_documents'
+    __table_args__ = (UniqueConstraint('canonical_url', 'content_hash'),)
+    id = Column(String, primary_key=True, default=uid)
+    job_id = Column(String, ForeignKey('ingestion_jobs.id'), nullable=True, index=True)
+    canonical_url = Column(String, nullable=False)
+    content_hash = Column(String, nullable=False)
+    retrieved_at = Column(Float, default=time.time, nullable=False)
+    extraction_status = Column(String, default='unknown', nullable=False)
+    title = Column(String, default='', nullable=False)
+    snippet = Column(String, default='', nullable=False)
+
+
+class FieldEvidence(Base):
+    __tablename__ = 'field_evidence'
+    id = Column(String, primary_key=True, default=uid)
+    course_id = Column(String, ForeignKey('courses.id'), nullable=True, index=True)
+    candidate_id = Column(String, ForeignKey('course_candidates.id'), nullable=True, index=True)
+    field_name = Column(String, nullable=False)
+    excerpt = Column(String, nullable=False)
+    reviewed_by = Column(String, nullable=True)
+    reviewed_at = Column(Float, nullable=True)
 
 
 class Audit(Base):

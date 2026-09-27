@@ -41,6 +41,25 @@ class OAuthTests(unittest.TestCase):
         self.assertIn('accounts.google.com', result.headers['location'])
         self.assertIn('oauth_state', result.headers.get('set-cookie', ''))
 
+    def test_upsert_stores_google_subject(self):
+        from database import Base, SessionLocal, engine
+        from oauth import upsert_account
+        from portal_models import Account
+        from security import password_hash
+        Base.metadata.create_all(engine)
+        with SessionLocal() as db:
+            if not db.query(Account).first():
+                db.add(Account(email='seed@example.com', name='Seed', password_hash=password_hash('Testing-strong-password')))
+                db.commit()
+            created = upsert_account(db, {'email': 'gp@example.com', 'name': 'Dr GP', 'subject': 'google-sub-1'}, True)
+            db.commit()
+            stored = db.query(Account).filter_by(email='gp@example.com').one()
+            self.assertEqual(stored.id, created.id)
+            self.assertEqual(stored.identity_issuer, 'https://accounts.google.com')
+            self.assertEqual(stored.identity_subject, 'google-sub-1')
+            again = upsert_account(db, {'email': 'other@example.com', 'name': 'Other', 'subject': 'google-sub-1'}, True)
+            self.assertEqual(again.id, stored.id)
+
 
 if __name__ == '__main__':
     unittest.main()

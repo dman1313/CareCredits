@@ -82,12 +82,13 @@ def catalogue_pipeline(client, job_id, candidates):
 def run_job(job, heartbeat, client=None):
     warnings, candidates, sources = [], [], []
     try:
-        result = discover(job['query'], 5)
+        limit = max(1, min(int(job.get('max_results') or 5), 5))
+        result = discover(job['query'], limit)
         warnings.extend(result['warnings'])
         sources = result['sources']
         if firehose_configured():
             try:
-                extra = firehose_discover(job['query'], 5)
+                extra = firehose_discover(job['query'], limit)
                 warnings.extend(extra.get('warnings') or [])
                 sources = merge_sources(sources, extra.get('sources') or [])
             except FirehoseError as exc:

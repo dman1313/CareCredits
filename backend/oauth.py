@@ -91,8 +91,17 @@ def exchange_code(code: str, client: httpx.Client | None = None) -> dict:
 
 
 def upsert_account(db, identity: dict, allow_create: bool) -> Account:
-    account = db.query(Account).filter_by(email=identity['email']).first()
+    issuer = 'https://accounts.google.com'
+    subject = (identity.get('subject') or '').strip() or None
+    account = None
+    if subject:
+        account = db.query(Account).filter_by(identity_issuer=issuer, identity_subject=subject).first()
+    if not account:
+        account = db.query(Account).filter_by(email=identity['email']).first()
     if account:
+        if subject and not account.identity_subject:
+            account.identity_issuer = issuer
+            account.identity_subject = subject
         return account
     if not allow_create:
         raise OAuthError('Registration is disabled. Contact the application operator.', 403)
@@ -100,6 +109,8 @@ def upsert_account(db, identity: dict, allow_create: bool) -> Account:
         email=identity['email'],
         name=identity['name'] or 'Doctor',
         password_hash=password_hash(secrets.token_urlsafe(32)),
+        identity_issuer=issuer if subject else None,
+        identity_subject=subject,
     )
     db.add(account)
     db.flush()

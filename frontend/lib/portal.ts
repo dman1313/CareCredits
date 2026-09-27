@@ -3,10 +3,23 @@ export type User = {
   name: string;
   email: string;
   city: string;
+  state: string;
   bio: string;
   role: string;
   public_enabled: boolean;
   public_slug: string;
+};
+
+export type Suggestion = {
+  id: string;
+  title: string;
+  provider?: string;
+  start_date?: string | null;
+  city?: string | null;
+  mode?: string;
+  fee?: number | null;
+  currency?: string | null;
+  reason?: string;
 };
 
 export type SignupStatus = 'not_recorded' | 'signed_up' | 'cancelled';
@@ -21,6 +34,8 @@ export type RecordData = {
   notes: string;
   public: boolean;
   version: number;
+  signed_up_at?: number | null;
+  points_origin?: string;
 };
 
 export type RecordHistoryItem = {
@@ -39,6 +54,7 @@ export type Course = {
   description: string;
   start_date: string | null;
   city: string | null;
+  state?: string | null;
   mode: string;
   fee: number | null;
   currency: string | null;
@@ -51,6 +67,8 @@ export type Course = {
   evidence: Record<string, string>;
   distance_km?: number | null;
   demo: boolean;
+  verification_status?: string;
+  reviewed_at?: number | null;
   record: RecordData | null;
 };
 
@@ -74,10 +92,11 @@ export type Job = {
   id: string;
   query: string;
   status: string;
+  max_results?: number;
   result: { warnings?: string[]; candidate_count?: number; sources?: TavilySource[] } | null;
 };
 
-export type Candidate = { id: string; data: Course; status: string; reason?: string };
+export type Candidate = { id: string; data: Course; status: string; reason?: string; version?: number };
 
 export type WorkspaceTab =
   | 'Overview'
@@ -116,6 +135,19 @@ export function feeLabel(c: Course) {
 
 export function modeName(value: string) {
   return ({ in_person: 'In person', online: 'Online', hybrid: 'Hybrid' }[value] || value);
+}
+
+export function locationLabel(course: { mode: string; city: string | null; state?: string | null }) {
+  if (course.city) {
+    return course.state ? `${course.city}, ${course.state}` : course.city;
+  }
+  return course.mode === 'online' ? 'Online' : 'Location not listed';
+}
+
+export function distanceLabel(course: { distance_km?: number | null; mode: string }, nearby = false) {
+  if (course.distance_km != null) return ` · ~${course.distance_km} km`;
+  if (nearby && course.mode !== 'online') return ' · distance unavailable';
+  return '';
 }
 
 export function todayLocal() {

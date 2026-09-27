@@ -36,6 +36,14 @@ export function ProfilePanel({
             <input value={user.city} onChange={(e) => onUser({ ...user, city: e.target.value })} />
           </label>
           <label>
+            State
+            <input
+              value={user.state || ''}
+              placeholder="Optional, e.g. Selangor"
+              onChange={(e) => onUser({ ...user, state: e.target.value })}
+            />
+          </label>
+          <label>
             Short introduction
             <textarea
               value={user.bio}

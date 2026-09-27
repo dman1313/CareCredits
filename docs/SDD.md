@@ -1,6 +1,6 @@
 # CareCredits — spec-driven development specification
 
-Version: 0.9 · 2026-09-27 · Status: implementation specification; portal and three-service split exist on this branch; DEC-09–11, BUILD-10, cancelled signup_status, attendance history, error envelopes, and optional Google OAuth are implemented. Live TypeSafe Jev is wired when `TYPESAFE_API_KEY` is set. Open-weight model DEMO-01 still needs owner model keys.
+Version: 0.10 · 2026-09-27 · Status: implementation specification; portal and three-service split exist on this branch; DEC-09–11, BUILD-10, cancelled signup_status, attendance history, error envelopes, optional Google OAuth, main-portal digest/suggestions/certificate, doctor city/state profile, and GET job-by-id are implemented. Live TypeSafe Jev is wired when `TYPESAFE_API_KEY` is set. Open-weight model DEMO-01 still needs owner model keys.
 
 This document expands the initial Tavily discovery specification using the owner's supplied meeting summary. It defines the full Malaysia MVP and the contracts needed to build it. It does not claim that the described application is already implemented.
 
@@ -165,7 +165,7 @@ Before choosing a model, record its identifier/version, publisher, weights sourc
 
 The model must accept source text and return structured event candidates, handle relevant English/Malay text, preserve source-language evidence, and support the selected deployment budget. Run an evaluation against reviewed examples before adopting it. No closed-weight fallback is allowed silently. Model failure leaves evidence in review or marks the job partial/failed; a demo fixture must be labelled.
 
-Earlier Nebius intent is preserved: confirm whether Nebius is required for inference, application hosting, or both before locking deployment. Keep `MODEL_BASE_URL`, `MODEL_ID`, and `MODEL_API_KEY` configurable as a proposed interface; these variables and a model adapter are not implemented yet.
+Earlier Nebius intent is preserved: confirm whether Nebius is required for inference, application hosting, or both before locking deployment. Keep `MODEL_BASE_URL`, `MODEL_ID`, and `MODEL_API_KEY` configurable; the scraper adapter is implemented. A live DEMO-01 run still needs owner keys.
 
 ## 7. Functional requirements
 
@@ -175,7 +175,7 @@ Statuses describe this branch: **existing** means implemented code, not live-pro
 | --- | --- | --- | --- |
 | AUTH-01 | Doctor sign-in/out | Selected provider session is validated server-side; logout invalidates local session; unauthenticated personal requests return 401 | Existing email/password sessions; optional Google OAuth when `GOOGLE_CLIENT_*` are set (OPEN-04 still allows another provider) |
 | AUTH-02 | Ownership isolation | A doctor cannot read or change another doctor's profile, registrations, attendance, notes or totals by changing IDs | Existing; covered by portal isolation tests |
-| GEO-01 | Malaysia location | City/state entry works without GPS; exact coordinates are optional; non-Malaysian in-person events cannot publish | Existing city/state profile and catalogue filters; extraction rejects non-MY country |
+| GEO-01 | Malaysia location | City/state entry works without GPS; exact coordinates are optional; non-Malaysian in-person events cannot publish | Existing city/state profile fields and catalogue filters; extraction rejects non-MY country |
 | GEO-02 | Nearby search | Use distance only when user and venue coordinates exist; otherwise use city/state and show distance unavailable | Existing; distance is approximate and omitted when venue coordinates are missing |
 | DISC-01 | Real Tavily Search | Bounded request uses Search for Malaysian medical training sources | Existing in scraper; live call unverified |
 | DISC-02 | Real Tavily Extract | Extract at most five unique returned URLs; empty Search results skip Extract | Existing in scraper; live call unverified |
@@ -184,8 +184,8 @@ Statuses describe this branch: **existing** means implemented code, not live-pro
 | DISC-05 | Bounded work | Query 3–300 trimmed characters; 1–5 search results; 30 seconds per Tavily call; no automatic paid retries | Existing; retain |
 | AI-01 | Open-weight extraction | Approved open-weight model produces validated candidates with field-level excerpts and model/version metadata | Adapter existing; model choice and live run remain OPEN-03 / DEMO-01 |
 | EVT-01 | Required training fields | Details show title, provider, session dates, delivery mode/location, CPD points, prerequisites, difficulty and fees; unknowns are explicit | Existing in catalogue and detail UI |
-| EVT-02 | Event identity and updates | Same source/session does not duplicate; different sessions on one page remain distinct; ambiguous matches require review | Partial: source_key deduplicates; no separate Training/Session tables |
-| EVT-03 | Claim verification | Advertised points, publication and accreditation verification remain separate; verified claims have evidence/reviewer/time | Partial: publication requires source excerpts and stays `unverified` |
+| EVT-02 | Event identity and updates | Same source/session does not duplicate; different sessions on one page remain distinct; ambiguous matches require review | Existing: `source_key` is `url|title|start_date`. Flattened `Course` is the intentional MVP of Training+Session (known merge limit: no shared training parent) |
+| EVT-03 | Claim verification | Advertised points, publication and accreditation verification remain separate; verified claims have evidence/reviewer/time | Existing: operator publish writes `field_evidence` with reviewer/time and sets `source_reviewed`. Never accreditation |
 | FIND-01 | Catalogue filters | Combine text, date, city/state or radius, mode, points, difficulty and fee filters with pagination; clearing filters resets results | Existing SQL filters on indexed columns; unknown dates/fees/points need `include_unknown` |
 | REG-01 | Sign-up record | Explicit user action records external sign-up once per doctor/session; opening provider link does not create a record | Implemented `signup_status` `not_recorded` / `signed_up` / `cancelled`; cancelling does not erase attendance |
 | ATT-01 | Attendance record | User can mark eligible past/started session attended and correct it; future sessions cannot be marked attended | Existing; optimistic versioning; corrections append `record_history` |
@@ -193,7 +193,7 @@ Statuses describe this branch: **existing** means implemented code, not live-pro
 | PROG-02 | Suggested next courses | Portal shows upcoming owned-catalogue sessions filtered by doctor profile (city/mode) and recent gaps; copy is advisory (“consider”), never a compliance verdict | Implemented |
 | NTF-01 | Biweekly digest email | Opted-in doctors receive an email every 14 days with upcoming events, known prices, and current recorded CPD totals; unsubscribe works; no Tavily call per send | Implemented (MAIL_PROVIDER=log default; SMTP optional) |
 | CERT-01 | Printable affiliation certificate | Doctor can download/print a CareCredits PDF/statement naming them, issue date, recorded CPD total for the selected year, and clear non-regulator disclaimer; suitable to share with organisations | Implemented (printable HTML) |
-| UI-01 | Full portal | Sign-in, discovery, detail, signed-up/attended lists and progress have loading, empty, error and retry states | Existing Next.js portal, including labelled demo fixtures |
+| UI-01 | Full portal | Sign-in, discovery, detail, signed-up/attended lists and progress have loading, empty, error and retry states | Existing Next.js portal: digest opt-in, suggestions, printable certificate, retry on catalogue errors, labelled demo fixtures |
 | SEC-01 | Private secret setup | Hidden input saves ignored owner-readable `.env`; no key reaches frontend or logs | Existing `scripts/setup_integrations.py`; Tavily/model keys stay on scraper |
 | SEC-02 | Operator/service access | Doctor cannot start jobs or publish; scraper token cannot access personal data; missing integration configuration fails explicitly | Existing operator role and scraper bearer token |
 | OPS-01 | Controlled ingestion | Durable leased jobs, bounded workers, pagination, usage metadata and an explicit run budget; doctor search never calls Tavily | Existing claim/heartbeat/complete plus explicit interrupted-job retry |
@@ -249,7 +249,7 @@ Same URL can describe many sessions. Deduplicate source documents independently 
 
 ## 10. Target API and service contracts
 
-All routes in this section are **planned** except the transitional route in section 11. JSON uses snake_case. Doctor authentication follows the selected identity provider; operator and scraper permissions are distinct. Mutation requests use server-side authorization and validation, including CSRF protection if cookie sessions are used.
+Routes in this section are implemented on this branch unless marked pending. JSON uses snake_case. Doctor authentication follows the selected identity provider; operator and scraper permissions are distinct. Mutation requests use server-side authorization and validation, including CSRF protection if cookie sessions are used.
 
 | Method and route | Caller | Contract |
 | --- | --- | --- |
@@ -297,7 +297,7 @@ Defaults: one active worker, five source pages per job, maximum ten manually sta
 
 This branch implements the three-service target: FastAPI owns PostgreSQL (or SQLite demo), the scraper owns Tavily plus model extraction, and the Next.js portal talks only to `/api/v1`. The transitional `POST /discovery/search` adapter was moved to `scraper/tavily.py` and the synchronous operator endpoint was removed rather than given a job-shaped response.
 
-Doctor journeys use httponly session cookies, CSRF origin/`X-Care-Client` checks, catalogue filters, personal sign-up/attendance records, year progress, catalogue suggestions, opt-in biweekly digests, printable affiliation certificates, and an optional public profile. Operators create idempotent ingestion jobs; the scraper claims a 120-second lease, calls Tavily Search/Extract, and stores source URLs on the job even when model extraction is not configured. Candidates still require source excerpts before publish. Interrupted jobs stay interrupted until `POST /api/v1/admin/ingestion-jobs/{id}/retry`. Daily scrape enqueue (OPS-02) and catalogue connect/lookup/decide/save with Jev (DEC-11) are wired. Live TypeSafe uses `TYPESAFE_API_KEY` when set. Open-weight model DEMO-01 still requires owner model keys.
+Doctor journeys use httponly session cookies, CSRF origin/`X-Care-Client` checks, catalogue filters, personal sign-up/attendance records, year progress, catalogue suggestions, opt-in biweekly digests, printable affiliation certificates, city/state profile, and an optional public profile. The main workspace (`/`) now exposes digest/suggestions/certificate; `/live` remains a compact demo shell. Operators create idempotent ingestion jobs; the scraper claims a 120-second lease, calls Tavily Search/Extract, and stores source URLs on the job even when model extraction is not configured. Candidates still require source excerpts before publish. Interrupted jobs stay interrupted until `POST /api/v1/admin/ingestion-jobs/{id}/retry`. Daily scrape enqueue (OPS-02) and catalogue connect/lookup/decide/save with Jev (DEC-11) are wired. Live TypeSafe uses `TYPESAFE_API_KEY` when set. Open-weight model DEMO-01 still requires owner model keys.
 
 Mocked tests cover Tavily bounds, extraction validation, two-user isolation, filter semantics, nearby city fallback, unknown-value inclusion, explicit job retry, digest opt-in/unsubscribe/send, suggestions, certificates, error envelopes, cancelled signup, and Google OAuth start. They do not spend API credits. No live open-weight model run has been recorded (DEMO-01). Identity is local email/password plus optional Google OAuth. Candidate `hold` requires a review reason and stays out of the catalogue until publish. Target `{error:{code,message,request_id}}` envelopes and cancelled `signup_status` are implemented. Demo fixtures load only when `DEMO_MODE=true` outside production and are labelled fictional.
 
@@ -320,12 +320,12 @@ Mocked tests cover Tavily bounds, extraction validation, two-user isolation, fil
 | T-01 | AUTH-01, AUTH-02, SEC-02 | Sign-in/out plus two-user isolation; changing record IDs never exposes another user's data; doctors cannot ingest or publish |
 | T-02 | DISC-01, DISC-02, DISC-05 | Mock Search/Extract contract; deduplicate URLs; no Extract on empty Search; input/result/time bounds preserved after migration |
 | T-03 | DISC-03, DISC-04, OPS-01 | Partial extraction, malformed payload, missing key, timeout, 401/429/credit limits, process crash; preserve evidence and accurate terminal state |
-| T-04 | AI-01, EVT-01, EVT-03 | Reviewed 20-page fixture set including English/Malay, missing fees/points, several sessions, ambiguous dates and malicious instructions; all accepted outputs schema-valid, every published non-null factual field has supporting evidence, no unsupported points/fees published |
+| T-04 | AI-01, EVT-01, EVT-03 | Reviewed 20-page fixture set including English/Malay, missing fees/points, several sessions, ambiguous dates and malicious instructions; all accepted outputs schema-valid, every published non-null factual field has supporting evidence, no unsupported points/fees published. Mocked evaluation is in `backend/tests/test_t04_fixtures.py`; live model accuracy remains DEMO-01 |
 | T-05 | EVT-02, OPS-01 | Re-import same page, changed content, several sessions per page, expired lease, duplicate completion and concurrent workers; no double publication or silent merge |
 | T-06 | GEO-01, GEO-02, FIND-01 | Malaysia/non-Malaysia, radius boundary, denied location, missing venue coordinates, online eligibility, unknown fees and pagination; results match defined filters |
 | T-07 | REG-01, ATT-01, PROG-01 | Link click does not sign up; repeated save does not duplicate; future attendance rejected; corrections and year boundary recalculate once; unknown/unmapped credits excluded visibly |
 | T-08 | UI-01 | Keyboard-accessible sign-in/search/detail/portal, readable mobile layout, loading/empty/error states and retry; no fake success toast |
-| T-09 | SEC-01, SEC-02, OPS-01 | Check built client assets/logs for test secrets, internal route access, database ownership, origin policy and spending limits |
+| T-09 | SEC-01, SEC-02, OPS-01 | Check built client assets/logs for test secrets, internal route access, database ownership, origin policy and spending limits. Source-tree secret scan and origin default are covered by `backend/tests/test_t09_secrets.py`; a live built-asset pass remains |
 | T-10 | DEMO-01, AI-01 | Real Tavily and selected open-weight inference calls; preserve redacted request evidence and model identity; demonstrate publish/search/track flow |
 
 T-04 reports field accuracy and rejection rate in addition to its publication gate; a review step must not conceal a nonfunctional extractor. Empty/rejected output for all pages does not pass. Require correct usable candidates from at least 8 of 10 clearly specified, in-scope event fixtures; include the other 10 as edge/negative cases.
@@ -339,10 +339,10 @@ Mock tests run without secrets. Live tests are separate, explicitly use configur
 | BUILD-01 | None | Blocked on OPEN-01–04. Obtain official rules; resolve Nebius, identity provider and eligible open-weight model; document decisions without claiming unverified compliance |
 | BUILD-02 | None | Existing on branch. Split Python scraper from backend; add containers, narrow secrets, durable job schema/contracts; mocked T-02/T-03 pass; interrupted-job retry added; concurrent-worker stress not live |
 | BUILD-03 | BUILD-01 identity choice | Existing local sessions and isolation tests; optional Google OAuth implemented. Another provider remains OPEN-04. Unauthenticated user endpoints removed |
-| BUILD-04 | BUILD-01 model choice, BUILD-02 | Adapter and evidence gate exist; T-04 20-page fixture evaluation not run |
-| BUILD-05 | BUILD-02, BUILD-04 | Existing publish + SQL catalogue filters on indexed columns; evidence remains in JSON. Training/Session are not separate tables yet |
+| BUILD-04 | BUILD-01 model choice, BUILD-02 | Adapter, evidence gate, and mocked T-04 20-page fixture evaluation exist; live accuracy still DEMO-01 |
+| BUILD-05 | BUILD-02, BUILD-04 | Existing publish + SQL catalogue filters on indexed columns; evidence remains in JSON. Flattened `Course` is the documented MVP of Training+Session |
 | BUILD-06 | BUILD-03, BUILD-05 | Existing records and progress; `signup_status` includes cancelled; `record_history` stores corrections |
-| BUILD-07 | BUILD-03, BUILD-05, BUILD-06 | Existing portal; demo fixtures labelled; T-08/T-09 not fully exercised in a browser/security pass |
+| BUILD-07 | BUILD-03, BUILD-05, BUILD-06 | Existing portal including digest/suggestions/certificate and retry; demo fixtures labelled; T-08/T-09 still need a live browser/security pass |
 | BUILD-08 | BUILD-01–07 | Not started. Run three-service deployment, live integration and complete demo; record T-10 evidence and known limitations |
 | BUILD-09 | BUILD-02, BUILD-05, OPEN-05, OPEN-09 | Done. Curated `config/scrape_topics.json` + daily enqueue (OPS-02) with `DAILY_SCRAPE_JOB_CEILING`; doctors search the owned catalogue only |
 | BUILD-10 | BUILD-06, OPEN-10 | Done. Digest preferences + biweekly send (NTF-01), catalogue suggestions (PROG-02), printable affiliation certificate (CERT-01) with non-regulator disclaimer. Default mailer is file log; set MAIL_PROVIDER=smtp for real email |
@@ -390,7 +390,7 @@ Ordered for a strong hackathon demo without dropping confirmed DEC-01–11 scope
 6. **Engagement layer (DEC-10 / BUILD-10).** After core portal works: credit suggestions, biweekly digest (pick OPEN-10 mailer), and printable affiliation certificates with honest disclaimers.
 7. **Finish operator review polish that demo depends on.** Candidate `hold` with a required reason and `scripts/happy_path_review.py` are in place. Remaining polish is optional copy for reject reasons during the live DEMO-01 run.
 8. **Close personal-tracking gaps that judges will poke.** `signup_status` cancelled state, attendance change-history, and honest UI copy that self-report ≠ regulator credit.
-9. **Schema honesty pass.** Either introduce separate Training/Session tables (EVT-02) or document the current flattened model as intentional MVP with known merge limits.
+9. **Schema honesty pass.** Done as documentation: flattened `Course` is the intentional MVP of Training+Session. Identity is `source_key=url|title|start_date`; a later parent Training table can group sessions without changing doctor APIs.
 10. **Identity path.** Keep local email/password for internal demos if needed, but decide OAuth (OPEN-04) before any doctor pilot outside the team.
 11. **Hardening before any shared URL.** CSRF/origin already present; finish browser/security pass (T-08/T-09), narrow CORS, and confirm secrets never reach the client.
 12. **Do not expand MVP** into payments, third-party certificate OCR, auto licence compliance, per-user live Tavily search, or silent closed-weight models.
@@ -437,3 +437,6 @@ v0.5 records DEC-09: agents scrape medical training sources daily into CareCredi
 v0.6 records DEC-10: credit tracking updates, suggested next courses from the owned catalogue, opt-in biweekly emails (upcoming events + prices + credit totals), and printable CareCredits affiliation certificates for organisations — with explicit non-regulator disclaimers. Adds PROG-02, NTF-01, CERT-01, BUILD-10, OPEN-10.
 v0.7 records DEC-11: API connect endpoints to the owned database; Jev existence judgments (`exists` / `new` / `uncertain`); save new events through the backend only. Adds CAT-01, CAT-02, JEV-01, BUILD-11, OPEN-11.
 v0.8 records BUILD-10 delivery: digest preferences + biweekly send loop (log/SMTP), suggestions endpoint, printable affiliation certificates; schema v4.
+v0.10 wires DEC-10 into the main workspace UI, adds doctor `state`, GET `/api/v1/admin/ingestion-jobs/{id}`, mocked T-04 fixtures, multi-session identity tests, and documents flattened Course as the EVT-02 MVP; schema v6.
+v0.11 stores Google `identity_issuer`/`identity_subject`, shrinks public `/config` to login flags, adds operator daily-scrape control, filter reset, history timeline, future-attendance UI gate, and T-06/T-07 radius/year/detail-does-not-signup tests; schema v7.
+v0.12 adds FieldEvidence + source_reviewed (EVT-03), signed_up_at/points_origin, paginated `/me/trainings`, progress year selector, and concurrent job-claim coverage; schema v8.

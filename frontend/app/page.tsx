@@ -19,7 +19,7 @@ import {
 import { Brand } from '@/components/Brand';
 import { LoginForm } from '@/components/LoginForm';
 import { OverviewPanel } from '@/components/OverviewPanel';
-import { DiscoverPanel, DiscoverFilters } from '@/components/DiscoverPanel';
+import { DiscoverPanel, DiscoverFilters, LearningFilters } from '@/components/DiscoverPanel';
 import { ProfilePanel } from '@/components/ProfilePanel';
 import { IngestionPanel } from '@/components/IngestionPanel';
 import { TrainingDetail } from '@/components/TrainingDetail';
@@ -31,6 +31,7 @@ import {
   Job,
   Progress,
   RecordData,
+  Suggestion,
   User,
   WorkspaceTab,
 } from '@/lib/portal';
@@ -76,6 +77,15 @@ export default function Home() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [jobQuery, setJobQuery] = useState('GP CPD courses Kuala Lumpur');
   const [submitting, setSubmitting] = useState(false);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [digestOptIn, setDigestOptIn] = useState(false);
+  const [digestBusy, setDigestBusy] = useState(false);
+  const [certBusy, setCertBusy] = useState(false);
+  const [year, setYear] = useState(() => new Date().getFullYear());
+  const [jobMaxResults, setJobMaxResults] = useState(5);
+  const [candidateTotal, setCandidateTotal] = useState(0);
+  const [learning, setLearning] = useState<LearningFilters>({ signupStatus: '', attended: '', page: 1 });
+  const [recordsTotal, setRecordsTotal] = useState(0);
   const jobKey = useRef('');
 
   useEffect(() => {
@@ -90,10 +100,29 @@ export default function Home() {
   }, []);
 
   const refreshRecords = useCallback(async () => {
-    const [r, p] = await Promise.all([api('/me/trainings'), api('/me/progress')]);
-    setRecords(r.items);
-    setProgress(p);
-  }, []);
+    const params = new URLSearchParams({
+      page: String(learning.page),
+      page_size: '9',
+    });
+    if (learning.signupStatus) params.set('signup_status', learning.signupStatus);
+    if (learning.attended) params.set('attended', learning.attended);
+    setLoading(true);
+    try {
+      const [r, p, digest, next] = await Promise.all([
+        api('/me/trainings?' + params),
+        api('/me/progress?year=' + year),
+        api('/me/digest').catch(() => ({ opted_in: false })),
+        api('/me/suggestions').catch(() => ({ items: [] })),
+      ]);
+      setRecords(r.items);
+      setRecordsTotal(r.total || 0);
+      setProgress(p);
+      setDigestOptIn(!!digest.opted_in);
+      setSuggestions(next.items || []);
+    } finally {
+      setLoading(false);
+    }
+  }, [year, learning]);
 
   const loadCourses = useCallback(async () => {
     setLoading(true);
@@ -140,9 +169,10 @@ export default function Home() {
   }, [user, loadCourses]);
 
   const refreshOperator = useCallback(async () => {
-    const [j, c] = await Promise.all([api('/admin/ingestion-jobs'), api('/admin/candidates')]);
+    const [j, c] = await Promise.all([api('/admin/ingestion-jobs'), api('/admin/candidates?page=1&page_size=20')]);
     setJobs(j.items);
     setCandidates(c.items);
+    setCandidateTotal(c.total || c.items.length);
   }, []);
 
   useEffect(() => {
@@ -231,6 +261,7 @@ export default function Home() {
         body: JSON.stringify({
           name: user.name,
           city: user.city,
+          state: user.state || '',
           bio: user.bio,
           public_enabled: user.public_enabled,
         }),
@@ -271,7 +302,7 @@ export default function Home() {
       await api('/admin/ingestion-jobs', {
         method: 'POST',
         headers: { 'Idempotency-Key': jobKey.current },
-        body: JSON.stringify({ query: jobQuery }),
+        body: JSON.stringify({ query: jobQuery, max_results: jobMaxResults }),
       });
       jobKey.current = '';
       await refreshOperator();
@@ -283,12 +314,12 @@ export default function Home() {
     }
   }
 
-  async function review(id: string, action: string, reason = '') {
+  async function review(id: string, action: string, reason = '', version = 0) {
     setSaving(true);
     try {
       await api('/admin/candidates/' + id + '/review', {
         method: 'POST',
-        body: JSON.stringify({ action, reason }),
+        body: JSON.stringify({ action, reason, version }),
       });
       await refreshOperator();
       await loadCourses();
@@ -340,6 +371,9 @@ export default function Home() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
       {navOpen && <button className="nav-shade" aria-label="Close navigation" onClick={() => setNavOpen(false)} />}
       <aside className={'sidebar ' + (navOpen ? 'is-open' : '')}>
         <Brand />
@@ -349,6 +383,7 @@ export default function Home() {
             <button
               key={label}
               className={'nav-item ' + (tab === label ? 'active' : '')}
+              aria-current={tab === label ? 'page' : undefined}
               onClick={() => navigate(label)}
             >
               <Icon size={19} />
@@ -361,6 +396,7 @@ export default function Home() {
             <p className="nav-label">MANAGE</p>
             <button
               className={'nav-item ' + (tab === 'Ingestion' ? 'active' : '')}
+              aria-current={tab === 'Ingestion' ? 'page' : undefined}
               onClick={() => navigate('Ingestion')}
             >
               <Settings2 size={19} />
@@ -403,7 +439,7 @@ export default function Home() {
             <MapPin size={14} /> Malaysia
           </span>
         </header>
-        <div className="content">
+        <div className="content" id="main-content">
           {demo && (
             <div className="demo-banner">
               <span className="badge">DEMO</span> Example courses are fictional. Live discovery needs configured Tavily
@@ -413,6 +449,9 @@ export default function Home() {
           {error && (
             <div className="alert error" role="alert">
               {error}
+              <button className="text-btn" type="button" onClick={() => loadCourses()}>
+                Retry
+              </button>
               <button className="icon-btn" aria-label="Dismiss error" onClick={() => setError('')}>
                 <X size={16} />
               </button>
@@ -431,10 +470,47 @@ export default function Home() {
             <OverviewPanel
               progress={progress}
               courses={courses}
+              suggestions={suggestions}
+              digestOptIn={digestOptIn}
+              digestBusy={digestBusy}
+              certBusy={certBusy}
               loading={loading}
               onDiscover={() => navigate('Discover training')}
               onLearning={() => navigate('My learning')}
               onOpen={openCourse}
+              onYear={setYear}
+              onToggleDigest={async (next) => {
+                setDigestBusy(true);
+                setError('');
+                try {
+                  const d = await api('/me/digest', {
+                    method: 'PATCH',
+                    body: JSON.stringify({ opted_in: next, cadence_days: 14 }),
+                  });
+                  setDigestOptIn(!!d.opted_in);
+                  setNotice(d.opted_in ? 'Biweekly digest enabled.' : 'Digest emails turned off.');
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setDigestBusy(false);
+                }
+              }}
+              onIssueCertificate={async () => {
+                setCertBusy(true);
+                setError('');
+                try {
+                  const cert = await api('/me/certificates', {
+                    method: 'POST',
+                    body: JSON.stringify({ year }),
+                  });
+                  window.open('/api/v1/me/certificates/' + cert.id, '_blank', 'noopener');
+                  setNotice('Affiliation certificate ready to print. It is not a regulator document.');
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setCertBusy(false);
+                }
+              }}
             />
           )}
           {(tab === 'Discover training' || tab === 'My learning') && (
@@ -445,10 +521,14 @@ export default function Home() {
               records={records}
               total={total}
               loading={loading}
+              learning={learning}
+              recordsTotal={recordsTotal}
               onFilters={(patch) => setFilters((f) => ({ ...f, ...patch }))}
               onLocate={locate}
               onDiscover={() => navigate('Discover training')}
               onOpen={openCourse}
+              onClearFilters={() => setFilters(initialFilters)}
+              onLearningFilters={(patch) => setLearning((f) => ({ ...f, ...patch }))}
             />
           )}
           {tab === 'Public profile' && (
@@ -457,16 +537,32 @@ export default function Home() {
           {tab === 'Ingestion' && (
             <IngestionPanel
               jobQuery={jobQuery}
+              jobMaxResults={jobMaxResults}
               jobs={jobs}
               candidates={candidates}
+              candidateTotal={candidateTotal}
               submitting={submitting}
               saving={saving}
               jobKey={jobKey}
               onJobQuery={setJobQuery}
+              onJobMaxResults={setJobMaxResults}
               onSubmit={newJob}
               onRefresh={() => refreshOperator().catch((e) => setError(e.message))}
               onRetry={retryJob}
               onReview={review}
+              onDailyScrape={async () => {
+                setSaving(true);
+                setError('');
+                try {
+                  await api('/admin/daily-scrape', { method: 'POST' });
+                  await refreshOperator();
+                  setNotice('Daily scrape topics queued for the owned catalogue.');
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setSaving(false);
+                }
+              }}
             />
           )}
           <footer>

@@ -21,6 +21,12 @@ export type DiscoverFilters = {
   page: number;
 };
 
+export type LearningFilters = {
+  signupStatus: string;
+  attended: string;
+  page: number;
+};
+
 export function DiscoverPanel({
   tab,
   filters,
@@ -28,10 +34,14 @@ export function DiscoverPanel({
   records,
   total,
   loading,
+  learning,
+  recordsTotal,
   onFilters,
   onLocate,
   onDiscover,
   onOpen,
+  onClearFilters,
+  onLearningFilters,
 }: {
   tab: 'Discover training' | 'My learning';
   filters: DiscoverFilters;
@@ -39,10 +49,14 @@ export function DiscoverPanel({
   records: Course[];
   total: number;
   loading: boolean;
+  learning?: LearningFilters;
+  recordsTotal?: number;
   onFilters: (patch: Partial<DiscoverFilters>) => void;
   onLocate: () => void;
   onDiscover: () => void;
   onOpen: (course: Course) => void;
+  onClearFilters?: () => void;
+  onLearningFilters?: (patch: Partial<LearningFilters>) => void;
 }) {
   const list = tab === 'My learning' ? records : courses;
   const {
@@ -85,6 +99,37 @@ export function DiscoverPanel({
           </div>
         )}
       </div>
+      {tab === 'My learning' && onLearningFilters && learning && (
+        <section className="filter-panel">
+          <div className="filters">
+            <label>
+              Sign-up status
+              <select
+                aria-label="Filter by sign-up status"
+                value={learning.signupStatus}
+                onChange={(e) => onLearningFilters({ signupStatus: e.target.value, page: 1 })}
+              >
+                <option value="">All sign-ups</option>
+                <option value="signed_up">Signed up</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="not_recorded">Not recorded</option>
+              </select>
+            </label>
+            <label>
+              Attendance
+              <select
+                aria-label="Filter by attendance"
+                value={learning.attended}
+                onChange={(e) => onLearningFilters({ attended: e.target.value, page: 1 })}
+              >
+                <option value="">All records</option>
+                <option value="true">Attended</option>
+                <option value="false">Not attended</option>
+              </select>
+            </label>
+          </div>
+        </section>
+      )}
       {tab === 'Discover training' && (
         <section className="filter-panel">
           <div className="search-line">
@@ -102,8 +147,13 @@ export function DiscoverPanel({
               {location ? 'Location selected' : 'Near me'}
             </button>
             {location && (
-              <button className="text-btn" onClick={() => onFilters({ location: null })}>
+              <button className="text-btn" type="button" onClick={() => onFilters({ location: null, page: 1 })}>
                 Clear location
+              </button>
+            )}
+            {onClearFilters && (
+              <button className="text-btn" type="button" onClick={onClearFilters}>
+                Clear all filters
               </button>
             )}
           </div>
@@ -210,17 +260,17 @@ export function DiscoverPanel({
       )}
       <div className="results-heading">
         <span>
-          {tab === 'My learning' ? records.length : total}{' '}
+          {tab === 'My learning' ? recordsTotal ?? records.length : total}{' '}
           {tab === 'My learning' ? 'saved records' : 'training opportunities'}
         </span>
         <span>Source-linked · Details may change</span>
       </div>
-      {loading && tab !== 'My learning' ? (
+      {loading ? (
         <Loading />
       ) : list.length ? (
         <div className="course-grid">
           {list.map((c) => (
-            <CourseCard key={c.id} course={c} onOpen={() => onOpen(c)} />
+            <CourseCard key={c.id} course={c} nearby={!!location} onOpen={() => onOpen(c)} />
           ))}
         </div>
       ) : (
@@ -243,6 +293,27 @@ export function DiscoverPanel({
             Page {page} of {Math.ceil(total / 9)}
           </span>
           <button className="secondary" disabled={page * 9 >= total} onClick={() => onFilters({ page: page + 1 })}>
+            Next <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
+      {tab === 'My learning' && onLearningFilters && learning && (recordsTotal ?? 0) > 9 && (
+        <div className="pagination">
+          <button
+            className="secondary"
+            disabled={learning.page === 1}
+            onClick={() => onLearningFilters({ page: learning.page - 1 })}
+          >
+            <ChevronLeft size={16} /> Previous
+          </button>
+          <span>
+            Page {learning.page} of {Math.ceil((recordsTotal || 0) / 9)}
+          </span>
+          <button
+            className="secondary"
+            disabled={learning.page * 9 >= (recordsTotal || 0)}
+            onClick={() => onLearningFilters({ page: learning.page + 1 })}
+          >
             Next <ChevronRight size={16} />
           </button>
         </div>

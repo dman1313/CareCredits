@@ -1,9 +1,17 @@
 'use client';
 
 import { ArrowRight, BookOpen, CalendarDays, Check, GraduationCap, Loader2, MapPin } from 'lucide-react';
-import { Course, feeLabel, formatDate, modeName } from '@/lib/portal';
+import { Course, distanceLabel, feeLabel, formatDate, locationLabel, modeName } from '@/lib/portal';
 
-export function CourseCard({ course: c, onOpen }: { course: Course; onOpen: () => void }) {
+export function CourseCard({
+  course: c,
+  onOpen,
+  nearby = false,
+}: {
+  course: Course;
+  onOpen: () => void;
+  nearby?: boolean;
+}) {
   return (
     <article className="course-card">
       <div className={'course-cover ' + (c.mode === 'online' ? 'peach' : c.difficulty === 'beginner' ? 'blue' : 'green')}>
@@ -45,8 +53,8 @@ export function CourseCard({ course: c, onOpen }: { course: Course; onOpen: () =
           </span>
           <span>
             <MapPin size={15} />
-            {c.city || 'Online'}
-            {c.distance_km != null ? ` · ~${c.distance_km} km` : ''}
+            {locationLabel(c)}
+            {distanceLabel(c, nearby)}
           </span>
         </div>
         <div className="card-bottom">
@@ -63,7 +71,7 @@ export function CourseCard({ course: c, onOpen }: { course: Course; onOpen: () =
 export function Empty({ title, text, action }: { title: string; text: string; action?: () => void }) {
   return (
     <div className="empty-state">
-      <BookOpen size={30} />
+      <BookOpen size={30} aria-hidden="true" />
       <h3>{title}</h3>
       <p>{text}</p>
       {action && (

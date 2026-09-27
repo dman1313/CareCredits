@@ -1,23 +1,37 @@
 'use client';
 
 import { ArrowRight, BookOpen, GraduationCap } from 'lucide-react';
-import { Course, Progress } from '@/lib/portal';
+import { Course, Progress, Suggestion, formatDate } from '@/lib/portal';
 import { CourseCard, Empty, Loading } from '@/components/CourseList';
 
 export function OverviewPanel({
   progress,
   courses,
+  suggestions,
+  digestOptIn,
+  digestBusy,
+  certBusy,
   loading,
   onDiscover,
   onLearning,
   onOpen,
+  onToggleDigest,
+  onIssueCertificate,
+  onYear,
 }: {
   progress: Progress | null;
   courses: Course[];
+  suggestions: Suggestion[];
+  digestOptIn: boolean;
+  digestBusy: boolean;
+  certBusy: boolean;
   loading: boolean;
   onDiscover: () => void;
   onLearning: () => void;
   onOpen: (course: Course) => void;
+  onToggleDigest: (next: boolean) => void;
+  onIssueCertificate: () => void;
+  onYear?: (year: number) => void;
 }) {
   return (
     <>
@@ -61,6 +75,25 @@ export function OverviewPanel({
         </section>
         <section className="summary-card">
           <span className="section-kicker">YOUR YEAR SO FAR</span>
+          {onYear && (
+            <label>
+              Year
+              <select
+                aria-label="Progress year"
+                value={progress?.year || new Date().getFullYear()}
+                onChange={(e) => onYear(Number(e.target.value))}
+              >
+                {[0, 1, 2].map((offset) => {
+                  const year = new Date().getFullYear() - offset;
+                  return (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+          )}
           <div className="points-total">
             {progress?.points ?? 0}
             <span>CPDs recorded</span>
@@ -81,6 +114,53 @@ export function OverviewPanel({
               {progress.excluded} attended record(s) have unknown or other credit types and are excluded.
             </small>
           )}
+        </section>
+      </div>
+      <div className="overview-grid engagement-grid">
+        <section className="panel">
+          <span className="section-kicker">CONSIDER NEXT</span>
+          <h2>Suggested upcoming courses</h2>
+          <p className="muted">Advisory catalogue matches by city and date. CareCredits does not decide MMC, MOH, or APC compliance.</p>
+          {suggestions.length ? (
+            <ul className="source-list">
+              {suggestions.slice(0, 5).map((item) => (
+                <li key={item.id}>
+                  <button className="text-btn" type="button" onClick={() => onOpen({ id: item.id } as Course)}>
+                    {formatDate(item.start_date || null)} · {item.title}
+                  </button>
+                  <small>
+                    {' '}
+                    {item.city || 'Online'} — {item.reason}
+                  </small>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="small-note">No upcoming catalogue suggestions yet. Discover training to browse the owned catalogue.</p>
+          )}
+        </section>
+        <section className="panel">
+          <span className="section-kicker">STAY INFORMED</span>
+          <h2>Digest and certificate</h2>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={digestOptIn}
+              disabled={digestBusy}
+              onChange={(e) => onToggleDigest(e.target.checked)}
+            />
+            <span>
+              <strong>Email me the biweekly digest</strong>
+              <small>Upcoming catalogue events, known prices, and your recorded CPD total. Unsubscribe from any email.</small>
+            </span>
+          </label>
+          <p className="small-note">
+            Print a CareCredits affiliation statement for {progress?.year || new Date().getFullYear()}. It is not an MMC,
+            MOH, or APC certificate.
+          </p>
+          <button className="secondary" type="button" disabled={certBusy} onClick={onIssueCertificate}>
+            {certBusy ? 'Preparing…' : 'Issue printable certificate'}
+          </button>
         </section>
       </div>
       <div className="section-heading">

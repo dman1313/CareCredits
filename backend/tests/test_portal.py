@@ -150,6 +150,13 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(stored['status'],'partial')
         self.assertEqual(stored['result']['sources'][0]['title'],'Primary Care Update')
         self.assertEqual(stored['result']['candidate_count'],0)
+        detail=self.client.get('/api/v1/admin/ingestion-jobs/'+claim['id'])
+        self.assertEqual(detail.status_code,200,detail.text)
+        self.assertEqual(detail.json()['id'],claim['id'])
+        self.assertEqual(detail.json()['result']['sources'][0]['url'],'https://example.org/afpm')
+        self.assertEqual(self.client.get('/api/v1/admin/ingestion-jobs/missing-job').status_code,404)
+        self.login('b@example.com')
+        self.assertEqual(self.client.get('/api/v1/admin/ingestion-jobs/'+claim['id']).status_code,403)
 
     def test_invalid_evidence_cannot_publish(self):
         with self.Session() as db:
@@ -257,13 +264,20 @@ class PortalTests(unittest.TestCase):
             migrate_schema(db)
             stored=db.get(Course,self.course)
             self.assertEqual((stored.title, stored.city), ('Backfilled GP','Johor Bahru'))
-            self.assertEqual(max(v.version for v in db.query(SchemaVersion).all()), 5)
+            self.assertEqual(max(v.version for v in db.query(SchemaVersion).all()), 9)
+            self.assertIn('identity_issuer', {c['name'] for c in inspect(db.get_bind()).get_columns('accounts')})
+            self.assertIn('verification_status', {c['name'] for c in inspect(db.get_bind()).get_columns('courses')})
             self.assertIn('review_reason', {c['name'] for c in inspect(db.get_bind()).get_columns('course_candidates')})
             self.assertIn('signup_status', {c['name'] for c in inspect(db.get_bind()).get_columns('doctor_records')})
+            self.assertIn('state', {c['name'] for c in inspect(db.get_bind()).get_columns('accounts')})
+            self.assertIn('max_results', {c['name'] for c in inspect(db.get_bind()).get_columns('ingestion_jobs')})
+            self.assertIn('version', {c['name'] for c in inspect(db.get_bind()).get_columns('course_candidates')})
             tables = inspect(db.get_bind()).get_table_names()
             self.assertIn('digest_preferences', tables)
             self.assertIn('affiliation_certificates', tables)
             self.assertIn('record_history', tables)
+            self.assertIn('field_evidence', tables)
+            self.assertIn('source_documents', tables)
 
     def test_catalogue_filters_use_columns_not_json(self):
         with self.Session() as db:
@@ -334,9 +348,170 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(progress['attended'], 1)
         self.assertEqual(progress['signed_up'], 0)
 
+    def test_profile_city_state_and_me_fields(self):
+        body={'name':'Doctor A','city':'Petaling Jaya','state':'Selangor','bio':'Family medicine','public_enabled':False}
+        saved=self.client.patch('/api/v1/me',json=body)
+        self.assertEqual(saved.status_code,200,saved.text)
+        me=self.client.get('/api/v1/me').json()
+        self.assertEqual((me['city'],me['state']),('Petaling Jaya','Selangor'))
+        self.assertNotIn('password_hash',me)
+
+    def test_two_sessions_on_one_page_stay_distinct(self):
+        from main import source_key
+        page='https://example.org/afpm-weekend'
+        first={**sample('Saturday workshop'),'start_date':'2026-08-01','source_url':page}
+        second={**sample('Sunday workshop'),'start_date':'2026-08-02','source_url':page}
+        self.assertNotEqual(source_key(first),source_key(second))
+        header={'Idempotency-Key':'two-sessions-key'}
+        self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'AFPM weekend'},headers=header)
+        service={'Authorization':'Bearer test-service-token'}
+        claim=self.client.post('/internal/v1/jobs/claim',headers=service).json()
+        quote='Saturday workshop Sunday workshop by Learning Institute in Malaysia Kuala Lumpur online. 2026-08-01. 2026-08-02. CPD points 2.'
+        first['source_text']=second['source_text']=quote
+        first['evidence']=second['evidence']={key:quote for key in ['title','provider','mode','country','start_date','points','credit_label']}
+        complete=self.client.post('/internal/v1/jobs/'+claim['id']+'/complete',json={'lease_token':claim['lease_token'],'status':'succeeded','candidates':[first,second]},headers=service)
+        self.assertEqual(complete.status_code,200,complete.text)
+        queue=self.client.get('/api/v1/admin/candidates').json()['items']
+        self.assertEqual(len(queue),2)
+        for item in queue:
+            self.assertEqual(self.client.post('/api/v1/admin/candidates/'+item['id']+'/review',json={'action':'publish'}).status_code,200)
+        titles=sorted(item['title'] for item in self.client.get('/api/v1/trainings?period=all').json()['items'] if 'workshop' in item['title'])
+        self.assertEqual(titles,['Saturday workshop','Sunday workshop'])
+
+    def test_opening_detail_does_not_create_a_record(self):
+        before = self.client.get('/api/v1/me/trainings').json()['items']
+        detail = self.client.get('/api/v1/trainings/' + self.course)
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertIsNone(detail.json()['record'])
+        after = self.client.get('/api/v1/me/trainings').json()['items']
+        self.assertEqual(len(before), len(after))
+
+    def test_progress_year_boundary(self):
+        with self.Session() as db:
+            course = db.get(Course, self.course)
+            fill_course(course, {**course.data, 'start_date': '2025-12-01'})
+            db.commit()
+        self.assertEqual(self.save(attended_on='2025-12-31').status_code, 200)
+        self.assertEqual(self.client.get('/api/v1/me/progress?year=2025').json()['attended'], 1)
+        self.assertEqual(self.client.get('/api/v1/me/progress?year=2026').json()['attended'], 0)
+
+    def test_radius_boundary_excludes_far_venues(self):
+        with self.Session() as db:
+            c = db.get(Course, self.course)
+            fill_course(c, {**c.data, 'mode': 'in_person', 'city': 'Kuala Lumpur', 'latitude': 3.139, 'longitude': 101.687})
+            db.commit()
+        self.add_course(
+            'far-venue',
+            title='Far clinic day',
+            mode='in_person',
+            city='Kuantan',
+            latitude=3.807,
+            longitude=103.326,
+            start_date='2026-01-01',
+        )
+        inside = self.client.get('/api/v1/trainings?period=all&mode=in_person&latitude=3.139&longitude=101.687&radius_km=25').json()
+        titles = [item['title'] for item in inside['items']]
+        self.assertIn('GP training', titles)
+        self.assertNotIn('Far clinic day', titles)
+
+    def test_public_config_is_login_flags_only(self):
+        body = self.client.get('/api/v1/config').json()
+        self.assertEqual(set(body), {'demo', 'signup_enabled', 'oauth_google'})
+
+    def test_publish_stores_source_review_and_field_evidence(self):
+        from portal_models import FieldEvidence
+        header={'Idempotency-Key':'evidence-key'}
+        self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP evidence'},headers=header)
+        service={'Authorization':'Bearer test-service-token'}
+        claim=self.client.post('/internal/v1/jobs/claim',headers=service).json()
+        self.client.post('/internal/v1/jobs/'+claim['id']+'/complete',json={'lease_token':claim['lease_token'],'status':'succeeded','candidates':[sample('Reviewed clinic')]},headers=service)
+        cid=self.client.get('/api/v1/admin/candidates').json()['items'][0]['id']
+        self.assertEqual(self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'publish'}).status_code,200)
+        found=self.client.get('/api/v1/trainings?period=all&q=Reviewed').json()['items'][0]
+        self.assertEqual(found['verification_status'],'source_reviewed')
+        self.assertIsNotNone(found['reviewed_at'])
+        with self.Session() as db:
+            rows=db.query(FieldEvidence).filter_by(course_id=found['id']).all()
+            self.assertGreaterEqual(len(rows),4)
+            self.assertTrue(all(row.reviewed_by and row.reviewed_at for row in rows))
+
+    def test_signed_up_at_and_points_origin(self):
+        saved=self.save(signup_status='signed_up')
+        self.assertEqual(saved.status_code,200,saved.text)
+        body=saved.json()
+        self.assertEqual(body['points_origin'],'self_reported')
+        self.assertTrue(body['signed_up_at'])
+
+    def test_my_trainings_are_paginated(self):
+        self.assertEqual(self.save().status_code,200)
+        page=self.client.get('/api/v1/me/trainings?page=1&page_size=1&attended=true')
+        self.assertEqual(page.status_code,200,page.text)
+        self.assertEqual(page.json()['page_size'],1)
+        self.assertEqual(page.json()['total'],1)
+        self.assertEqual(len(page.json()['items']),1)
+        empty=self.client.get('/api/v1/me/trainings?attended=false')
+        self.assertEqual(empty.json()['total'],0)
+
+    def test_concurrent_claim_gives_one_owner(self):
+        import threading
+        header={'Idempotency-Key':'concurrent-claim-key'}
+        self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP concurrent'},headers=header)
+        service={'Authorization':'Bearer test-service-token'}
+        codes=[]
+        def claim():
+            codes.append(self.client.post('/internal/v1/jobs/claim',headers=service).status_code)
+        workers=[threading.Thread(target=claim) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        self.assertEqual(sorted(codes),[200,204])
+
     def test_signup_and_password_validation(self):
         r=self.client.post('/api/v1/auth/register',json={'email':'new@example.com','password':PASSWORD,'name':'New Doctor'})
         self.assertEqual(r.status_code,201,r.text)
         self.assertEqual(self.client.post('/api/v1/auth/register',json={'email':'bad','password':'short'}).status_code,422)
         self.assertEqual(self.client.post('/api/v1/auth/login',json={'email':'new@example.com','password':'wrong-password-long'}).status_code,401)
         self.assertEqual(self.client.post('/api/v1/auth/login',json={'email':'new@example.com','password':PASSWORD}).status_code,200)
+
+    def test_job_max_results_and_source_documents(self):
+        from portal_models import SourceDocument
+        header={'Idempotency-Key':'max-results-key'}
+        created=self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP source pages','max_results':3},headers=header)
+        self.assertEqual(created.status_code,202,created.text)
+        self.assertEqual(created.json()['max_results'],3)
+        self.assertEqual(self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP source pages','max_results':2},headers=header).status_code,409)
+        self.assertEqual(self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP source pages','max_results':6},headers=header).status_code,422)
+        service={'Authorization':'Bearer test-service-token'}
+        claim=self.client.post('/internal/v1/jobs/claim',headers=service).json()
+        self.assertEqual(claim['max_results'],3)
+        payload={
+            'lease_token':claim['lease_token'],'status':'partial','candidates':[],
+            'sources':[{'url':'https://example.org/afpm#section','title':'Primary Care Update','snippet':'CPD workshop in Kuala Lumpur','extraction_status':'success','verification_status':'unverified'}],
+        }
+        self.assertEqual(self.client.post('/internal/v1/jobs/'+claim['id']+'/complete',json=payload,headers=service).status_code,200)
+        with self.Session() as db:
+            rows=db.query(SourceDocument).all()
+            self.assertEqual(len(rows),1)
+            self.assertEqual(rows[0].canonical_url,'https://example.org/afpm')
+            self.assertEqual(rows[0].job_id,claim['id'])
+
+    def test_candidates_are_paginated_and_review_is_versioned(self):
+        with self.Session() as db:
+            job=Job(account_id=self.a,request_key='review-page',query='GP')
+            db.add(job);db.flush()
+            first=Candidate(job_id=job.id,source_key='one',data=sample('First queue item'))
+            second=Candidate(job_id=job.id,source_key='two',data=sample('Second queue item'))
+            db.add_all([first,second]);db.commit()
+            cid=first.id
+        page=self.client.get('/api/v1/admin/candidates?page=1&page_size=1')
+        self.assertEqual(page.status_code,200,page.text)
+        self.assertEqual(page.json()['total'],2)
+        self.assertEqual(page.json()['page_size'],1)
+        self.assertEqual(len(page.json()['items']),1)
+        self.assertEqual(page.json()['items'][0]['version'],1)
+        stale=self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'hold','reason':'Need MMC confirmation','version':99})
+        self.assertEqual(stale.status_code,409)
+        held=self.client.post('/api/v1/admin/candidates/'+cid+'/review',json={'action':'hold','reason':'Need MMC confirmation','version':1})
+        self.assertEqual(held.status_code,200,held.text)
+        self.assertEqual(held.json()['version'],2)
