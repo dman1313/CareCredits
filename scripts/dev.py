@@ -1,5 +1,6 @@
 """Run the three local services, optionally with explicit fictional fixtures."""
 import argparse
+import json
 import os
 from pathlib import Path
 import secrets
@@ -8,6 +9,8 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.error import URLError
+from urllib.request import urlopen
 from dotenv import dotenv_values
 
 _root = Path(__file__).resolve().parents[1]
@@ -27,6 +30,35 @@ def free_port(preferred):
                 continue
         return port
     raise RuntimeError('No free local port near ' + str(preferred))
+
+
+def is_live_body(payload):
+    return isinstance(payload, dict) and payload.get('status') == 'live'
+
+
+def probe_live(url, timeout=2):
+    try:
+        with urlopen(url, timeout=timeout) as response:
+            if getattr(response, 'status', 200) != 200:
+                return False
+            payload = json.loads(response.read() or b'{}')
+    except (URLError, TimeoutError, OSError, ValueError, TypeError):
+        return False
+    return is_live_body(payload)
+
+
+def wait_for_live(urls, timeout=60, sleep=0.4):
+    pending = dict(urls)
+    ready = []
+    deadline = time.time() + timeout
+    while pending and time.time() < deadline:
+        for name, url in list(pending.items()):
+            if probe_live(url):
+                ready.append(name)
+                pending.pop(name)
+        if pending:
+            time.sleep(sleep)
+    return ready, list(pending)
 
 
 MODEL_IDENTITY = (
@@ -159,10 +191,33 @@ def main():
             (['npm', 'run', 'dev', '--', '--hostname', '127.0.0.1', '--port', str(frontend_port)], frontend_env, root / 'frontend'),
         ]:
             processes.append(subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True))
-        print(
-            'CareCredits: ' + backend['PUBLIC_FRONTEND_BASE'] + ' — API ' + backend['PUBLIC_API_BASE'] + ' — Ctrl+C stops all three services.',
-            flush=True,
-        )
+        live_urls = {
+            'backend': backend['PUBLIC_API_BASE'] + '/health/live',
+            'scraper': backend['SCRAPER_HEALTH_URL'] + '/health/live',
+            'frontend': backend['PUBLIC_FRONTEND_BASE'] + '/health/live',
+        }
+        ready, missing = wait_for_live(live_urls)
+        if missing:
+            print(
+                'CareCredits started, but /health/live is not ready for: '
+                + ', '.join(missing)
+                + '. Frontend '
+                + backend['PUBLIC_FRONTEND_BASE']
+                + ' — API '
+                + backend['PUBLIC_API_BASE'],
+                flush=True,
+            )
+        else:
+            print(
+                'CareCredits live: '
+                + backend['PUBLIC_FRONTEND_BASE']
+                + ' — API '
+                + backend['PUBLIC_API_BASE']
+                + ' — scraper '
+                + backend['SCRAPER_HEALTH_URL']
+                + ' — Ctrl+C stops all three services.',
+                flush=True,
+            )
         while all(p.poll() is None for p in processes):
             time.sleep(1)
     except KeyboardInterrupt:

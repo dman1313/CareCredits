@@ -56,3 +56,26 @@ class ScraperHealthTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_unmatched_path_uses_error_envelope(self):
+        import json
+        from urllib.error import HTTPError
+        from urllib.request import urlopen
+
+        server = start(port=18042)
+        try:
+            ping = json.loads(urlopen('http://127.0.0.1:18042/health', timeout=2).read())
+            live = json.loads(urlopen('http://127.0.0.1:18042/health/live', timeout=2).read())
+            self.assertEqual(ping['status'], 'ok')
+            self.assertEqual(live['status'], 'live')
+            with self.assertRaises(HTTPError) as caught:
+                urlopen('http://127.0.0.1:18042/does-not-exist', timeout=2)
+            self.assertEqual(caught.exception.code, 404)
+            body = json.loads(caught.exception.read())
+            self.assertEqual(body['error']['code'], 'not_found')
+            self.assertTrue(body['error']['message'])
+            self.assertTrue(body['error']['request_id'])
+            self.assertNotIn('status', body)
+        finally:
+            server.shutdown()
+            server.server_close()

@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from main import app, today, migrate_schema
 from database import Base, get_db
-from portal_models import Account, Audit, Course, Record, Job, Candidate, SchemaVersion, SourceDocument, fill_course, purge_expired_source_text
+from portal_models import Account, Audit, Course, Record, Job, Candidate, FieldEvidence, SchemaVersion, SourceDocument, fill_course, purge_expired_source_text
 from security import password_hash
 
 PASSWORD = 'Testing-strong-password'
@@ -906,11 +906,42 @@ class PortalTests(unittest.TestCase):
     def test_expired_source_documents_are_purged(self):
         with self.Session() as db:
             old=SourceDocument(canonical_url='https://example.org/old',content_hash='abc',retrieved_at=1,snippet='old page')
+            kept=SourceDocument(canonical_url='https://example.org/kept',content_hash='def',retrieved_at=1,snippet='reviewed page')
             db.add(old)
+            db.add(kept)
+            db.flush()
+            db.add(FieldEvidence(course_id=self.course, source_document_id=kept.id, field_name='title', excerpt='reviewed excerpt'))
+            job=Job(account_id=self.a,request_key='old-raw',query='GP',created_at=1,result={'sources':[{'url':'https://example.org/old','snippet':'job page'}]})
+            fresh=Job(account_id=self.a,request_key='fresh-raw',query='GP',result={'sources':[{'url':'https://example.org/fresh','snippet':'fresh job page'}]})
+            db.add(job)
+            db.add(fresh)
+            db.flush()
+            candidate=Candidate(job_id=job.id,source_key='old-raw',data={**sample(),'source_text':'candidate page'})
+            recent=Candidate(job_id=fresh.id,source_key='fresh-raw',data={**sample('Fresh GP'),'source_text':'recent candidate page'})
+            db.add(candidate)
+            db.add(recent)
+            course=db.get(Course,self.course)
+            fill_course(course,{**course.data,'source_text':'course page','retrieved_at':'2000-01-01T00:00:00'})
             db.commit()
             old_id=old.id
+            kept_id=kept.id
+            candidate_id=candidate.id
+            recent_id=recent.id
+            job_id=job.id
+            fresh_id=fresh.id
             purge_expired_source_text(db, now=time.time())
             self.assertIsNone(db.get(SourceDocument, old_id))
+            remaining=db.get(SourceDocument, kept_id)
+            self.assertIsNotNone(remaining)
+            self.assertEqual(remaining.snippet,'')
+            self.assertEqual((db.get(Candidate, candidate_id).data or {}).get('source_text'),'')
+            self.assertEqual((db.get(Candidate, candidate_id).data or {}).get('evidence')['title'],sample()['evidence']['title'])
+            self.assertEqual((db.get(Candidate, recent_id).data or {}).get('source_text'),'recent candidate page')
+            self.assertEqual((db.get(Course, self.course).data or {}).get('source_text'),'')
+            self.assertEqual((db.get(Job, job_id).result or {}).get('sources')[0]['snippet'],'')
+            self.assertEqual((db.get(Job, fresh_id).result or {}).get('sources')[0]['snippet'],'fresh job page')
+            excerpt=db.query(FieldEvidence).filter_by(source_document_id=kept_id).first()
+            self.assertEqual(excerpt.excerpt,'reviewed excerpt')
 
     def test_end_date_cannot_precede_start(self):
         with self.assertRaises(ValueError):

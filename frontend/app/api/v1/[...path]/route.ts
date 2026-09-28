@@ -17,13 +17,27 @@ async function proxy(request: NextRequest, path: string[]) {
   if (!['GET', 'HEAD'].includes(request.method)) {
     init.body = await request.arrayBuffer();
   }
-  const upstream = await fetch(target, init);
-  const response = new NextResponse(upstream.body, { status: upstream.status });
-  upstream.headers.forEach((value, key) => {
-    if (['transfer-encoding', 'content-encoding'].includes(key.toLowerCase())) return;
-    response.headers.append(key, value);
-  });
-  return response;
+  const rid = request.headers.get('x-request-id') || crypto.randomUUID();
+  try {
+    const upstream = await fetch(target, init);
+    const response = new NextResponse(upstream.body, { status: upstream.status });
+    upstream.headers.forEach((value, key) => {
+      if (['transfer-encoding', 'content-encoding'].includes(key.toLowerCase())) return;
+      response.headers.append(key, value);
+    });
+    return response;
+  } catch {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'unavailable',
+          message: 'CareCredits API is unavailable.',
+          request_id: rid,
+        },
+      },
+      { status: 503, headers: { 'X-Request-Id': rid } },
+    );
+  }
 }
 
 type RouteContext = { params: Promise<{ path: string[] }> };

@@ -287,25 +287,69 @@ def counts_toward_cpd(record):
     return record.points is not None and (record.credit_label or '').strip().upper() in aggregate_credit_labels()
 
 
+def retrieved_stamp(payload):
+    retrieved = (payload or {}).get('retrieved_at')
+    if not retrieved:
+        return None
+    try:
+        return time.mktime(time.strptime(str(retrieved)[:19], '%Y-%m-%dT%H:%M:%S'))
+    except ValueError:
+        return None
+
+
+def _blank_source_text(payload):
+    data = dict(payload or {})
+    if not data.get('source_text'):
+        return None
+    data['source_text'] = ''
+    return data
+
+
+def _blank_job_source_snippets(result):
+    payload = dict(result or {})
+    sources = payload.get('sources')
+    if not isinstance(sources, list):
+        return None
+    next_sources = []
+    changed = False
+    for item in sources:
+        if isinstance(item, dict) and item.get('snippet'):
+            next_sources.append({**item, 'snippet': ''})
+            changed = True
+        else:
+            next_sources.append(item)
+    if not changed:
+        return None
+    payload['sources'] = next_sources
+    return payload
+
+
 def purge_expired_source_text(db, now=None, retain_days=30):
+    """Drop raw pages after 30 days; keep reviewed FieldEvidence excerpts."""
     cutoff = (now or time.time()) - retain_days * 86400
     kept = {row.source_document_id for row in db.query(FieldEvidence.source_document_id).filter(FieldEvidence.source_document_id.isnot(None))}
     for document in db.query(SourceDocument).filter(SourceDocument.retrieved_at < cutoff).all():
-        if document.id in kept:
-            continue
-        db.delete(document)
+        if document.snippet:
+            document.snippet = ''
+        if document.id not in kept:
+            db.delete(document)
+    job_created = {row.id: row.created_at for row in db.query(Job.id, Job.created_at)}
     for candidate in db.query(Candidate).all():
-        retrieved = (candidate.data or {}).get('retrieved_at')
-        if not retrieved:
+        stamp = retrieved_stamp(candidate.data) or job_created.get(candidate.job_id)
+        if stamp is None or stamp >= cutoff:
             continue
-        try:
-            stamp = time.mktime(time.strptime(str(retrieved)[:19], '%Y-%m-%dT%H:%M:%S'))
-        except ValueError:
-            continue
-        if stamp >= cutoff:
-            continue
-        payload = dict(candidate.data or {})
-        if 'source_text' in payload:
-            payload['source_text'] = ''
+        payload = _blank_source_text(candidate.data)
+        if payload is not None:
             candidate.data = payload
+    for course in db.query(Course).all():
+        stamp = retrieved_stamp(course.data) or course.created_at
+        if stamp is None or stamp >= cutoff:
+            continue
+        payload = _blank_source_text(course.data)
+        if payload is not None:
+            course.data = payload
+    for job in db.query(Job).filter(Job.created_at < cutoff).all():
+        payload = _blank_job_source_snippets(job.result)
+        if payload is not None:
+            job.result = payload
     db.commit()

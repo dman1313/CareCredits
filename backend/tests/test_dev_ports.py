@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.dev import free_port, service_environments
+from scripts.dev import free_port, is_live_body, probe_live, service_environments, wait_for_live
 from shared.model_defaults import apply_provisional_model
 
 
@@ -65,3 +65,27 @@ class DevPortTests(unittest.TestCase):
         self.assertEqual(filled['MODEL_ID'], 'Qwen/Qwen3-30B-A3B-Instruct-2507')
         self.assertEqual(filled['TAVILY_API_KEY'], 'keep')
         self.assertNotIn('MODEL_API_KEY', filled)
+
+    def test_wait_for_live_requires_status_live(self):
+        self.assertTrue(is_live_body({'status': 'live'}))
+        self.assertFalse(is_live_body({'status': 'ok'}))
+        self.assertFalse(is_live_body({'status': 'ready'}))
+        from scraper.health import start
+
+        server = start(port=18032)
+        try:
+            ready, missing = wait_for_live(
+                {
+                    'scraper': 'http://127.0.0.1:18032/health/live',
+                    'missing': 'http://127.0.0.1:9/health/live',
+                },
+                timeout=2,
+                sleep=0.1,
+            )
+            self.assertTrue(probe_live('http://127.0.0.1:18032/health/live'))
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(ready, ['scraper'])
+        self.assertEqual(missing, ['missing'])
+

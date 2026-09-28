@@ -97,7 +97,10 @@ class ErrorEnvelopeTests(unittest.TestCase):
     def test_liveness_does_not_require_database(self):
         live = self.client.get('/health/live')
         self.assertEqual(live.status_code, 200)
-        self.assertEqual(live.json()['status'], 'ok')
+        self.assertEqual(live.json()['status'], 'live')
+        ping = self.client.get('/health')
+        self.assertEqual(ping.status_code, 200)
+        self.assertEqual(ping.json()['status'], 'ok')
 
     def test_ready_reports_database_and_fails_closed(self):
         ready = self.client.get('/health/ready')
@@ -116,6 +119,15 @@ class ErrorEnvelopeTests(unittest.TestCase):
         self.assertEqual(down.status_code, 503)
         self.assertEqual(down.json()['error']['code'], 'unavailable')
         self.assertNotIn('db down', down.text)
+
+    def test_removed_user_routes_use_envelope(self):
+        result = self.client.get('/users/')
+        self.assertEqual(result.status_code, 404)
+        body = result.json()['error']
+        self.assertEqual(body['code'], 'not_found')
+        self.assertTrue(body['message'])
+        self.assertTrue(body['request_id'])
+        self.assertNotIn('detail', result.json())
 
 
 if __name__ == '__main__':

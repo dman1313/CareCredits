@@ -3,6 +3,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import threading
+import uuid
 
 from shared.model_defaults import env_or_provisional
 
@@ -50,14 +51,27 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path.rstrip('/') == '/health/live':
+        path = (self.path.split('?', 1)[0] or '/').rstrip('/') or '/'
+        if path == '/health':
+            self._send(200, {'status': 'ok'})
+            return
+        if path == '/health/live':
             self._send(200, {'status': 'live'})
             return
-        if self.path.rstrip('/') == '/health/ready':
+        if path == '/health/ready':
             payload = ready()
             self._send(200 if payload['status'] == 'ready' else 503, payload)
             return
-        self._send(404, {'status': 'not_found'})
+        self._send(
+            404,
+            {
+                'error': {
+                    'code': 'not_found',
+                    'message': 'Not found.',
+                    'request_id': uuid.uuid4().hex,
+                }
+            },
+        )
 
 
 def start(port=None):

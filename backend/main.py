@@ -410,7 +410,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 setup_logs()
 
-DEFAULT_ALLOWED_ORIGINS = 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3010,http://127.0.0.1:3010,http://localhost:3020,http://127.0.0.1:3020'
+DEFAULT_ALLOWED_ORIGINS = 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3010,http://127.0.0.1:3010,http://localhost:3020,http://127.0.0.1:3020,http://localhost:3030,http://127.0.0.1:3030'
 
 
 @app.middleware('http')
@@ -624,9 +624,13 @@ class CatalogueSave(BaseModel):
 
 
 @app.get('/health')
-@app.get('/health/live')
 def health():
     return {'status': 'ok'}
+
+
+@app.get('/health/live')
+def health_live():
+    return {'status': 'live'}
 
 
 @app.get('/health/ready')

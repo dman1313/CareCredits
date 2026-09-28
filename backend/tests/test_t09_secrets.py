@@ -30,16 +30,20 @@ class SecretSurfaceTests(unittest.TestCase):
         self.assertEqual(hits, [])
 
     def test_default_origins_are_local_only(self):
-        default = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3010,http://127.0.0.1:3010,http://localhost:3020,http://127.0.0.1:3020')
+        default = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3010,http://127.0.0.1:3010,http://localhost:3020,http://127.0.0.1:3020,http://localhost:3030,http://127.0.0.1:3030')
         self.assertNotIn('*', default)
         self.assertTrue(all(item.startswith('http://localhost') or item.startswith('http://127.0.0.1') for item in default.split(',')))
         self.assertIn('http://127.0.0.1:3020', default)
+        self.assertIn('http://127.0.0.1:3030', default)
         main = (ROOT / 'backend' / 'main.py').read_text(encoding='utf-8')
         compose = (ROOT / 'docker-compose.yml').read_text(encoding='utf-8')
         sample = (ROOT / '.env.sample').read_text(encoding='utf-8')
         self.assertIn('http://127.0.0.1:3020', main)
+        self.assertIn('http://127.0.0.1:3030', main)
         self.assertIn('http://127.0.0.1:3020', compose)
+        self.assertIn('http://127.0.0.1:3030', compose)
         self.assertIn('http://127.0.0.1:3020', sample)
+        self.assertIn('http://127.0.0.1:3030', sample)
 
     def test_built_frontend_assets_omit_service_secret_names(self):
         trees = [FRONTEND / '.next', FRONTEND / '.data']
@@ -56,6 +60,21 @@ class SecretSurfaceTests(unittest.TestCase):
                 for needle in needles:
                     if needle in text:
                         hits.append(f'{path.relative_to(ROOT)}:{needle}')
+        self.assertEqual(hits, [])
+
+    def test_runtime_logs_omit_service_secret_names(self):
+        logs = ROOT / '.data'
+        if not logs.exists():
+            self.skipTest('No runtime log directory in this checkout')
+        needles = ('TAVILY_API_KEY', 'MODEL_API_KEY', 'TYPESAFE_API_KEY', 'SCRAPER_SERVICE_TOKEN', 'POSTGRES_PASSWORD', 'GOOGLE_CLIENT_SECRET')
+        hits = []
+        for path in logs.rglob('*'):
+            if not path.is_file() or path.suffix.lower() not in {'.log', '.txt'}:
+                continue
+            text = path.read_text(encoding='utf-8', errors='ignore')
+            for needle in needles:
+                if needle in text:
+                    hits.append(f'{path.relative_to(ROOT)}:{needle}')
         self.assertEqual(hits, [])
 
     def test_compose_keeps_paid_secrets_on_scraper(self):
@@ -80,6 +99,9 @@ class SecretSurfaceTests(unittest.TestCase):
         self.assertNotIn('TYPESAFE_API_KEY', scraper)
         self.assertNotIn('GOOGLE_CLIENT', scraper)
         self.assertNotIn('SMTP_', scraper)
+        frontend = text.split('  frontend:', 1)[1]
+        self.assertIn('/health/live', frontend)
+        self.assertNotIn('TAVILY_API_KEY', frontend)
         dockerfile = (ROOT / 'backend' / 'Dockerfile').read_text(encoding='utf-8')
         self.assertIn('COPY config /app/config', dockerfile)
         self.assertIn('SCRAPE_TOPICS_FILE=/app/config/scrape_topics.json', dockerfile)

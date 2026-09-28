@@ -9,6 +9,7 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 CANDIDATES = [
     os.getenv('T08_FRONTEND_URL', '').rstrip('/'),
+    'http://127.0.0.1:3030',
     'http://127.0.0.1:3020',
     'http://127.0.0.1:3010',
     'http://127.0.0.1:3000',
@@ -42,6 +43,14 @@ def _current_carecredits(opener, candidate):
             break
     if not html_ok:
         return False
+    live = Request(candidate + '/health/live', method='GET', headers={'Accept': 'application/json'})
+    try:
+        with opener.open(live, timeout=3) as response:
+            health = json.loads(response.read().decode() or '{}')
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError):
+        return False
+    if not (isinstance(health, dict) and health.get('status') == 'live'):
+        return False
     probe = Request(
         candidate + '/api/v1/me',
         method='GET',
@@ -74,7 +83,7 @@ FRONTEND = _carecredits_frontend()
 class LivePortalWalkTests(unittest.TestCase):
     def setUp(self):
         if not FRONTEND:
-            self.skipTest('A current CareCredits frontend is not running on :3020, :3010, or :3000')
+            self.skipTest('A current CareCredits frontend is not running on :3030, :3020, :3010, or :3000')
         self.opener = build_opener(HTTPCookieProcessor(CookieJar()))
         self.origin = FRONTEND
 
@@ -111,6 +120,9 @@ class LivePortalWalkTests(unittest.TestCase):
         self.assertIn('text/html', live_type)
         live_html = live_raw.decode('utf-8', 'replace')
         self.assertIn('Skip to', live_html)
+        health_status, health_payload = self._json('GET', '/health/live')
+        self.assertEqual(health_status, 200, health_payload)
+        self.assertEqual(health_payload.get('status'), 'live')
         skip_at = live_html.lower().find('skip to')
         email_at = live_html.lower().find('autocomplete="username"')
         self.assertGreater(skip_at, -1)

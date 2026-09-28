@@ -30,8 +30,8 @@ def present(name: str) -> bool:
     return False
 
 
-def main() -> int:
-    checks = [
+def readiness_checks():
+    return [
         ('TAVILY_API_KEY', present('TAVILY_API_KEY')),
         ('MODEL_API_KEY', present('MODEL_API_KEY')),
         ('MODEL_ID', present('MODEL_ID')),
@@ -42,6 +42,14 @@ def main() -> int:
         ('MODEL_MAX_OUTPUT_TOKENS', present('MODEL_MAX_OUTPUT_TOKENS')),
         ('SCRAPER_SERVICE_TOKEN', present('SCRAPER_SERVICE_TOKEN')),
     ]
+
+
+def live_ready() -> bool:
+    return all(ok for _, ok in readiness_checks())
+
+
+def main() -> int:
+    checks = readiness_checks()
     # Match scraper/worker.py: unset URL defaults to local backend.
     backend_url = (os.getenv('BACKEND_INTERNAL_URL') or 'http://127.0.0.1:8000').strip()
     print('CareCredits DEMO-01 readiness (no secrets printed, no API calls):')
@@ -54,9 +62,9 @@ def main() -> int:
     print(f'  {"OK " if fixture.exists() else "NO "} fixture seed module')
     print(f'  {"OK " if live_ui.exists() else "NO "} /live demo shell')
 
-    live_ready = all(ok for _, ok in checks)
-    if live_ready:
-        print('Live DEMO-01 prerequisites look present. Run a bounded job with DEMO_MODE and record redacted T-10 evidence.')
+    live_ready_now = live_ready()
+    if live_ready_now:
+        print('Live DEMO-01 prerequisites look present. Set T10_LIVE=1 and run backend.tests.test_t10_live to spend one bounded Tavily+model call and record redacted evidence.')
         return 0
 
     missing = [label for label, ok in checks if not ok]
