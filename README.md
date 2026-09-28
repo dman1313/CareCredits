@@ -68,7 +68,7 @@ Local three-service development without Compose:
 python3 scripts/dev.py --demo
 ```
 
-`scripts/dev.py` binds the next free local ports when 8000 or 3000 are already taken, or you can pass `--backend-port` / `--frontend-port`. A second Next.js instance uses its own `NEXT_DIST_DIR` under `.data/` so an existing `next dev` lock on this frontend does not abort the stack. It points the backend at scraper `/health/ready` and copies model identity (not `MODEL_API_KEY`) so `/live` can show DEMO-01 service/integration status. Demo sign-in is `demo@carecredits.local` / `CareCredits-demo-2026`. That path uses labelled fictional courses and does not call Tavily.
+`scripts/dev.py` binds the next free local ports when 8000 or 3000 are already taken, or you can pass `--backend-port` / `--frontend-port`. A second Next.js instance uses its own `NEXT_DIST_DIR` under `frontend/.data/` (Turbopack will not use a dist dir outside the frontend app). It points the backend at scraper `/health/ready` and copies model identity (not `MODEL_API_KEY`) so `/live` can show DEMO-01 service/integration status. Demo sign-in is `demo@carecredits.local` / `CareCredits-demo-2026`. That path uses labelled fictional courses and does not call Tavily.
 
 ## Try live ingestion
 

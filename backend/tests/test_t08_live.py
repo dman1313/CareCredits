@@ -10,23 +10,16 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener
 CANDIDATES = [
     os.getenv('T08_FRONTEND_URL', '').rstrip('/'),
     'http://127.0.0.1:3020',
-    'http://127.0.0.1:8020',
     'http://127.0.0.1:3010',
     'http://127.0.0.1:3000',
 ]
-FRONTEND_ORIGIN = os.getenv('T08_ORIGIN', 'http://127.0.0.1:3010').rstrip('/')
-
-
-def _origin(candidate):
-    host = candidate.rsplit(':', 1)[-1]
-    return FRONTEND_ORIGIN if host in {'8000', '8010', '8020'} else candidate
 
 
 def _current_carecredits(opener, candidate):
     request = Request(
         candidate + '/api/v1/config',
         method='GET',
-        headers={'X-Care-Client': '1', 'Origin': _origin(candidate)},
+        headers={'X-Care-Client': '1', 'Origin': candidate},
     )
     try:
         with opener.open(request, timeout=3) as response:
@@ -35,10 +28,24 @@ def _current_carecredits(opener, candidate):
         return False
     if not (isinstance(payload, dict) and {'demo', 'signup_enabled'} <= set(payload)):
         return False
+    html_ok = False
+    for path in ('/live', '/'):
+        page = Request(candidate + path, method='GET', headers={'Accept': 'text/html'})
+        try:
+            with opener.open(page, timeout=3) as response:
+                ctype = response.headers.get('Content-Type') or ''
+                body = response.read().decode('utf-8', 'replace')
+        except (HTTPError, URLError, TimeoutError, OSError, ValueError):
+            continue
+        if 'text/html' in ctype and 'Skip to' in body:
+            html_ok = True
+            break
+    if not html_ok:
+        return False
     probe = Request(
         candidate + '/api/v1/me/audit',
         method='GET',
-        headers={'X-Care-Client': '1', 'Origin': _origin(candidate)},
+        headers={'X-Care-Client': '1', 'Origin': candidate},
     )
     try:
         with opener.open(probe, timeout=3):
@@ -67,9 +74,9 @@ FRONTEND = _carecredits_frontend()
 class LivePortalWalkTests(unittest.TestCase):
     def setUp(self):
         if not FRONTEND:
-            self.skipTest('A current CareCredits API is not running on :3020, :8020, :3010, or :3000')
+            self.skipTest('A current CareCredits frontend is not running on :3020, :3010, or :3000')
         self.opener = build_opener(HTTPCookieProcessor(CookieJar()))
-        self.origin = _origin(FRONTEND)
+        self.origin = FRONTEND
 
     def _open(self, method, path, body=None):
         data = None if body is None else json.dumps(body).encode()
@@ -99,6 +106,20 @@ class LivePortalWalkTests(unittest.TestCase):
             self.skipTest('Frontend is not running at ' + FRONTEND)
         if status != 200 or not isinstance(config, dict) or not config.get('demo'):
             self.skipTest('Live T-08 walk needs DEMO_MODE seed (demo@carecredits.local) at ' + FRONTEND)
+        live_status, live_type, live_raw = self._open('GET', '/live')
+        self.assertEqual(live_status, 200, live_raw[:200])
+        self.assertIn('text/html', live_type)
+        live_html = live_raw.decode('utf-8', 'replace')
+        self.assertIn('Skip to', live_html)
+        skip_at = live_html.lower().find('skip to')
+        email_at = live_html.lower().find('autocomplete="username"')
+        self.assertGreater(skip_at, -1)
+        if email_at > 0:
+            self.assertLess(skip_at, email_at)
+        home_status, home_type, home_raw = self._open('GET', '/')
+        self.assertEqual(home_status, 200, home_raw[:200])
+        self.assertIn('text/html', home_type)
+        self.assertIn('Skip to', home_raw.decode('utf-8', 'replace'))
         user = None
         for email in ('demo@carecredits.local', 'doctor@carecredits.local'):
             status, payload = self._json(

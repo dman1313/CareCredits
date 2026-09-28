@@ -392,9 +392,12 @@ export default function Home() {
   if (booting) {
     return (
       <div className="boot">
+        <a className="skip-link" href="#main-content">
+          Skip to content
+        </a>
         <Brand />
         <Loader2 className="spin" />
-        <p>Opening your workspace…</p>
+        <p id="main-content">Opening your workspace…</p>
       </div>
     );
   }

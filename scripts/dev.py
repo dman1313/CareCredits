@@ -123,7 +123,7 @@ def service_environments(
     frontend_env = {
         **common,
         'BACKEND_URL': api,
-        'NEXT_DIST_DIR': str(root / '.data' / ('next-dev-' + str(frontend_port))),
+        'NEXT_DIST_DIR': str(root / 'frontend' / '.data' / ('next-dev-' + str(frontend_port))),
     }
     return backend, scraper, frontend_env
 

@@ -42,7 +42,7 @@ export function LoginForm({
 
   return (
     <div className="login-page">
-      <a className="skip-link" href="#login-form">
+      <a className="skip-link" href="#main-content">
         Skip to sign in
       </a>
       <section className="login-story">
@@ -76,7 +76,7 @@ export function LoginForm({
         </div>
         <small>A little learning can make a lasting difference.</small>
       </section>
-      <section className="login-form" id="login-form">
+      <section className="login-form" id="main-content">
         <div>
           <span className="round-icon">
             <GraduationCap />

@@ -59,7 +59,7 @@ class DevPortTests(unittest.TestCase):
         self.assertEqual(scraper['BACKEND_INTERNAL_URL'], 'http://127.0.0.1:8000')
         self.assertNotIn('TYPESAFE_API_KEY', scraper)
         self.assertEqual(frontend['BACKEND_URL'], 'http://127.0.0.1:8000')
-        self.assertEqual(frontend['NEXT_DIST_DIR'], str(root / '.data' / 'next-dev-3000'))
+        self.assertEqual(frontend['NEXT_DIST_DIR'], str(root / 'frontend' / '.data' / 'next-dev-3000'))
         self.assertNotIn('MODEL_API_KEY', frontend)
         filled = apply_provisional_model({'MODEL_ID': '', 'TAVILY_API_KEY': 'keep'})
         self.assertEqual(filled['MODEL_ID'], 'Qwen/Qwen3-30B-A3B-Instruct-2507')

@@ -971,3 +971,30 @@ class PortalTests(unittest.TestCase):
                 db.query(Candidate).filter(Candidate.status=='pending', Candidate.source_key.like('demo-candidate-%')).count(),
                 2,
             )
+
+    def test_demo_mode_login_reseeds_documented_accounts(self):
+        from seed_demo import DEMO_PASSWORD
+        blocked = self.client.post(
+            '/api/v1/auth/login',
+            json={'email': 'demo@carecredits.local', 'password': DEMO_PASSWORD},
+        )
+        self.assertEqual(blocked.status_code, 401, blocked.text)
+        with patch.dict(os.environ, {'DEMO_MODE': 'true'}):
+            restored = self.client.post(
+                '/api/v1/auth/login',
+                json={'email': 'demo@carecredits.local', 'password': DEMO_PASSWORD},
+            )
+            self.assertEqual(restored.status_code, 200, restored.text)
+            self.assertEqual(restored.json()['email'], 'demo@carecredits.local')
+            self.client.post('/api/v1/auth/logout')
+            doctor = self.client.post(
+                '/api/v1/auth/login',
+                json={'email': 'doctor@carecredits.local', 'password': DEMO_PASSWORD},
+            )
+            self.assertEqual(doctor.status_code, 200, doctor.text)
+            self.assertEqual(doctor.json()['role'], 'doctor')
+            wrong = self.client.post(
+                '/api/v1/auth/login',
+                json={'email': 'demo@carecredits.local', 'password': 'Wrong-demo-password-999'},
+            )
+            self.assertEqual(wrong.status_code, 401, wrong.text)

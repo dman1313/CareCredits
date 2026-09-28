@@ -57,6 +57,8 @@ def sample(**overrides):
 
 class CatalogueApiTests(unittest.TestCase):
     def setUp(self):
+        if 'demo.db' in str(engine.url):
+            raise RuntimeError('Catalogue tests must not drop the live DEMO_MODE database')
         Base.metadata.drop_all(engine)
         Base.metadata.create_all(engine)
         self.Session = sessionmaker(bind=engine)

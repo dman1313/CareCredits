@@ -443,8 +443,12 @@ export default function LiveSearch() {
   if (booting) {
     return (
       <div className="dash">
-        <div className="gate">
+        <a className="skip-link" href="#main-content">
+          Skip to content
+        </a>
+        <div className="gate" id="main-content">
           <Loader2 className="spin" />
+          <p>Opening CareCredits…</p>
         </div>
       </div>
     );
@@ -454,10 +458,10 @@ export default function LiveSearch() {
     return (
       <div className="dash">
         <div className="gate">
-          <a className="skip-link" href="#live-sign-in">
+          <a className="skip-link" href="#main-content">
             Skip to sign in
           </a>
-          <form id="live-sign-in" className="gate-card" onSubmit={submitAccount} aria-busy={busy}>
+          <form id="main-content" className="gate-card" onSubmit={submitAccount} aria-busy={busy}>
             <div className="brand">
               <Mark />
               <div>
@@ -534,7 +538,7 @@ export default function LiveSearch() {
 
   return (
     <div className="dash">
-      <a className="skip-link" href="#live-main">
+      <a className="skip-link" href="#main-content">
         Skip to content
       </a>
       <div className="app-shell">
@@ -597,7 +601,7 @@ export default function LiveSearch() {
           </div>
         </aside>
         {open && <button className="veil" onClick={() => setOpen(false)} aria-label="Close navigation" />}
-        <main className="main" id="live-main">
+        <main className="main" id="main-content">
           <header className="topbar">
             <button className="menu-button" onClick={() => setOpen(true)} aria-label="Open navigation">
               <Menu />

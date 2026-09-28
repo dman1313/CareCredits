@@ -4,6 +4,9 @@ from portal_models import Account, Candidate, Course, Job, Record, fill_course
 from security import password_hash
 from shared.contracts import Training
 
+DEMO_PASSWORD = 'CareCredits-demo-2026'
+DEMO_EMAILS = ('demo@carecredits.local', 'doctor@carecredits.local')
+
 
 REVIEW_QUOTE = (
     'Fictional demo CME: Asthma updates for GPs by Demo CME Network in Malaysia Kuala Lumpur online. '
@@ -51,10 +54,10 @@ def _candidate_payload(title, start_date, source_key_suffix):
 def seed(db):
     from main import today
 
-    demo_hash = password_hash('CareCredits-demo-2026')
+    demo_hash = password_hash(DEMO_PASSWORD)
     for email, name, role in [
-        ('demo@carecredits.local', 'Dr Aisha Rahman', 'operator'),
-        ('doctor@carecredits.local', 'Dr Daniel Tan', 'doctor'),
+        (DEMO_EMAILS[0], 'Dr Aisha Rahman', 'operator'),
+        (DEMO_EMAILS[1], 'Dr Daniel Tan', 'doctor'),
     ]:
         existing = db.query(Account).filter_by(email=email).first()
         if existing:
