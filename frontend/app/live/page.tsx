@@ -42,7 +42,27 @@ const nav = [
   [ShieldCheck, 'About credits'],
 ] as const;
 
-const tones = ['sky', 'mint', 'coral'] as const;
+function DateChip({ value }: { value?: string | null }) {
+  if (!value) {
+    return (
+      <span className="event-date">
+        <strong>—</strong>
+        <small>TBC</small>
+      </span>
+    );
+  }
+  const date = new Date(value + 'T00:00:00+08:00');
+  return (
+    <span className="event-date">
+      <strong>
+        {date.toLocaleDateString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', day: 'numeric' })}
+      </strong>
+      <small>
+        {date.toLocaleDateString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', month: 'short' })}
+      </small>
+    </span>
+  );
+}
 
 function Mark() {
   return (
@@ -839,9 +859,9 @@ export default function LiveSearch() {
                     <p className="empty-copy">Finding your training…</p>
                   ) : courses.length ? (
                     <>
-                      {courses.map((course, index) => (
+                      {courses.map((course) => (
                         <button key={course.id} className="event" onClick={() => openCourse(course)}>
-                          <span className={`event-photo ${tones[index % tones.length]}`} />
+                          <DateChip value={course.start_date} />
                           <span className="event-name">
                             <strong>
                               {course.title}
@@ -973,9 +993,14 @@ export default function LiveSearch() {
                     Advisory catalogue matches by city and recent learning mode. CareCredits does not decide MMC, MOH, or APC compliance.
                   </p>
                   {suggestions.length ? (
-                    suggestions.slice(0, 5).map((item, index) => (
-                      <article key={item.id} className="recommendation">
-                        <div className={`rec-photo ${index % 2 ? 'speaker' : 'doctor'}`} />
+                    suggestions.slice(0, 5).map((item) => (
+                      <button
+                        key={item.id}
+                        className="recommendation"
+                        type="button"
+                        onClick={() => openCourse({ id: item.id } as Course)}
+                      >
+                        <DateChip value={item.start_date} />
                         <div>
                           <h3>{item.title}</h3>
                           <p>{item.provider || 'Catalogue listing'}</p>
@@ -985,14 +1010,8 @@ export default function LiveSearch() {
                             {item.points != null ? ` · ${item.points} points` : ''}
                           </small>
                         </div>
-                        <button
-                          className="more"
-                          onClick={() => openCourse({ id: item.id } as Course)}
-                          aria-label={'Open ' + item.title}
-                        >
-                          ⋮
-                        </button>
-                      </article>
+                        <ChevronRight />
+                      </button>
                     ))
                   ) : (
                     <p className="empty-copy">No upcoming catalogue suggestions yet. Save a city or browse Discover.</p>
@@ -1130,6 +1149,7 @@ export default function LiveSearch() {
                       <>
                         {records.map((course) => (
                           <button key={course.id} className="event" type="button" onClick={() => openCourse(course)}>
+                            <DateChip value={course.start_date} />
                             <span className="event-name">
                               <strong>{course.title}</strong>
                               <small>

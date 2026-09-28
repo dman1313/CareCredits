@@ -39,6 +39,8 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
   const [forceScrape, setForceScrape] = useState(false);
   const [scrapeBusy, setScrapeBusy] = useState(false);
   const [scrapeResult, setScrapeResult] = useState<ScrapeResult | null>(null);
+  const [digestBusy, setDigestBusy] = useState(false);
+  const [digestResult, setDigestResult] = useState<{ sent: number; failed: number; day: string } | null>(null);
   const keyRef = useRef('');
   const CANDIDATE_PAGE = 20;
 
@@ -96,6 +98,18 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
     return () => window.clearInterval(timer);
   }, [job?.id, job?.status]);
 
+  async function runDigests() {
+    setDigestBusy(true);
+    setError('');
+    try {
+      setDigestResult(await api('/admin/digests/run', { method: 'POST' }));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDigestBusy(false);
+    }
+  }
+
   async function queueDaily() {
     if (!liveReady) {
       setError('Live discovery stays off until Tavily and the open-weight model are ready.');
@@ -142,6 +156,10 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
 
   async function retry() {
     if (!job?.id) return;
+    if (!liveReady) {
+      setError('Live discovery stays off until Tavily and the open-weight model are ready.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -211,6 +229,17 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
           ) : null}
         </div>
       ) : null}
+      <div className="empty-copy" data-testid="live-digest-run">
+        <button className="secondary" type="button" disabled={digestBusy} onClick={runDigests}>
+          {digestBusy ? 'Sending…' : 'Send due digests'}
+        </button>
+        {digestResult ? (
+          <p>
+            Digest {digestResult.day}: {digestResult.sent} sent, {digestResult.failed} failed. Catalogue and progress
+            only — no Tavily call.
+          </p>
+        ) : null}
+      </div>
       {jobs.length ? (
         <div className="empty-copy" data-testid="live-job-list">
           <p>Recent jobs</p>
@@ -291,7 +320,7 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
             <p key={warning}>{warning}</p>
           ))}
           {job.status === 'interrupted' && (
-            <button className="secondary" type="button" disabled={busy} onClick={retry}>
+            <button className="secondary" type="button" disabled={busy || !liveReady || statusLoading} onClick={retry}>
               Retry interrupted job
             </button>
           )}

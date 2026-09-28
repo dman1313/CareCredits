@@ -238,6 +238,31 @@ class CatalogueApiTests(unittest.TestCase):
         with patch('main._scraper_service_status', return_value={'tavily_configured': True, 'model_ready': True}):
             self.assertTrue(_paid_scrape_ready())
 
+    def test_operator_api_blocks_tavily_spend_without_model(self):
+        self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': 'CareCredits-demo-2026'})
+        with patch('main._scraper_service_status', return_value={'tavily_configured': True, 'model_ready': False}):
+            blocked = self.client.post(
+                '/api/v1/admin/ingestion-jobs',
+                json={'query': 'GP CPD Kuala Lumpur'},
+                headers={'Idempotency-Key': 'tavily-only-block'},
+            )
+            self.assertEqual(blocked.status_code, 409, blocked.text)
+            self.assertEqual(
+                blocked.json()['error']['message'],
+                'Live discovery stays off until Tavily and the open-weight model are ready.',
+            )
+            daily = self.client.post('/api/v1/admin/daily-scrape')
+            self.assertEqual(daily.status_code, 409, daily.text)
+            retry = self.client.post('/api/v1/admin/ingestion-jobs/missing-job/retry')
+            self.assertEqual(retry.status_code, 409, retry.text)
+        with patch('main._scraper_service_status', return_value={'tavily_configured': True, 'model_ready': True}):
+            allowed = self.client.post(
+                '/api/v1/admin/ingestion-jobs',
+                json={'query': 'GP CPD Kuala Lumpur'},
+                headers={'Idempotency-Key': 'tavily-ready-allow'},
+            )
+            self.assertEqual(allowed.status_code, 202, allowed.text)
+
     def test_changed_content_queues_refresh_without_duplicate(self):
         training = sample()
         with patch.dict(os.environ, {'CATALOGUE_AUTO_PUBLISH_NEW': 'true'}):

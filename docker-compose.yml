@@ -22,7 +22,7 @@ services:
       APP_ENV: ${APP_ENV:-development}
       DEMO_MODE: ${DEMO_MODE:-false}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-false}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:3010,http://127.0.0.1:3010}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:3010,http://127.0.0.1:3010,http://localhost:3020,http://127.0.0.1:3020}
       SCRAPER_SERVICE_TOKEN: ${SCRAPER_SERVICE_TOKEN:?Run scripts/setup_integrations.py}
       TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
       JEV_CONFIDENCE_FLOOR: ${JEV_CONFIDENCE_FLOOR:-0.7}

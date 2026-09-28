@@ -408,13 +408,15 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 setup_logs()
 
+DEFAULT_ALLOWED_ORIGINS = 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3010,http://127.0.0.1:3010,http://localhost:3020,http://127.0.0.1:3020'
+
 
 @app.middleware('http')
 async def request_boundary(request: Request, call_next):
     started = time.perf_counter()
     request.state.request_id = secrets.token_hex(8)
     if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') and not request.url.path.startswith('/internal/'):
-        origins = [item.strip() for item in os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3010,http://127.0.0.1:3010').split(',') if item.strip()]
+        origins = [item.strip() for item in os.getenv('ALLOWED_ORIGINS', DEFAULT_ALLOWED_ORIGINS).split(',') if item.strip()]
         origin = (request.headers.get('origin') or '').strip()
         if request.headers.get('x-care-client') != '1' or not origin or origin not in origins:
             return envelope(403, 'Request origin not allowed.', request)
@@ -676,10 +678,20 @@ def _scraper_service_status():
     }
 
 
+PAID_SCRAPE_BLOCKED = 'Live discovery stays off until Tavily and the open-weight model are ready.'
+
+
 def _paid_scrape_ready(scraper=None):
     """Auto daily scrape spends Tavily; require the same live gate as /live enqueue."""
     scraper = scraper if scraper is not None else _scraper_service_status()
     return bool(scraper.get('tavily_configured') and scraper.get('model_ready'))
+
+
+def _reject_tavily_spend_without_model():
+    """UI already blocks unpaid-ready enqueue; keep curl/API from spending Tavily-only."""
+    scraper = _scraper_service_status()
+    if scraper.get('tavily_configured') and not scraper.get('model_ready'):
+        raise HTTPException(409, PAID_SCRAPE_BLOCKED)
 
 
 @app.get('/api/v1/admin/services')
@@ -1215,6 +1227,7 @@ def job_json(job):
 
 @app.post('/api/v1/admin/ingestion-jobs', status_code=202)
 def create_job(body: NewJob, request: Request, user=Depends(operator), db: Session = Depends(get_db)):
+    _reject_tavily_spend_without_model()
     key = request.headers.get('Idempotency-Key', '')
     if not 8 <= len(key) <= 100:
         raise HTTPException(422, 'Supply an Idempotency-Key of 8–100 characters.')
@@ -1257,6 +1270,7 @@ def job_detail(job_id: str, user=Depends(operator), db: Session = Depends(get_db
 
 @app.post('/api/v1/admin/ingestion-jobs/{job_id}/retry', status_code=202)
 def retry_job(job_id: str, user=Depends(operator), db: Session = Depends(get_db)):
+    _reject_tavily_spend_without_model()
     expire_jobs(db)
     job = db.get(Job, job_id)
     if not job:
@@ -1591,6 +1605,7 @@ def scrape_topics(user=Depends(operator)):
 
 @app.post('/api/v1/admin/daily-scrape', status_code=202)
 def trigger_daily_scrape(force: bool = False, user=Depends(operator), db: Session = Depends(get_db)):
+    _reject_tavily_spend_without_model()
     result = enqueue_daily(db, force=force)
     if result.get('error'):
         raise HTTPException(503, result['error'])

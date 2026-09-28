@@ -32,6 +32,8 @@ export function IngestionPanel({
   forceScrape = false,
   onForceScrape,
   scrapeResult,
+  onRunDigests,
+  digestResult,
   audits = [],
 }: {
   jobQuery: string;
@@ -65,6 +67,8 @@ export function IngestionPanel({
   forceScrape?: boolean;
   onForceScrape?: (next: boolean) => void;
   scrapeResult?: { enqueued: number; skipped: number; day: string; ceiling: number; topics: number } | null;
+  onRunDigests?: () => void;
+  digestResult?: { sent: number; failed: number; day: string } | null;
   audits?: AuditItem[];
 }) {
   const [liveReady, setLiveReady] = useState(false);
@@ -134,6 +138,11 @@ export function IngestionPanel({
               Queue daily scrape
             </button>
           )}
+          {onRunDigests && (
+            <button className="secondary" type="button" disabled={saving || submitting} onClick={onRunDigests}>
+              Send due digests
+            </button>
+          )}
         </div>
         {onDailyScrape && onForceScrape ? (
           <label className="check-row">
@@ -145,6 +154,12 @@ export function IngestionPanel({
           <p className="small-note">
             Daily scrape {scrapeResult.day}: {scrapeResult.enqueued} queued, {scrapeResult.skipped} skipped, ceiling{' '}
             {scrapeResult.ceiling}, {scrapeResult.topics} topics.
+          </p>
+        ) : null}
+        {digestResult ? (
+          <p className="small-note">
+            Digest {digestResult.day}: {digestResult.sent} sent, {digestResult.failed} failed. Catalogue and progress
+            only — no Tavily call.
           </p>
         ) : null}
         {topics.length ? (
@@ -220,7 +235,14 @@ export function IngestionPanel({
               <div className="button-row">
                 <span className={'status ' + j.status}>{j.status}</span>
                 {j.status === 'interrupted' && (
-                  <button className="secondary" disabled={saving} onClick={() => onRetry(j.id)}>
+                  <button
+                    className="secondary"
+                    disabled={saving || paidBlocked}
+                    onClick={() => {
+                      if (paidBlocked) return;
+                      onRetry(j.id);
+                    }}
+                  >
                     Retry job
                   </button>
                 )}

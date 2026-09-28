@@ -102,6 +102,7 @@ export default function Home() {
     ceiling: number;
     topics: number;
   } | null>(null);
+  const [digestResult, setDigestResult] = useState<{ sent: number; failed: number; day: string } | null>(null);
   const [learning, setLearning] = useState<LearningFilters>({ signupStatus: '', attended: '', page: 1 });
   const [recordsTotal, setRecordsTotal] = useState(0);
   const jobKey = useRef('');
@@ -608,6 +609,7 @@ export default function Home() {
               forceScrape={forceScrape}
               onForceScrape={setForceScrape}
               scrapeResult={scrapeResult}
+              digestResult={digestResult}
               audits={operatorAudits}
               onDailyScrape={async () => {
                 setSaving(true);
@@ -618,6 +620,21 @@ export default function Home() {
                   await refreshOperator();
                   setNotice(
                     `Daily scrape ${result.day}: ${result.enqueued} queued, ${result.skipped} skipped (ceiling ${result.ceiling}).`,
+                  );
+                } catch (e) {
+                  fail(e, () => refreshOperator());
+                } finally {
+                  setSaving(false);
+                }
+              }}
+              onRunDigests={async () => {
+                setSaving(true);
+                setError('');
+                try {
+                  const result = await api('/admin/digests/run', { method: 'POST' });
+                  setDigestResult(result);
+                  setNotice(
+                    `Digest ${result.day}: ${result.sent} sent, ${result.failed} failed. No Tavily call.`,
                   );
                 } catch (e) {
                   fail(e, () => refreshOperator());
