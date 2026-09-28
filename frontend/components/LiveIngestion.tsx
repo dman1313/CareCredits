@@ -25,6 +25,7 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
   const [maxResults, setMaxResults] = useState(3);
   const [job, setJob] = useState<Job | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [candidatesLoading, setCandidatesLoading] = useState(true);
   const [candidatePage, setCandidatePage] = useState(1);
   const [candidateTotal, setCandidateTotal] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -45,19 +46,27 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
   const CANDIDATE_PAGE = 20;
 
   async function loadCandidates(page = candidatePage) {
+    setCandidatesLoading(true);
+    setError('');
     try {
-      const data = await api('/admin/candidates?page=' + page + '&page_size=' + CANDIDATE_PAGE);
-      const total = data.total || 0;
-      const pageCount = Math.max(1, Math.ceil(total / CANDIDATE_PAGE));
-      if (page > pageCount) {
-        await loadCandidates(pageCount);
-        return;
+      let current = page;
+      while (true) {
+        const data = await api('/admin/candidates?page=' + current + '&page_size=' + CANDIDATE_PAGE);
+        const total = data.total || 0;
+        const pageCount = Math.max(1, Math.ceil(total / CANDIDATE_PAGE));
+        if (current > pageCount) {
+          current = pageCount;
+          continue;
+        }
+        setCandidates(data.items || []);
+        setCandidateTotal(total);
+        setCandidatePage(current);
+        break;
       }
-      setCandidates(data.items || []);
-      setCandidateTotal(total);
-      setCandidatePage(page);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setCandidatesLoading(false);
     }
   }
 
@@ -328,7 +337,11 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
       )}
       <div data-testid="live-review-queue">
         <h3 className="empty-copy">Review candidates</h3>
-        {candidates.length ? (
+        {candidatesLoading && !candidates.length ? (
+          <p className="empty-copy" role="status" aria-busy="true" data-testid="live-review-loading">
+            Loading review candidates…
+          </p>
+        ) : candidates.length ? (
           <>
             {candidates.map((item) => (
               <CandidateCard
@@ -378,7 +391,12 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
             )}
           </>
         ) : (
-          <p className="empty-copy">No candidates awaiting review.</p>
+          <p className="empty-copy" data-testid="live-review-empty">
+            No candidates awaiting review.{' '}
+            <button className="text-link" type="button" onClick={() => loadCandidates(1)}>
+              Retry
+            </button>
+          </p>
         )}
       </div>
     </section>

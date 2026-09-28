@@ -122,6 +122,7 @@ export default function LiveSearch() {
   const [suggestions, setSuggestions] = useState<
     { id: string; title: string; provider?: string; start_date?: string | null; city?: string | null; reason?: string; points?: number | null }[]
   >([]);
+  const [suggestionsBusy, setSuggestionsBusy] = useState(false);
   const [certBusy, setCertBusy] = useState(false);
   const [digestBusy, setDigestBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -245,6 +246,7 @@ export default function LiveSearch() {
 
   async function loadWorkspace(nextCity = city, nextState = state) {
     await search({ city: nextCity, state: nextState, page: 1 });
+    setSuggestionsBusy(true);
     try {
       const [nextProgress, digest, nextSuggestions, mine] = await Promise.all([
         api('/me/progress?year=' + year),
@@ -259,6 +261,8 @@ export default function LiveSearch() {
       await loadLearning(learningFilter);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setSuggestionsBusy(false);
     }
   }
 
@@ -349,6 +353,8 @@ export default function LiveSearch() {
     const nextState = state || user.state || '';
     if (!city && user.city) setCity(user.city);
     if (!state && user.state) setState(user.state);
+    setSuggestionsBusy(true);
+    setLoading(true);
     loadWorkspace(nextCity, nextState).catch(() => {});
   }, [user]);
 
@@ -848,10 +854,12 @@ export default function LiveSearch() {
                             : 'Listed training'}
                       </h2>
                     </div>
-                    <p>{total} events</p>
+                    <p>{loading ? 'Searching…' : `${total} event${total === 1 ? '' : 's'}`}</p>
                   </div>
                   {loading ? (
-                    <p className="empty-copy">Finding your training…</p>
+                    <p className="empty-copy" role="status" aria-busy="true" data-testid="live-search-loading">
+                      Finding your training…
+                    </p>
                   ) : courses.length ? (
                     <>
                       {courses.map((course) => (
@@ -904,7 +912,12 @@ export default function LiveSearch() {
                       )}
                     </>
                   ) : (
-                    <p className="empty-copy">No matching training. Try a broader topic or clear filters.</p>
+                    <p className="empty-copy" data-testid="live-search-empty">
+                      No matching training. Try a broader topic or clear filters.{' '}
+                      <button className="text-link" type="button" onClick={() => search()}>
+                        Retry
+                      </button>
+                    </p>
                   )}
                 </section>
               </div>
@@ -987,7 +1000,11 @@ export default function LiveSearch() {
                   <p className="empty-copy">
                     Advisory catalogue matches by city and recent learning mode. CareCredits does not decide MMC, MOH, or APC compliance.
                   </p>
-                  {suggestions.length ? (
+                  {suggestionsBusy && !suggestions.length ? (
+                    <p className="empty-copy" role="status" aria-busy="true" data-testid="live-suggestions-loading">
+                      Loading suggestions…
+                    </p>
+                  ) : suggestions.length ? (
                     suggestions.slice(0, 5).map((item) => (
                       <button
                         key={item.id}
@@ -1009,7 +1026,12 @@ export default function LiveSearch() {
                       </button>
                     ))
                   ) : (
-                    <p className="empty-copy">No upcoming catalogue suggestions yet. Save a city or browse Discover.</p>
+                    <p className="empty-copy" data-testid="live-suggestions-empty">
+                      No upcoming catalogue suggestions yet. Save a city or browse Discover.{' '}
+                      <button className="text-link" type="button" onClick={() => loadWorkspace()}>
+                        Retry
+                      </button>
+                    </p>
                   )}
                 </section>
                 <section className="card">

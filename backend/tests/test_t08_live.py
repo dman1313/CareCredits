@@ -10,6 +10,7 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener
 CANDIDATES = [
     os.getenv('T08_FRONTEND_URL', '').rstrip('/'),
     'http://127.0.0.1:3030',
+    'http://127.0.0.1:3021',
     'http://127.0.0.1:3020',
     'http://127.0.0.1:3010',
     'http://127.0.0.1:3000',
