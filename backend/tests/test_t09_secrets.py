@@ -1,5 +1,6 @@
 """T-09: secrets stay off the client; origins and unauthenticated user routes stay closed."""
 import os
+import re
 import unittest
 from pathlib import Path
 
@@ -80,6 +81,24 @@ class SecretSurfaceTests(unittest.TestCase):
             for needle in needles:
                 if needle in text:
                     hits.append(f'{path.relative_to(ROOT)}:{needle}')
+        self.assertEqual(hits, [])
+
+    def test_source_tree_omits_live_secret_values(self):
+        skip_parts = {'.git', '.venv', 'node_modules', '.next', '.data', 'dist', '__pycache__'}
+        allow = {'tvly-test-only'}
+        hits = []
+        for path in ROOT.rglob('*'):
+            if not path.is_file() or any(part in skip_parts for part in path.parts):
+                continue
+            if path.name.startswith('.env') or path.suffix.lower() in {'.db', '.pem', '.key'}:
+                continue
+            if path.suffix.lower() not in {'.py', '.ts', '.tsx', '.js', '.jsx', '.json', '.md', '.yml', '.yaml', '.txt', '.sample', '.mjs'}:
+                continue
+            text = path.read_text(encoding='utf-8', errors='ignore')
+            for token in set(re.findall(r'tvly-[A-Za-z0-9_-]+', text)):
+                if token not in allow:
+                    hits.append(str(path.relative_to(ROOT)))
+                    break
         self.assertEqual(hits, [])
 
     def test_compose_keeps_paid_secrets_on_scraper(self):

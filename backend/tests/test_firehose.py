@@ -95,7 +95,7 @@ class FirehoseTests(unittest.TestCase):
             }],
             'warnings': [],
         }
-        with patch('scraper.worker.discover', return_value=tavily), patch('scraper.worker.firehose_configured', return_value=True), patch('scraper.worker.firehose_discover', return_value=extra) as firehose, patch.dict(os.environ, {'MODEL_API_KEY': ''}):
+        with patch('scraper.worker.discover', return_value=tavily), patch('scraper.worker.firehose_configured', return_value=True), patch('scraper.worker.firehose_discover', return_value=extra) as firehose, patch('scraper.worker.configuration', return_value='https://example.org/v1'), patch('scraper.worker.extract_training', return_value=[]), patch('scraper.worker.heuristic_extract', return_value=[]):
             result = run_job({'query': 'GP', 'lease_token': 'test'}, lambda: None)
         urls = [item['url'] for item in result['sources']]
         self.assertIn('https://example.org/tavily', urls)
@@ -119,7 +119,11 @@ class FirehoseTests(unittest.TestCase):
         }
         with patch('scraper.worker.discover', return_value=tavily), patch(
             'scraper.worker.firehose_configured', return_value=True
-        ), patch('scraper.worker.firehose_discover') as firehose, patch.dict(os.environ, {'MODEL_API_KEY': ''}):
+        ), patch('scraper.worker.firehose_discover') as firehose, patch(
+            'scraper.worker.configuration', return_value='https://example.org/v1'
+        ), patch('scraper.worker.extract_training', return_value=[]), patch(
+            'scraper.worker.heuristic_extract', return_value=[]
+        ):
             result = run_job({'query': 'GP', 'lease_token': 'test', 'max_results': 5}, lambda: None)
         firehose.assert_not_called()
         self.assertEqual(len(result['sources']), 5)

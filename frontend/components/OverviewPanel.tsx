@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, BookOpen, GraduationCap } from 'lucide-react';
+import { ArrowRight, GraduationCap } from 'lucide-react';
 import { AuditItem, Course, Progress, Suggestion, formatDate } from '@/lib/portal';
 import { CourseCard, Empty, Loading } from '@/components/CourseList';
 
@@ -68,13 +68,6 @@ export function OverviewPanel({
             <button className="light-btn" onClick={onLearning}>
               Open my learning <ArrowRight size={16} />
             </button>
-          </div>
-          <div className="hero-art" aria-hidden="true">
-            <div className="orbit orbit-one" />
-            <div className="orbit orbit-two" />
-            <BookOpen strokeWidth={1} size={78} />
-            <span className="art-spark">✦</span>
-            <span className="art-plus">+</span>
           </div>
         </section>
         <section className="summary-card">

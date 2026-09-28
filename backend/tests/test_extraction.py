@@ -52,19 +52,18 @@ class ModelTests(unittest.TestCase):
             with self.assertRaises(ExtractionError) as error:extract_training(self.source,client)
             self.assertNotIn('test-secret',str(error.exception))
 
-    def test_missing_model_still_runs_tavily(self):
-        sources=[{
-            'url':'https://example.org/event','title':'GP course','snippet':'Snippet',
-            'raw_content':'Page text','extraction_status':'success','verification_status':'unverified',
-        }]
-        with patch.dict(os.environ,{'MODEL_API_KEY':''}),patch('scraper.worker.discover',return_value={'sources':sources,'warnings':[]}) as search:
-            result=run_job({'query':'GP','lease_token':'test'},lambda:None)
-        search.assert_called_once()
-        self.assertEqual(result['status'],'partial')
-        self.assertEqual(result['candidates'],[])
-        self.assertEqual(result['sources'][0]['url'],'https://example.org/event')
-        self.assertNotIn('raw_content',result['sources'][0])
-        self.assertTrue(any('model' in warning.lower() or 'heuristic' in warning.lower() for warning in result['warnings']))
+    def test_missing_model_skips_tavily(self):
+        with patch.dict(os.environ, {'MODEL_API_KEY': ''}), patch(
+            'scraper.worker.discover'
+        ) as search, patch('scraper.worker.firehose_discover') as firehose:
+            result = run_job({'query': 'GP', 'lease_token': 'test'}, lambda: None)
+        search.assert_not_called()
+        firehose.assert_not_called()
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['candidates'], [])
+        self.assertEqual(result['sources'], [])
+        self.assertIsNone(result['usage']['tavily_credits'])
+        self.assertTrue(any('Tavily Search was not called' in warning for warning in result['warnings']))
 
     def test_snippet_only_sources_are_held_not_auto_saved(self):
         from types import SimpleNamespace
@@ -97,39 +96,25 @@ class ModelTests(unittest.TestCase):
         self.assertTrue(any('snippet-only' in warning.lower() for warning in result['warnings']))
         self.assertFalse(any('catalogue/save' in path or 'catalogue/connect' in path for path in called))
 
-    def test_missing_model_holds_heuristic_extracts(self):
-        from types import SimpleNamespace
-        text = (
-            'Primary Care Update organised by Medical School in Kuala Lumpur, Malaysia. '
-            'Conference 2026-06-12. In-person primary care conference.'
-        )
-        sources = [{
-            'url': 'https://example.org/primary-care',
-            'title': 'Primary Care Update',
-            'snippet': text,
-            'raw_content': text,
-            'extraction_status': 'success',
-            'verification_status': 'unverified',
-        }]
+    def test_missing_model_skips_tavily_before_heuristic(self):
         called = []
 
         class FakeClient:
             def get(self, path):
                 called.append(path)
-                return SimpleNamespace(status_code=200, json=lambda: {})
+                return None
 
             def post(self, path, json=None):
                 called.append(path)
-                return SimpleNamespace(status_code=200, json=lambda: {'decision': 'new'})
+                return None
 
-        with patch.dict(os.environ, {'MODEL_API_KEY': ''}), patch(
-            'scraper.worker.discover', return_value={'sources': sources, 'warnings': []}
-        ):
+        with patch.dict(os.environ, {'MODEL_API_KEY': ''}), patch('scraper.worker.discover') as search:
             result = run_job({'query': 'GP', 'lease_token': 'test', 'id': 'job-1'}, lambda: None, FakeClient())
-        self.assertTrue(result['candidates'], result)
-        self.assertEqual(result['candidates'][0]['model_id'], 'heuristic-v1')
-        self.assertTrue(any('open-weight model is not configured' in warning.lower() for warning in result['warnings']))
-        self.assertFalse(any('catalogue/save' in path or 'catalogue/connect' in path for path in called))
+        search.assert_not_called()
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['candidates'], [])
+        self.assertEqual(called, [])
+        self.assertTrue(any('Tavily Search was not called' in warning for warning in result['warnings']))
 
     def test_heuristic_extracts_malaysia_event_without_model(self):
         from scraper.extraction import heuristic_extract
@@ -299,14 +284,14 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(result['candidates'],[])
             model.assert_not_called()
 
-    def test_empty_search_skips_model_configuration(self):
-        with patch.dict(os.environ, {'MODEL_API_KEY': ''}, clear=False), patch(
-            'scraper.worker.discover', return_value={'sources': [], 'warnings': []}
-        ), patch('scraper.worker.configuration') as config:
+    def test_empty_search_skips_extract_after_model_is_ready(self):
+        with patch('scraper.worker.discover', return_value={'sources': [], 'warnings': []}), patch(
+            'scraper.worker.extract_training'
+        ) as model:
             result = run_job({'query': 'GP', 'lease_token': 'test'}, lambda: None)
         self.assertEqual(result['status'], 'succeeded')
         self.assertEqual(result['warnings'], [])
-        config.assert_not_called()
+        model.assert_not_called()
 
     def test_missing_model_key_or_confirmation_blocks_configuration(self):
         from scraper.extraction import configuration
@@ -413,9 +398,14 @@ class ModelTests(unittest.TestCase):
             if beats['n'] > 1:
                 raise ExtractionError('Job deadline reached; retry explicitly if needed.')
 
-        with patch.dict(os.environ, {'MODEL_API_KEY': ''}), patch(
+        from scraper.extraction import heuristic_extract
+
+        with patch(
             'scraper.worker.discover',
             return_value={'sources': sources, 'warnings': [], 'usage': {'tavily_credits': 2}},
+        ), patch(
+            'scraper.worker.extract_training',
+            side_effect=lambda source, usage=None, **kwargs: heuristic_extract(source),
         ):
             result = run_job({'query': 'GP', 'lease_token': 'test', 'id': 'job-1'}, heartbeat)
         self.assertEqual(result['status'], 'partial')

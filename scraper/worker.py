@@ -122,6 +122,17 @@ def run_job(job, heartbeat, client=None):
     warnings, candidates, sources = [], [], []
     tavily_credits = None
     try:
+        configuration()
+    except ExtractionError as exc:
+        return {
+            'lease_token': job['lease_token'],
+            'candidates': [],
+            'sources': [],
+            'warnings': [str(exc) + ' Tavily Search was not called until the open-weight model is ready.'],
+            'status': 'failed',
+            'usage': {'tavily_credits': None, 'model_tokens': None, 'catalogue_saved': 0},
+        }
+    try:
         limit = max(1, min(int(job.get('max_results') or 5), 5))
         result = discover(job['query'], limit)
         warnings.extend(result['warnings'])
@@ -143,12 +154,6 @@ def run_job(job, heartbeat, client=None):
                 'status': 'partial' if warnings else 'succeeded',
                 'usage': {'tavily_credits': tavily_credits, 'model_tokens': None, 'catalogue_saved': 0},
             }
-        model_ready = True
-        try:
-            configuration()
-        except ExtractionError as exc:
-            model_ready = False
-            warnings.append(str(exc) + ' Using evidence-gated heuristic extraction; Tavily sources are still saved.')
         held = []
         model_usage = {}
         try:
@@ -159,9 +164,9 @@ def run_job(job, heartbeat, client=None):
                 if not raw and not snippet:
                     continue
                 snippet_only = (not raw) or str(source.get('extraction_status') or '') == 'failed'
-                hold_for_review = snippet_only or not model_ready
+                hold_for_review = snippet_only
                 try:
-                    if model_ready and not snippet_only:
+                    if not snippet_only:
                         try:
                             page_candidates = extract_training(source, usage=model_usage)
                         except ExtractionError as exc:
@@ -175,11 +180,8 @@ def run_job(job, heartbeat, client=None):
                     continue
                 if hold_for_review:
                     held.extend(page_candidates)
-                    if page_candidates:
-                        if not model_ready:
-                            warnings.append('Heuristic extraction held for review; open-weight model is not configured.')
-                        elif snippet_only:
-                            warnings.append('Snippet-only source kept for review; not auto-published.')
+                    if page_candidates and snippet_only:
+                        warnings.append('Snippet-only source kept for review; not auto-published.')
                 else:
                     candidates.extend(page_candidates)
         except ExtractionError as exc:

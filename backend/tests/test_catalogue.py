@@ -268,6 +268,24 @@ class CatalogueApiTests(unittest.TestCase):
             )
             self.assertEqual(allowed.status_code, 202, allowed.text)
 
+    def test_claim_blocks_tavily_spend_without_model(self):
+        self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': 'CareCredits-demo-2026'})
+        with patch('main._scraper_service_status', return_value={'tavily_configured': True, 'model_ready': True}):
+            queued = self.client.post(
+                '/api/v1/admin/ingestion-jobs',
+                json={'query': 'GP CPD Kuala Lumpur'},
+                headers={'Idempotency-Key': 'tavily-claim-block'},
+            )
+        self.assertEqual(queued.status_code, 202, queued.text)
+        job_id = queued.json()['id']
+        with patch('main._scraper_service_status', return_value={'tavily_configured': True, 'model_ready': False}):
+            blocked = self.client.post('/internal/v1/jobs/claim', headers=self.service)
+        self.assertEqual(blocked.status_code, 204, blocked.text)
+        with patch('main._scraper_service_status', return_value={'tavily_configured': True, 'model_ready': True}):
+            claimed = self.client.post('/internal/v1/jobs/claim', headers=self.service)
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json()['id'], job_id)
+
     def test_changed_content_queues_refresh_without_duplicate(self):
         training = sample()
         with patch.dict(os.environ, {'CATALOGUE_AUTO_PUBLISH_NEW': 'true'}):

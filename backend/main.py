@@ -1426,6 +1426,9 @@ def cancel_training(course_id: str, user=Depends(operator), db: Session = Depend
 
 @app.post('/internal/v1/jobs/claim', dependencies=[Depends(worker)])
 def claim(db: Session = Depends(get_db)):
+    scraper = _scraper_service_status()
+    if scraper.get('tavily_configured') and not scraper.get('model_ready'):
+        return Response(status_code=204)
     expire_jobs(db)
     # One worker process is the default; conditional claims also prevent double ownership.
     # Keep walking the queued list when a race loses the first row so leftover jobs
