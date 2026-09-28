@@ -4,6 +4,8 @@ import json
 import os
 import threading
 
+from shared.model_defaults import env_or_provisional
+
 
 DEFAULT_BACKEND_INTERNAL_URL = 'http://127.0.0.1:8000'
 
@@ -15,12 +17,12 @@ def backend_internal_url() -> str:
 
 def ready():
     missing = [name for name in ('SCRAPER_SERVICE_TOKEN',) if not (os.getenv(name) or '').strip()]
-    model_configured = bool((os.getenv('MODEL_API_KEY') or '').strip() and (os.getenv('MODEL_ID') or '').strip())
+    model_configured = bool((os.getenv('MODEL_API_KEY') or '').strip())
     missing_model = []
     if model_configured:
         missing_model = [
-            name for name in ('MODEL_MAX_INPUT_CHARS', 'MODEL_MAX_OUTPUT_TOKENS', 'MODEL_WEIGHTS_URL', 'MODEL_LICENSE_URL')
-            if not (os.getenv(name) or '').strip()
+            name for name in ('MODEL_ID', 'MODEL_MAX_INPUT_CHARS', 'MODEL_MAX_OUTPUT_TOKENS', 'MODEL_WEIGHTS_URL', 'MODEL_LICENSE_URL')
+            if not env_or_provisional(name)
         ]
         if os.getenv('MODEL_OPEN_WEIGHT_CONFIRMED') != 'true':
             missing_model.append('MODEL_OPEN_WEIGHT_CONFIRMED')

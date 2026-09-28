@@ -31,6 +31,7 @@ from portal_models import (
 )
 from security import current_user, operator, worker, password_hash, password_matches, digest, throttle
 from shared.contracts import Training, validate_evidence
+from shared.model_defaults import env_or_provisional
 from catalogue import (
     source_key, course_public, exact_course, near_neighbours,
     save_new_candidate, link_existing, publish_new_event,
@@ -641,10 +642,9 @@ def config():
     }
 
 
-def _env_int(name):
-    raw = (os.getenv(name) or '').strip()
+def _env_int_value(raw):
     try:
-        value = int(raw)
+        value = int((raw or '').strip())
     except ValueError:
         return None
     return value if value > 0 else None
@@ -693,14 +693,14 @@ def services(user=Depends(operator), db: Session = Depends(get_db)):
 
 @app.get('/api/v1/admin/integrations')
 def integrations(user=Depends(operator)):
-    weights = (os.getenv('MODEL_WEIGHTS_URL') or '').strip() or None
-    license_url = (os.getenv('MODEL_LICENSE_URL') or '').strip() or None
-    input_chars = _env_int('MODEL_MAX_INPUT_CHARS')
-    output_tokens = _env_int('MODEL_MAX_OUTPUT_TOKENS')
+    weights = env_or_provisional('MODEL_WEIGHTS_URL') or None
+    license_url = env_or_provisional('MODEL_LICENSE_URL') or None
+    input_chars = _env_int_value(env_or_provisional('MODEL_MAX_INPUT_CHARS'))
+    output_tokens = _env_int_value(env_or_provisional('MODEL_MAX_OUTPUT_TOKENS'))
     return {
-        'model_id': (os.getenv('MODEL_ID') or '').strip() or None,
-        'model_publisher': (os.getenv('MODEL_PUBLISHER') or '').strip() or None,
-        'model_host': (os.getenv('MODEL_HOST') or '').strip() or None,
+        'model_id': env_or_provisional('MODEL_ID') or None,
+        'model_publisher': env_or_provisional('MODEL_PUBLISHER') or None,
+        'model_host': env_or_provisional('MODEL_HOST') or None,
         'model_weights_url': weights,
         'model_license_url': license_url,
         'model_open_weight_confirmed': os.getenv('MODEL_OPEN_WEIGHT_CONFIRMED') == 'true',

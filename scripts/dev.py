@@ -10,6 +10,11 @@ import sys
 import time
 from dotenv import dotenv_values
 
+_root = Path(__file__).resolve().parents[1]
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+from shared.model_defaults import apply_provisional_model  # noqa: E402
+
 
 def free_port(preferred):
     preferred = int(preferred)
@@ -130,7 +135,7 @@ def main():
     parser.add_argument('--frontend-port', type=int, default=int(os.getenv('FRONTEND_PORT') or 3000))
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    settings = {k: v for k, v in dotenv_values(root / '.env').items() if v is not None}
+    settings = apply_provisional_model({k: v for k, v in dotenv_values(root / '.env').items() if v is not None})
     backend_port = free_port(args.backend_port)
     frontend_port = free_port(args.frontend_port)
     health_port = free_port(int(settings.get('SCRAPER_HEALTH_PORT') or os.getenv('SCRAPER_HEALTH_PORT') or 8002))

@@ -25,25 +25,26 @@ class ScraperHealthTests(unittest.TestCase):
             self.assertTrue(payload['tavily_configured'])
             self.assertFalse(payload['model_ready'])
 
-    def test_model_ready_requires_caps(self):
+    def test_model_ready_requires_confirmation(self):
         env = {
             'SCRAPER_SERVICE_TOKEN': 'token',
             'BACKEND_INTERNAL_URL': 'http://127.0.0.1:8000',
             'MODEL_API_KEY': 'set',
-            'MODEL_ID': 'test/model',
-            'MODEL_WEIGHTS_URL': 'https://example.org/weights',
-            'MODEL_LICENSE_URL': 'https://example.org/license',
-            'MODEL_OPEN_WEIGHT_CONFIRMED': 'true',
+            'MODEL_ID': '',
+            'MODEL_WEIGHTS_URL': '',
+            'MODEL_LICENSE_URL': '',
+            'MODEL_OPEN_WEIGHT_CONFIRMED': 'false',
             'MODEL_MAX_INPUT_CHARS': '',
             'MODEL_MAX_OUTPUT_TOKENS': '',
         }
         with patch.dict(os.environ, env, clear=False):
             payload = ready()
             self.assertEqual(payload['status'], 'ready')
+            self.assertTrue(payload['model_configured'])
             self.assertFalse(payload['model_ready'])
-            self.assertIn('MODEL_MAX_INPUT_CHARS', payload['missing_model'])
-        env['MODEL_MAX_INPUT_CHARS'] = '12000'
-        env['MODEL_MAX_OUTPUT_TOKENS'] = '4000'
+            self.assertIn('MODEL_OPEN_WEIGHT_CONFIRMED', payload['missing_model'])
+            self.assertNotIn('MODEL_MAX_INPUT_CHARS', payload['missing_model'])
+        env['MODEL_OPEN_WEIGHT_CONFIRMED'] = 'true'
         with patch.dict(os.environ, env, clear=False):
             self.assertTrue(ready()['model_ready'])
 

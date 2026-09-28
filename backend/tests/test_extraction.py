@@ -297,11 +297,28 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(result['candidates'],[])
             model.assert_not_called()
 
-    def test_missing_model_caps_block_configuration(self):
+    def test_missing_model_key_or_confirmation_blocks_configuration(self):
         from scraper.extraction import configuration
-        with patch.dict(os.environ, {'MODEL_MAX_INPUT_CHARS': '', 'MODEL_MAX_OUTPUT_TOKENS': ''}, clear=False):
+        with patch.dict(os.environ, {'MODEL_API_KEY': ''}, clear=False):
             with self.assertRaises(ExtractionError):
                 configuration()
+        with patch.dict(os.environ, {'MODEL_OPEN_WEIGHT_CONFIRMED': 'false'}, clear=False):
+            with self.assertRaises(ExtractionError):
+                configuration()
+
+    def test_open03_defaults_fill_blank_identity_and_caps(self):
+        from scraper.extraction import configuration, model_caps
+        blank = {
+            'MODEL_ID': '',
+            'MODEL_WEIGHTS_URL': '',
+            'MODEL_LICENSE_URL': '',
+            'MODEL_BASE_URL': '',
+            'MODEL_MAX_INPUT_CHARS': '',
+            'MODEL_MAX_OUTPUT_TOKENS': '',
+        }
+        with patch.dict(os.environ, blank, clear=False):
+            self.assertEqual(configuration(), 'https://api.tokenfactory.nebius.com/v1')
+            self.assertEqual(model_caps(), (12000, 4000))
 
     def test_run_job_tavily_timeout_is_failed(self):
         from scraper.tavily import ProviderError

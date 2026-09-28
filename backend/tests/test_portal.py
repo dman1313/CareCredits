@@ -637,9 +637,29 @@ class PortalTests(unittest.TestCase):
         self.assertNotIn('Far clinic day', titles)
 
     def test_operator_integrations_omit_secrets(self):
-        result=self.client.get('/api/v1/admin/integrations')
+        blank = {
+            'MODEL_ID': '',
+            'MODEL_PUBLISHER': '',
+            'MODEL_HOST': '',
+            'MODEL_WEIGHTS_URL': '',
+            'MODEL_LICENSE_URL': '',
+            'MODEL_MAX_INPUT_CHARS': '',
+            'MODEL_MAX_OUTPUT_TOKENS': '',
+            'MODEL_API_KEY': '',
+            'MODEL_OPEN_WEIGHT_CONFIRMED': 'false',
+        }
+        with patch.dict(os.environ, blank, clear=False):
+            result=self.client.get('/api/v1/admin/integrations')
         self.assertEqual(result.status_code,200,result.text)
         body=result.json()
+        self.assertEqual(body['model_id'], 'Qwen/Qwen3-30B-A3B-Instruct-2507')
+        self.assertEqual(body['model_publisher'], 'Qwen')
+        self.assertEqual(body['model_host'], 'Nebius Token Factory')
+        self.assertTrue(body['model_caps_configured'])
+        self.assertEqual(body['model_max_input_chars'], 12000)
+        self.assertEqual(body['model_max_output_tokens'], 4000)
+        self.assertFalse(body['model_open_weight_confirmed'])
+        self.assertFalse(body['model_key_configured'])
         self.assertIn('model_key_configured', body)
         self.assertIn('model_caps_configured', body)
         self.assertIn('model_publisher', body)

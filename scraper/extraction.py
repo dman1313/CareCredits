@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 import httpx
 from shared.contracts import Training, validate_evidence, web_url
+from shared.model_defaults import env_or_provisional
 
 
 class ExtractionError(Exception):
@@ -63,8 +64,8 @@ def reported_model_tokens(payload):
 
 
 def model_caps():
-    raw_in = (os.getenv('MODEL_MAX_INPUT_CHARS') or '').strip()
-    raw_out = (os.getenv('MODEL_MAX_OUTPUT_TOKENS') or '').strip()
+    raw_in = env_or_provisional('MODEL_MAX_INPUT_CHARS')
+    raw_out = env_or_provisional('MODEL_MAX_OUTPUT_TOKENS')
     if not raw_in or not raw_out:
         raise ExtractionError('MODEL_MAX_INPUT_CHARS and MODEL_MAX_OUTPUT_TOKENS must be set before a model job.')
     try:
@@ -78,14 +79,18 @@ def model_caps():
 
 
 def configuration():
-    names = ('MODEL_ID', 'MODEL_API_KEY', 'MODEL_WEIGHTS_URL', 'MODEL_LICENSE_URL')
-    if any(not os.getenv(name) for name in names) or os.getenv('MODEL_OPEN_WEIGHT_CONFIRMED') != 'true':
+    if not (os.getenv('MODEL_API_KEY') or '').strip() or os.getenv('MODEL_OPEN_WEIGHT_CONFIRMED') != 'true':
+        raise ExtractionError('Configure an open-weight model, key, weights/licence references and MODEL_OPEN_WEIGHT_CONFIRMED in the scraper environment.')
+    model_id = env_or_provisional('MODEL_ID')
+    weights = env_or_provisional('MODEL_WEIGHTS_URL')
+    license_url = env_or_provisional('MODEL_LICENSE_URL')
+    if not model_id or not weights or not license_url:
         raise ExtractionError('Configure an open-weight model, key, weights/licence references and MODEL_OPEN_WEIGHT_CONFIRMED in the scraper environment.')
     model_caps()
-    base = os.getenv('MODEL_BASE_URL', 'https://api.tokenfactory.nebius.com/v1').rstrip('/')
+    base = env_or_provisional('MODEL_BASE_URL').rstrip('/')
     web_url(base)
-    web_url(os.environ['MODEL_WEIGHTS_URL'])
-    web_url(os.environ['MODEL_LICENSE_URL'])
+    web_url(weights)
+    web_url(license_url)
     if not base.startswith('https://'):
         raise ExtractionError('Model endpoint must use HTTPS.')
     return base
@@ -471,11 +476,11 @@ def extract_training(source, client=None, usage=None):
                 source_url=source['url'],
                 source_text=content,
                 retrieved_at=datetime.now(timezone.utc).isoformat(),
-                model_id=os.environ['MODEL_ID'],
-                model_weights_url=os.environ['MODEL_WEIGHTS_URL'],
-                model_license_url=os.environ['MODEL_LICENSE_URL'],
-                model_publisher=os.getenv('MODEL_PUBLISHER') or None,
-                model_host=os.getenv('MODEL_HOST') or None,
+                model_id=env_or_provisional('MODEL_ID'),
+                model_weights_url=env_or_provisional('MODEL_WEIGHTS_URL'),
+                model_license_url=env_or_provisional('MODEL_LICENSE_URL'),
+                model_publisher=env_or_provisional('MODEL_PUBLISHER') or None,
+                model_host=env_or_provisional('MODEL_HOST') or None,
             )
             result.append(validate_evidence(Training(**row)).model_dump(mode='json'))
         return result

@@ -12,15 +12,22 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 root = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(root), str(root / 'backend')]
+
+from dotenv import load_dotenv  # noqa: E402
+from shared.model_defaults import PROVISIONAL_MODEL  # noqa: E402
+
 load_dotenv(root / '.env')
 
 
 def present(name: str) -> bool:
-    return bool((os.getenv(name) or '').strip())
+    current = (os.getenv(name) or '').strip()
+    if current:
+        return True
+    if name in PROVISIONAL_MODEL:
+        return bool(PROVISIONAL_MODEL[name])
+    return False
 
 
 def main() -> int:
