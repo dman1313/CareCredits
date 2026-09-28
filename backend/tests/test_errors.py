@@ -51,6 +51,24 @@ class ErrorEnvelopeTests(unittest.TestCase):
         self.assertEqual(result.status_code, 422)
         self.assertEqual(result.json()['error']['code'], 'invalid')
 
+    def test_unmatched_api_route_uses_envelope(self):
+        result = self.client.get('/api/v1/does-not-exist')
+        self.assertEqual(result.status_code, 404)
+        body = result.json()['error']
+        self.assertEqual(body['code'], 'not_found')
+        self.assertTrue(body['message'])
+        self.assertTrue(body['request_id'])
+        self.assertNotIn('detail', result.json())
+
+    def test_wrong_method_uses_envelope(self):
+        result = self.client.post('/api/v1/me')
+        self.assertEqual(result.status_code, 405)
+        body = result.json()['error']
+        self.assertEqual(body['code'], 'method_not_allowed')
+        self.assertTrue(body['message'])
+        self.assertTrue(body['request_id'])
+        self.assertNotIn('detail', result.json())
+
     def test_unsubscribe_unknown_token_uses_envelope(self):
         result = self.client.get('/api/v1/digest/unsubscribe', params={'token': 'not-a-token'}, headers={'Accept': 'application/json'})
         self.assertEqual(result.status_code, 404)

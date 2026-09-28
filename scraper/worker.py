@@ -37,6 +37,27 @@ def public_sources(sources):
     return items
 
 
+def api_message(response, fallback):
+    """Read SDD `{error.message}` envelopes; keep FastAPI `detail` as a fallback."""
+    headers = getattr(response, 'headers', None) or {}
+    ctype = headers.get('content-type') if hasattr(headers, 'get') else ''
+    if not str(ctype).startswith('application/json'):
+        return fallback
+    try:
+        payload = response.json()
+    except (ValueError, TypeError):
+        return fallback
+    if not isinstance(payload, dict):
+        return fallback
+    error = payload.get('error')
+    if isinstance(error, dict) and error.get('message'):
+        return str(error['message'])[:200]
+    detail = payload.get('detail')
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()[:200]
+    return fallback
+
+
 def catalogue_pipeline(client, job_id, candidates):
     """Lookup → Jev decide → save new/exists/uncertain via backend connect APIs."""
     warnings = []
@@ -44,7 +65,7 @@ def catalogue_pipeline(client, job_id, candidates):
     for training in candidates:
         lookup = client.post('/internal/v1/catalogue/lookup', json={'candidate': training})
         if lookup.status_code >= 400:
-            warnings.append('Catalogue lookup failed for one candidate.')
+            warnings.append(api_message(lookup, 'Catalogue lookup failed for one candidate.'))
             continue
         data = lookup.json()
         if data.get('exact'):
@@ -60,7 +81,7 @@ def catalogue_pipeline(client, job_id, candidates):
                 json={'candidate': training, 'matches': data.get('matches') or []},
             )
             if decide.status_code >= 400:
-                warnings.append(decide.json().get('detail') if decide.headers.get('content-type', '').startswith('application/json') else 'Catalogue decide failed.')
+                warnings.append(api_message(decide, 'Catalogue decide failed.'))
                 # Fall back to uncertain hold via save path only if we can craft judgment
                 judgment = {
                     'decision': 'uncertain',
@@ -75,7 +96,7 @@ def catalogue_pipeline(client, job_id, candidates):
             json={'candidate': training, 'judgment': judgment, 'job_id': job_id},
         )
         if save.status_code >= 400:
-            warnings.append(str(save.json().get('detail') if save.headers.get('content-type', '').startswith('application/json') else 'Catalogue save failed.')[:200])
+            warnings.append(api_message(save, 'Catalogue save failed.'))
             continue
         saved += 1
     return saved, warnings

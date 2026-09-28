@@ -392,9 +392,6 @@ export default function Home() {
   if (booting) {
     return (
       <div className="boot">
-        <a className="skip-link" href="#main-content">
-          Skip to content
-        </a>
         <Brand />
         <Loader2 className="spin" />
         <p id="main-content">Opening your workspace…</p>
@@ -412,9 +409,6 @@ export default function Home() {
 
   return (
     <div className="app-shell">
-      <a className="skip-link" href="#main-content">
-        Skip to content
-      </a>
       {navOpen && <button className="nav-shade" aria-label="Close navigation" onClick={() => setNavOpen(false)} />}
       <aside className={'sidebar ' + (navOpen ? 'is-open' : '')}>
         <Brand />

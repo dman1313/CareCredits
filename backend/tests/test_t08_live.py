@@ -43,7 +43,7 @@ def _current_carecredits(opener, candidate):
     if not html_ok:
         return False
     probe = Request(
-        candidate + '/api/v1/me/audit',
+        candidate + '/api/v1/me',
         method='GET',
         headers={'X-Care-Client': '1', 'Origin': candidate},
     )
@@ -51,7 +51,7 @@ def _current_carecredits(opener, candidate):
         with opener.open(probe, timeout=3):
             return True
     except HTTPError as exc:
-        return exc.code == 401
+        return exc.code in {401, 403}
     except (URLError, TimeoutError, OSError):
         return False
 

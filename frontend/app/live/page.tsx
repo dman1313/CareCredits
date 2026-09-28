@@ -443,9 +443,6 @@ export default function LiveSearch() {
   if (booting) {
     return (
       <div className="dash">
-        <a className="skip-link" href="#main-content">
-          Skip to content
-        </a>
         <div className="gate" id="main-content">
           <Loader2 className="spin" />
           <p>Opening CareCredits…</p>
@@ -458,9 +455,6 @@ export default function LiveSearch() {
     return (
       <div className="dash">
         <div className="gate">
-          <a className="skip-link" href="#main-content">
-            Skip to sign in
-          </a>
           <form id="main-content" className="gate-card" onSubmit={submitAccount} aria-busy={busy}>
             <div className="brand">
               <Mark />
@@ -538,9 +532,6 @@ export default function LiveSearch() {
 
   return (
     <div className="dash">
-      <a className="skip-link" href="#main-content">
-        Skip to content
-      </a>
       <div className="app-shell">
         <aside className={open ? 'sidebar sidebar-open' : 'sidebar'}>
           <div className="brand">

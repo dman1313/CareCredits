@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
 
 from observe import failure_line
 
@@ -15,6 +16,7 @@ CODES = {
     401: 'unauthenticated',
     403: 'forbidden',
     404: 'not_found',
+    405: 'method_not_allowed',
     409: 'conflict',
     422: 'invalid',
     429: 'throttled',

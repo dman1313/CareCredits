@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { api } from '@/lib/portal';
 
 export type ServiceStatus = {
   backend: string;
@@ -60,17 +61,7 @@ export function IntegrationStatus({
     setLoading(true);
     readyRef.current?.(false, true);
     setError('');
-    const headers = { 'X-Care-Client': '1' };
-    Promise.allSettled([
-      fetch('/api/v1/admin/services', { credentials: 'include', headers }).then(async (response) => {
-        if (!response.ok) throw new Error('Service status could not be loaded.');
-        return response.json();
-      }),
-      fetch('/api/v1/admin/integrations', { credentials: 'include', headers }).then(async (response) => {
-        if (!response.ok) throw new Error('Integration status could not be loaded.');
-        return response.json();
-      }),
-    ])
+    Promise.allSettled([api('/admin/services'), api('/admin/integrations')])
       .then(([servicesResult, integrationsResult]) => {
         const nextServices = servicesResult.status === 'fulfilled' ? servicesResult.value : null;
         const nextIntegrations = integrationsResult.status === 'fulfilled' ? integrationsResult.value : null;

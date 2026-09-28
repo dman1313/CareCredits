@@ -19,7 +19,7 @@ class SecretSurfaceTests(unittest.TestCase):
         )
         hits = []
         for path in FRONTEND.rglob('*'):
-            if not path.is_file() or any(part in path.parts for part in ('node_modules', '.next', 'dist')):
+            if not path.is_file() or any(part in path.parts for part in ('node_modules', '.next', 'dist', '.data')):
                 continue
             if path.suffix.lower() not in {'.ts', '.tsx', '.js', '.jsx', '.json', '.env', '.md'}:
                 continue
@@ -42,18 +42,20 @@ class SecretSurfaceTests(unittest.TestCase):
         self.assertIn('http://127.0.0.1:3020', sample)
 
     def test_built_frontend_assets_omit_service_secret_names(self):
-        built = FRONTEND / '.next'
-        if not built.exists():
+        trees = [FRONTEND / '.next', FRONTEND / '.data']
+        existing = [tree for tree in trees if tree.exists()]
+        if not existing:
             self.skipTest('No built frontend assets in this checkout')
         needles = ('TAVILY_API_KEY', 'MODEL_API_KEY', 'TYPESAFE_API_KEY', 'SCRAPER_SERVICE_TOKEN', 'POSTGRES_PASSWORD', 'GOOGLE_CLIENT_SECRET')
         hits = []
-        for path in built.rglob('*'):
-            if not path.is_file() or path.suffix.lower() not in {'.js', '.json', '.html', '.map'}:
-                continue
-            text = path.read_text(encoding='utf-8', errors='ignore')
-            for needle in needles:
-                if needle in text:
-                    hits.append(f'{path.relative_to(ROOT)}:{needle}')
+        for built in existing:
+            for path in built.rglob('*'):
+                if not path.is_file() or path.suffix.lower() not in {'.js', '.json', '.html', '.map'}:
+                    continue
+                text = path.read_text(encoding='utf-8', errors='ignore')
+                for needle in needles:
+                    if needle in text:
+                        hits.append(f'{path.relative_to(ROOT)}:{needle}')
         self.assertEqual(hits, [])
 
     def test_compose_keeps_paid_secrets_on_scraper(self):

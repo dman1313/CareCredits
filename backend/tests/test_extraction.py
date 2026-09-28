@@ -412,3 +412,60 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(result['candidates'][0]['source_url'], 'https://example.org/primary-care')
         self.assertEqual(result['usage']['tavily_credits'], 2)
         self.assertTrue(any('deadline' in warning.lower() for warning in result['warnings']))
+
+
+class CatalogueWarningTests(unittest.TestCase):
+    def test_pipeline_records_error_envelope_messages(self):
+        from types import SimpleNamespace
+        from scraper.worker import catalogue_pipeline
+
+        def fail(_path, json=None):
+            return SimpleNamespace(
+                status_code=409,
+                headers={'content-type': 'application/json'},
+                json=lambda: {
+                    'error': {
+                        'code': 'conflict',
+                        'message': 'Exact source_key already exists.',
+                        'request_id': 'abc123',
+                    }
+                },
+            )
+
+        class FakeClient:
+            def post(self, path, json=None):
+                if path.endswith('/lookup'):
+                    return SimpleNamespace(
+                        status_code=200,
+                        headers={'content-type': 'application/json'},
+                        json=lambda: {'exact': None, 'matches': []},
+                    )
+                if path.endswith('/decide'):
+                    return SimpleNamespace(
+                        status_code=503,
+                        headers={'content-type': 'application/json'},
+                        json=lambda: {
+                            'error': {
+                                'code': 'unavailable',
+                                'message': 'Catalogue database is unavailable.',
+                                'request_id': 'dec1',
+                            }
+                        },
+                    )
+                return fail(path, json)
+
+        saved, warnings = catalogue_pipeline(FakeClient(), 'job-1', [{'title': 'GP CME'}])
+        self.assertEqual(saved, 0)
+        self.assertIn('Catalogue database is unavailable.', warnings)
+        self.assertIn('Exact source_key already exists.', warnings)
+        self.assertNotIn('None', warnings)
+
+    def test_api_message_falls_back_to_detail(self):
+        from types import SimpleNamespace
+        from scraper.worker import api_message
+
+        response = SimpleNamespace(
+            headers={'content-type': 'application/json'},
+            json=lambda: {'detail': 'Job lease expired.'},
+        )
+        self.assertEqual(api_message(response, 'fallback'), 'Job lease expired.')

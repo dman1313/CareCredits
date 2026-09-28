@@ -42,9 +42,6 @@ export function LoginForm({
 
   return (
     <div className="login-page">
-      <a className="skip-link" href="#main-content">
-        Skip to sign in
-      </a>
       <section className="login-story">
         <Brand />
         <div>

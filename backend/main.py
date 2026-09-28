@@ -14,6 +14,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Depends, HTTPException, Request, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -397,6 +398,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title='CareCredits', version='0.5.0', lifespan=lifespan)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 

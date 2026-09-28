@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { BookOpen, ExternalLink, Printer } from 'lucide-react';
 import { Brand } from '@/components/Brand';
+import { api } from '@/lib/portal';
 
 type PublicData = {
   name: string;
@@ -20,22 +21,15 @@ export default function PublicProfile() {
   function load() {
     setError('');
     setData(null);
-    fetch('/api/v1/public/' + encodeURIComponent(slug), { cache: 'no-store' })
-      .then(async (r) => {
-        if (!r.ok) throw new Error('This training profile is private or unavailable.');
-        return r.json();
-      })
+    api('/public/' + encodeURIComponent(slug))
       .then(setData)
-      .catch((e) => setError(e.message));
+      .catch((e) => setError((e as Error).message || 'This training profile is private or unavailable.'));
   }
 
   useEffect(load, [slug]);
 
   return (
     <main id="main-content" className="public-page">
-      <a className="skip-link" href="#main-content">
-        Skip to public profile
-      </a>
       <a href="/">
         <Brand />
       </a>
