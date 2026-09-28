@@ -7,6 +7,7 @@ export type ServiceStatus = {
   database: string;
   database_owner: string;
   frontend: string;
+  paid_scrape_ready?: boolean;
   scraper: {
     status: string;
     reachable: boolean;
@@ -33,17 +34,12 @@ export type IntegrationFlags = {
 
 export function liveDiscoveryReady(
   services: ServiceStatus | null,
-  integrations: IntegrationFlags | null,
+  _integrations: IntegrationFlags | null,
 ) {
-  const tavily = !!services?.scraper?.tavily_configured;
-  const model =
-    !!services?.scraper?.model_ready ||
-    !!(
-      integrations?.model_key_configured &&
-      integrations?.model_caps_configured &&
-      integrations?.model_open_weight_confirmed
-    );
-  return tavily && model;
+  if (typeof services?.paid_scrape_ready === 'boolean') {
+    return services.paid_scrape_ready;
+  }
+  return !!services?.scraper?.tavily_configured && !!services?.scraper?.model_ready;
 }
 
 export function IntegrationStatus({
@@ -132,7 +128,11 @@ export function IntegrationStatus({
           {services.scraper.status}
           {services.scraper.reachable ? '' : ' · scraper unreachable'}
           {services.scraper.tavily_configured ? ' · Tavily configured' : ' · Tavily not configured'}
-          {services.scraper.model_ready ? ' · model ready' : ' · model not ready'} · frontend {services.frontend}.
+          {services.scraper.model_ready ? ' · model ready' : ' · model not ready'}
+          {liveDiscoveryReady(services, integrations)
+            ? ' · live discovery ready'
+            : ' · live discovery not ready'}{' '}
+          · frontend {services.frontend}.
         </p>
       ) : null}
       {integrations ? (

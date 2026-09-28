@@ -229,6 +229,15 @@ class CatalogueApiTests(unittest.TestCase):
         self.client.post('/api/v1/auth/login', json={'email': 'doc@example.com', 'password': 'CareCredits-demo-2026'})
         self.assertEqual(self.client.get('/api/v1/admin/scrape-topics').status_code, 403)
 
+    def test_auto_daily_scrape_stays_off_until_tavily_and_model_ready(self):
+        from main import _paid_scrape_ready
+        with patch('main._scraper_service_status', return_value={'tavily_configured': True, 'model_ready': False}):
+            self.assertFalse(_paid_scrape_ready())
+        with patch('main._scraper_service_status', return_value={'tavily_configured': False, 'model_ready': True}):
+            self.assertFalse(_paid_scrape_ready())
+        with patch('main._scraper_service_status', return_value={'tavily_configured': True, 'model_ready': True}):
+            self.assertTrue(_paid_scrape_ready())
+
     def test_changed_content_queues_refresh_without_duplicate(self):
         training = sample()
         with patch.dict(os.environ, {'CATALOGUE_AUTO_PUBLISH_NEW': 'true'}):

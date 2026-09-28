@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, MutableRefObject } from 'react';
+import { FormEvent, MutableRefObject, useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
 import { AuditItem, Candidate, Job } from '@/lib/portal';
 import { Empty, Loading } from '@/components/CourseList';
@@ -67,6 +67,16 @@ export function IngestionPanel({
   scrapeResult?: { enqueued: number; skipped: number; day: string; ceiling: number; topics: number } | null;
   audits?: AuditItem[];
 }) {
+  const [liveReady, setLiveReady] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(true);
+  const paidBlocked = !liveReady || statusLoading;
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (paidBlocked) return;
+    onSubmit(event);
+  }
+
   return (
     <>
       <div className="page-title">
@@ -76,7 +86,7 @@ export function IngestionPanel({
           <p>Tavily finds sources. An open-weight model extracts details. You review the evidence.</p>
         </div>
       </div>
-      <form className="panel ingestion-form" onSubmit={onSubmit}>
+      <form className="panel ingestion-form" onSubmit={handleSubmit}>
         <label>
           Malaysia training topic
           <input
@@ -108,11 +118,19 @@ export function IngestionPanel({
           </select>
         </label>
         <div className="button-row">
-          <button className="primary" disabled={submitting}>
+          <button className="primary" disabled={submitting || paidBlocked}>
             {submitting ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />} Start discovery
           </button>
           {onDailyScrape && (
-            <button className="secondary" type="button" disabled={saving || submitting} onClick={onDailyScrape}>
+            <button
+              className="secondary"
+              type="button"
+              disabled={saving || submitting || paidBlocked}
+              onClick={() => {
+                if (paidBlocked) return;
+                onDailyScrape();
+              }}
+            >
               Queue daily scrape
             </button>
           )}
@@ -146,10 +164,16 @@ export function IngestionPanel({
           </div>
         ) : null}
         <p className="small-note">
-          A live run uses Tavily Search and Extract for up to five sources. Missing Tavily credentials fail honestly.
-          Structured candidates still need a configured open-weight model.
+          {liveReady
+            ? 'A live run uses Tavily Search and Extract for up to five sources. Missing Tavily credentials fail honestly. Structured candidates still need a configured open-weight model.'
+            : 'Live discovery stays off until Tavily and the open-weight model are ready. Review the fixture queue without spending credits.'}
         </p>
-        <IntegrationStatus />
+        <IntegrationStatus
+          onLiveReady={(ready, loading) => {
+            setLiveReady(ready);
+            setStatusLoading(loading);
+          }}
+        />
       </form>
       <div className="section-heading">
         <h2>Discovery jobs</h2>

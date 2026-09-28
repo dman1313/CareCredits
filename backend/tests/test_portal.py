@@ -686,6 +686,7 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(body['database_owner'], 'backend')
         self.assertEqual(body['scraper']['status'], 'unconfigured')
         self.assertFalse(body['scraper']['reachable'])
+        self.assertFalse(body['paid_scrape_ready'])
         self.assertNotIn('TAVILY_API_KEY', result.text)
         self.assertNotIn('MODEL_API_KEY', result.text)
         self.assertNotIn('test-service-token', result.text)
@@ -712,7 +713,25 @@ class PortalTests(unittest.TestCase):
         self.assertTrue(body['scraper']['reachable'])
         self.assertTrue(body['scraper']['tavily_configured'])
         self.assertFalse(body['scraper']['model_ready'])
+        self.assertFalse(body['paid_scrape_ready'])
         self.assertNotIn('SECRET', str(body))
+        self.assertNotIn('missing', body['scraper'])
+
+        class LiveReadyResponse:
+            def read(self):
+                return b'{"status":"ready","tavily_configured":true,"model_ready":true}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        with patch.dict(os.environ, {'SCRAPER_HEALTH_URL': 'http://127.0.0.1:8002'}, clear=False), patch(
+            'main.urlopen', return_value=LiveReadyResponse()
+        ):
+            ready = self.client.get('/api/v1/admin/services').json()
+        self.assertTrue(ready['paid_scrape_ready'])
         self.assertNotIn('missing', body['scraper'])
 
     def test_public_config_is_login_flags_only(self):

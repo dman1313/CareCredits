@@ -97,6 +97,10 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
   }, [job?.id, job?.status]);
 
   async function queueDaily() {
+    if (!liveReady) {
+      setError('Live discovery stays off until Tavily and the open-weight model are ready.');
+      return;
+    }
     setScrapeBusy(true);
     setError('');
     try {
@@ -196,7 +200,7 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
             <input type="checkbox" checked={forceScrape} onChange={(e) => setForceScrape(e.target.checked)} />{' '}
             Re-queue idle jobs (force)
           </label>{' '}
-          <button className="secondary" type="button" disabled={scrapeBusy} onClick={queueDaily}>
+          <button className="secondary" type="button" disabled={scrapeBusy || !liveReady || statusLoading} onClick={queueDaily}>
             {scrapeBusy ? 'Queuing…' : 'Queue daily scrape'}
           </button>
           {scrapeResult ? (

@@ -348,8 +348,9 @@ async def lifespan(app):
     async def daily_scrape_loop():
         while not stop.is_set():
             try:
-                with SessionLocal() as db:
-                    enqueue_daily(db)
+                if _paid_scrape_ready():
+                    with SessionLocal() as db:
+                        enqueue_daily(db)
             except Exception:
                 pass
             try:
@@ -675,6 +676,12 @@ def _scraper_service_status():
     }
 
 
+def _paid_scrape_ready(scraper=None):
+    """Auto daily scrape spends Tavily; require the same live gate as /live enqueue."""
+    scraper = scraper if scraper is not None else _scraper_service_status()
+    return bool(scraper.get('tavily_configured') and scraper.get('model_ready'))
+
+
 @app.get('/api/v1/admin/services')
 def services(user=Depends(operator), db: Session = Depends(get_db)):
     database = 'ready'
@@ -682,11 +689,13 @@ def services(user=Depends(operator), db: Session = Depends(get_db)):
         db.execute(text('SELECT 1'))
     except Exception:
         database = 'unavailable'
+    scraper = _scraper_service_status()
     return {
         'backend': 'ready' if database == 'ready' else 'degraded',
         'database': database,
         'database_owner': 'backend',
-        'scraper': _scraper_service_status(),
+        'scraper': scraper,
+        'paid_scrape_ready': _paid_scrape_ready(scraper),
         'frontend': 'this portal',
     }
 
