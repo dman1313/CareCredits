@@ -24,6 +24,8 @@ export type IntegrationFlags = {
   model_weights_url: string | null;
   model_license_url: string | null;
   model_identity_provisional?: boolean;
+  model_publisher_provisional?: boolean;
+  model_host_provisional?: boolean;
   model_weights_provisional?: boolean;
   model_license_provisional?: boolean;
   model_open_weight_confirmed: boolean;
@@ -36,6 +38,23 @@ export type IntegrationFlags = {
   scraper_token_configured: boolean;
   catalogue_auto_publish_new?: boolean;
 };
+
+/** OPEN-03 sample identity. Used when a stale backend omits *provisional flags. */
+export const OPEN03_SAMPLE = {
+  modelId: 'Qwen/Qwen3-30B-A3B-Instruct-2507',
+  publisher: 'Qwen',
+  host: 'Nebius Token Factory',
+  weightsUrl: 'https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507',
+  licenseUrl: 'https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507/blob/main/LICENSE',
+  inputChars: 12000,
+  outputTokens: 4000,
+};
+
+export function open03SampleDefault(flag: boolean | undefined, matchesSample: boolean) {
+  if (flag === true) return true;
+  if (flag === false) return false;
+  return matchesSample;
+}
 
 export function liveDiscoveryReady(
   services: ServiceStatus | null,
@@ -109,6 +128,31 @@ export function IntegrationStatus({
   }
   const weightsHref = publicWebUrl(integrations?.model_weights_url);
   const licenseHref = publicWebUrl(integrations?.model_license_url);
+  const identityProvisional = open03SampleDefault(
+    integrations?.model_identity_provisional,
+    (integrations?.model_id || '') === OPEN03_SAMPLE.modelId,
+  );
+  const publisherProvisional = open03SampleDefault(
+    integrations?.model_publisher_provisional,
+    (integrations?.model_publisher || '') === OPEN03_SAMPLE.publisher,
+  );
+  const hostProvisional = open03SampleDefault(
+    integrations?.model_host_provisional,
+    (integrations?.model_host || '') === OPEN03_SAMPLE.host,
+  );
+  const capsProvisional = open03SampleDefault(
+    integrations?.model_caps_provisional,
+    integrations?.model_max_input_chars === OPEN03_SAMPLE.inputChars
+      && integrations?.model_max_output_tokens === OPEN03_SAMPLE.outputTokens,
+  );
+  const weightsProvisional = open03SampleDefault(
+    integrations?.model_weights_provisional,
+    (integrations?.model_weights_url || '') === OPEN03_SAMPLE.weightsUrl,
+  );
+  const licenseProvisional = open03SampleDefault(
+    integrations?.model_license_provisional,
+    (integrations?.model_license_url || '') === OPEN03_SAMPLE.licenseUrl,
+  );
   return (
     <>
       {error ? (
@@ -135,16 +179,24 @@ export function IntegrationStatus({
       {integrations ? (
         <p className={className} data-testid="integration-status">
           Model {integrations.model_id || 'not selected'}
-          {integrations.model_publisher ? ` · ${integrations.model_publisher}` : ''}
-          {integrations.model_host ? ` · ${integrations.model_host}` : ''}
-          {integrations.model_identity_provisional
+          {integrations.model_publisher
+            ? ` · ${integrations.model_publisher}${
+                !identityProvisional && publisherProvisional ? ' (OPEN-03 sample default)' : ''
+              }`
+            : ''}
+          {integrations.model_host
+            ? ` · ${integrations.model_host}${
+                !identityProvisional && hostProvisional ? ' (OPEN-03 sample default)' : ''
+              }`
+            : ''}
+          {identityProvisional
             ? ' · OPEN-03 sample default (not a live run)'
             : ''}
           {integrations.model_open_weight_confirmed ? ' · open-weight confirmed' : ' · open-weight not confirmed'}
           {integrations.model_key_configured ? ' · key present' : ' · key missing'}
           {integrations.model_caps_configured
             ? ` · caps ${integrations.model_max_input_chars || '?'} / ${integrations.model_max_output_tokens || '?'}${
-                integrations.model_caps_provisional ? ' (OPEN-03 sample default)' : ''
+                capsProvisional ? ' (OPEN-03 sample default)' : ''
               }`
             : ' · caps missing'}
           {integrations.typesafe_configured ? ' · Jev ready' : ' · Jev key missing'}
@@ -158,7 +210,7 @@ export function IntegrationStatus({
               {' '}
               <a href={weightsHref} target="_blank" rel="noreferrer">
                 Weights
-                {integrations.model_weights_provisional ? ' (OPEN-03 sample default)' : ''}
+                {weightsProvisional ? ' (OPEN-03 sample default)' : ''}
               </a>
             </>
           ) : null}
@@ -167,7 +219,7 @@ export function IntegrationStatus({
               {' '}
               <a href={licenseHref} target="_blank" rel="noreferrer">
                 Licence
-                {integrations.model_license_provisional ? ' (OPEN-03 sample default)' : ''}
+                {licenseProvisional ? ' (OPEN-03 sample default)' : ''}
               </a>
             </>
           ) : null}{' '}

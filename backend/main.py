@@ -755,6 +755,8 @@ def integrations(user=Depends(operator)):
         'model_weights_url': weights,
         'model_license_url': license_url,
         'model_identity_provisional': using_provisional('MODEL_ID'),
+        'model_publisher_provisional': using_provisional('MODEL_PUBLISHER'),
+        'model_host_provisional': using_provisional('MODEL_HOST'),
         'model_weights_provisional': using_provisional('MODEL_WEIGHTS_URL'),
         'model_license_provisional': using_provisional('MODEL_LICENSE_URL'),
         'model_open_weight_confirmed': os.getenv('MODEL_OPEN_WEIGHT_CONFIRMED') == 'true',

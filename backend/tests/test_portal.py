@@ -715,6 +715,8 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(body['model_publisher'], 'Qwen')
         self.assertEqual(body['model_host'], 'Nebius Token Factory')
         self.assertTrue(body['model_identity_provisional'])
+        self.assertTrue(body['model_publisher_provisional'])
+        self.assertTrue(body['model_host_provisional'])
         self.assertTrue(body['model_caps_configured'])
         self.assertTrue(body['model_caps_provisional'])
         self.assertTrue(body['model_weights_provisional'])
@@ -735,6 +737,12 @@ class PortalTests(unittest.TestCase):
             owned = self.client.get('/api/v1/admin/integrations').json()
         self.assertEqual(owned['model_id'], 'Qwen/owner-chosen')
         self.assertFalse(owned['model_identity_provisional'])
+        self.assertTrue(owned['model_publisher_provisional'])
+        self.assertTrue(owned['model_host_provisional'])
+        with patch.dict(os.environ, {**blank, 'MODEL_PUBLISHER': 'Owner Press', 'MODEL_HOST': 'Owner Host'}, clear=False):
+            branded = self.client.get('/api/v1/admin/integrations').json()
+        self.assertFalse(branded['model_publisher_provisional'])
+        self.assertFalse(branded['model_host_provisional'])
         with patch.dict(os.environ, {**blank, 'MODEL_MAX_INPUT_CHARS': '8000', 'MODEL_MAX_OUTPUT_TOKENS': '2000'}, clear=False):
             capped = self.client.get('/api/v1/admin/integrations').json()
         self.assertFalse(capped['model_caps_provisional'])
