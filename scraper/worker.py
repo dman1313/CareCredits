@@ -8,6 +8,7 @@ from scraper.tavily import discover, ProviderError
 from scraper.firehose import discover as firehose_discover, configured as firehose_configured, FirehoseError
 from scraper.extraction import configuration, extract_training, heuristic_extract, ExtractionError
 from scraper.health import start as start_health
+from shared.contracts import public_web_url
 
 
 def merge_sources(primary, extra, limit=5):
@@ -28,7 +29,7 @@ def public_sources(sources):
     items = []
     for source in sources[:5]:
         items.append({
-            'url': str(source.get('url') or '')[:2000],
+            'url': (public_web_url(source.get('url')) or '')[:2000],
             'title': str(source.get('title') or 'Untitled source')[:300],
             'snippet': str(source.get('snippet') or '')[:2000],
             'extraction_status': str(source.get('extraction_status') or 'failed')[:40],
@@ -133,6 +134,15 @@ def run_job(job, heartbeat, client=None):
                 sources = merge_sources(sources, extra.get('sources') or [], limit)
             except FirehoseError as exc:
                 warnings.append(str(exc))
+        if not sources:
+            return {
+                'lease_token': job['lease_token'],
+                'candidates': [],
+                'sources': public_sources(sources),
+                'warnings': warnings,
+                'status': 'partial' if warnings else 'succeeded',
+                'usage': {'tavily_credits': tavily_credits, 'model_tokens': None, 'catalogue_saved': 0},
+            }
         model_ready = True
         try:
             configuration()

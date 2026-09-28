@@ -68,9 +68,9 @@ export default function Home() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [records, setRecords] = useState<Course[]>([]);
   const [progress, setProgress] = useState<Progress | null>(null);
-  const [recordsLoading, setRecordsLoading] = useState(false);
-  const [coursesLoading, setCoursesLoading] = useState(false);
-  const [operatorLoading, setOperatorLoading] = useState(false);
+  const [recordsLoading, setRecordsLoading] = useState(true);
+  const [coursesLoading, setCoursesLoading] = useState(true);
+  const [operatorLoading, setOperatorLoading] = useState(true);
   const [filters, setFilters] = useState<DiscoverFilters>(initialFilters);
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<Course | null>(null);
@@ -515,6 +515,7 @@ export default function Home() {
               digestBusy={digestBusy}
               certBusy={certBusy}
               loading={recordsLoading}
+              coursesLoading={coursesLoading}
               audits={audits}
               onDiscover={() => navigate('Discover training')}
               onLearning={() => navigate('My learning')}

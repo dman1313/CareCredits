@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { TrainingDetail } from '@/components/TrainingDetail';
 import { LiveIngestion } from '@/components/LiveIngestion';
+import { DateChip } from '@/components/CourseList';
 import { api, AuditItem, Course, distanceLabel, emptyRecord, formatDate, Progress, RecordData, RecordHistoryItem, User } from '@/lib/portal';
 
 const PAGE_SIZE = 12;
@@ -41,28 +42,6 @@ const nav = [
   [FileText, 'Certificates'],
   [ShieldCheck, 'About credits'],
 ] as const;
-
-function DateChip({ value }: { value?: string | null }) {
-  if (!value) {
-    return (
-      <span className="event-date">
-        <strong>—</strong>
-        <small>TBC</small>
-      </span>
-    );
-  }
-  const date = new Date(value + 'T00:00:00+08:00');
-  return (
-    <span className="event-date">
-      <strong>
-        {date.toLocaleDateString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', day: 'numeric' })}
-      </strong>
-      <small>
-        {date.toLocaleDateString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', month: 'short' })}
-      </small>
-    </span>
-  );
-}
 
 function Mark() {
   return (
@@ -117,12 +96,12 @@ export default function LiveSearch() {
   const [edit, setEdit] = useState<RecordData>(emptyRecord);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [digestOptIn, setDigestOptIn] = useState(false);
   const [suggestions, setSuggestions] = useState<
     { id: string; title: string; provider?: string; start_date?: string | null; city?: string | null; reason?: string; points?: number | null }[]
   >([]);
-  const [suggestionsBusy, setSuggestionsBusy] = useState(false);
+  const [suggestionsBusy, setSuggestionsBusy] = useState(true);
   const [certBusy, setCertBusy] = useState(false);
   const [digestBusy, setDigestBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -132,8 +111,9 @@ export default function LiveSearch() {
   const [recordsTotal, setRecordsTotal] = useState(0);
   const [learningFilter, setLearningFilter] = useState<'all' | 'signed_up' | 'attended'>('all');
   const [learningPage, setLearningPage] = useState(1);
-  const [learningBusy, setLearningBusy] = useState(false);
+  const [learningBusy, setLearningBusy] = useState(true);
   const [audits, setAudits] = useState<AuditItem[]>([]);
+  const [auditBusy, setAuditBusy] = useState(true);
 
   useEffect(() => {
     Promise.all([
@@ -245,6 +225,10 @@ export default function LiveSearch() {
   }
 
   async function loadWorkspace(nextCity = city, nextState = state) {
+    setLoading(true);
+    setSuggestionsBusy(true);
+    setLearningBusy(true);
+    setAuditBusy(true);
     await search({ city: nextCity, state: nextState, page: 1 });
     setSuggestionsBusy(true);
     try {
@@ -258,11 +242,13 @@ export default function LiveSearch() {
       setDigestOptIn(!!digest.opted_in);
       setSuggestions(nextSuggestions.items || []);
       if (mine) setAudits(mine.items || []);
+      else setAudits([]);
       await loadLearning(learningFilter);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setSuggestionsBusy(false);
+      setAuditBusy(false);
     }
   }
 
@@ -401,6 +387,10 @@ export default function LiveSearch() {
         await api('/auth/register', { method: 'POST', body: JSON.stringify(body) });
       }
       setUser(await api('/auth/login', { method: 'POST', body: JSON.stringify(body) }));
+      setLoading(true);
+      setSuggestionsBusy(true);
+      setLearningBusy(true);
+      setAuditBusy(true);
       setTab('Discover');
     } catch (e) {
       setError((e as Error).message);
@@ -431,8 +421,6 @@ export default function LiveSearch() {
   async function openCourse(course: Course) {
     setError('');
     setOpening(true);
-    setSelected(course);
-    setEdit({ ...emptyRecord, ...(course.record || {}) });
     try {
       const current = await api('/trainings/' + course.id);
       setSelected(current);
@@ -765,9 +753,6 @@ export default function LiveSearch() {
                     <p>Search the owned Malaysia CPD catalogue, keep a personal record, and open the provider page when you are ready.</p>
                   </div>
                   <div className="progress-panel">
-                    <div className="ring">
-                      <span>{points}</span>
-                    </div>
                     <div className="progress-copy">
                       <h2>
                         {points} <span>self-reported CPD points</span>
@@ -824,7 +809,11 @@ export default function LiveSearch() {
                     </div>
                   </div>
                   <p className="empty-copy">Your own audit trail. Personal notes and secrets are never shown here.</p>
-                  {audits.length ? (
+                  {auditBusy && !audits.length ? (
+                    <p className="empty-copy" role="status" aria-busy="true" data-testid="live-audit-loading">
+                      Loading your activity…
+                    </p>
+                  ) : audits.length ? (
                     <ul className="source-list">
                       {audits.slice(0, 8).map((item) => (
                         <li key={item.id}>
@@ -1041,51 +1030,43 @@ export default function LiveSearch() {
                       <h2>Learning record</h2>
                     </div>
                   </div>
-                  <div className="assistant-content">
-                    <div className="score">
-                      <strong>{points}</strong>
-                      <span>
-                        CPD
-                        <br />
-                        recorded
-                      </span>
-                    </div>
-                    <div>
-                      <label>
-                        Year{' '}
-                        <select
-                          aria-label="Progress year"
-                          value={year}
-                          onChange={async (e) => {
-                            const next = Number(e.target.value);
-                            setYear(next);
-                            try {
-                              setProgress(await api('/me/progress?year=' + next));
-                            } catch (err) {
-                              setError((err as Error).message);
-                            }
-                          }}
-                        >
-                          {[0, 1, 2, 3, 4].map((offset) => {
-                            const value = new Date().getFullYear() - offset;
-                            return (
-                              <option key={value} value={value}>
-                                {value}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </label>
-                      <p className="missing">
-                        {progress?.excluded
-                          ? excludedCopy(progress)
-                          : 'Opening a source does not register you with the provider.'}
-                      </p>
-                      <a className="text-link" href="/">
-                        Open full workspace <ChevronRight />
-                      </a>
-                    </div>
-                  </div>
+                  <p className="empty-copy">
+                    {points} self-reported CPD points for {year}. This is the recorded total, not a fill toward a legal
+                    annual target.
+                  </p>
+                  <label>
+                    Year{' '}
+                    <select
+                      aria-label="Progress year"
+                      value={year}
+                      onChange={async (e) => {
+                        const next = Number(e.target.value);
+                        setYear(next);
+                        try {
+                          setProgress(await api('/me/progress?year=' + next));
+                        } catch (err) {
+                          setError((err as Error).message);
+                        }
+                      }}
+                    >
+                      {[0, 1, 2, 3, 4].map((offset) => {
+                        const value = new Date().getFullYear() - offset;
+                        return (
+                          <option key={value} value={value}>
+                            {value}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                  <p className="empty-copy">
+                    {progress?.excluded
+                      ? excludedCopy(progress)
+                      : 'Opening a source does not register you with the provider.'}
+                  </p>
+                  <a className="text-link" href="/">
+                    Open full workspace <ChevronRight />
+                  </a>
                 </section>
                 {tab === 'About credits' && (
                   <section className="card">

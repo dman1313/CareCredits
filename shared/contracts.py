@@ -22,6 +22,15 @@ def web_url(value):
         raise ValueError('A public web URL is required') from None
 
 
+def public_web_url(value):
+    if not value:
+        return None
+    try:
+        return web_url(value)
+    except ValueError:
+        return None
+
+
 class Training(BaseModel):
     model_config = ConfigDict(extra='forbid', protected_namespaces=())
     title: str = Field(min_length=3, max_length=200)

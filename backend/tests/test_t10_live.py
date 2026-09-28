@@ -34,13 +34,14 @@ class LiveT10Tests(unittest.TestCase):
         self.assertIsInstance(live_ready(), bool)
 
     def test_bounded_search_extract_and_model(self):
-        from scripts.demo_readiness import live_ready
         from scraper.extraction import ExtractionError, extract_training
         from scraper.tavily import discover
         from shared.model_defaults import env_or_provisional
 
         if os.getenv('T10_LIVE') != '1':
             self.skipTest('Set T10_LIVE=1 to spend Tavily and model credits for T-10')
+        from scripts.demo_readiness import load_owner_env, live_ready
+        load_owner_env()
         if not live_ready():
             self.skipTest('Live DEMO-01 remains owner-blocked until MODEL_API_KEY and MODEL_OPEN_WEIGHT_CONFIRMED=true')
 

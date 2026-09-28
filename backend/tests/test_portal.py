@@ -182,12 +182,47 @@ class PortalTests(unittest.TestCase):
         self.client.patch('/api/v1/me',json={**body,'public_enabled':False})
         self.assertEqual(self.client.get(url).status_code,404)
 
+    def test_public_profile_omits_unsafe_source_url(self):
+        self.save()
+        with self.Session() as db:
+            course=db.get(Course,self.course)
+            data=dict(course.data or {})
+            data['source_url']='javascript:alert(1)'
+            course.data=data
+            db.commit()
+        self.client.patch('/api/v1/me',json={'name':'Doctor A','city':'KL','bio':'Learning','public_enabled':True})
+        public=self.client.get('/api/v1/public/'+self.slug)
+        self.assertEqual(public.status_code,200,public.text)
+        self.assertIsNone(public.json()['items'][0]['source_url'])
+        self.assertNotIn('javascript:', public.text)
+
+    def test_training_detail_omits_unsafe_source_urls(self):
+        with self.Session() as db:
+            course=db.get(Course,self.course)
+            data=dict(course.data or {})
+            data['source_url']='javascript:alert(1)'
+            data['registration_url']='javascript:alert(2)'
+            course.data=data
+            db.commit()
+        detail=self.client.get('/api/v1/trainings/'+self.course)
+        self.assertEqual(detail.status_code,200,detail.text)
+        body=detail.json()
+        self.assertIsNone(body.get('source_url'))
+        self.assertIsNone(body.get('registration_url'))
+        self.assertNotIn('javascript:', detail.text)
+
     def test_export_is_download_only_and_neutralizes_formulas(self):
         with self.Session() as db:
-            c=db.get(Course,self.course);fill_course(c,{**c.data,'title':'=HYPERLINK("evil")'});db.commit()
+            c=db.get(Course,self.course)
+            fill_course(c,{**c.data,'title':'=HYPERLINK("evil")'})
+            data=dict(c.data or {})
+            data['source_url']='javascript:alert(1)'
+            c.data=data
+            db.commit()
         self.save()
         csv=self.client.get('/api/v1/me/export/csv')
         self.assertIn("'=HYPERLINK",csv.text)
+        self.assertNotIn('javascript:',csv.text)
         eml=self.client.get('/api/v1/me/export/eml')
         self.assertIn('X-Unsent: 1',eml.text)
         self.assertNotIn('\nTo:',eml.text)
@@ -247,6 +282,30 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/v1/admin/ingestion-jobs/missing-job').status_code,404)
         self.login('b@example.com')
         self.assertEqual(self.client.get('/api/v1/admin/ingestion-jobs/'+claim['id']).status_code,403)
+
+    def test_job_sources_omit_unsafe_urls(self):
+        header={'Idempotency-Key':'unsafe-job-source-key'}
+        self.client.post('/api/v1/admin/ingestion-jobs',json={'query':'GP unsafe source'},headers=header)
+        service={'Authorization':'Bearer test-service-token'}
+        claim=self.client.post('/internal/v1/jobs/claim',headers=service).json()
+        payload={
+            'lease_token':claim['lease_token'],'status':'partial','candidates':[],
+            'sources':[
+                {'url':'javascript:alert(1)','title':'Unsafe source','snippet':'Do not link this','extraction_status':'failed','verification_status':'unverified'},
+                {'url':'https://example.org/afpm','title':'Primary Care Update','snippet':'CPD workshop in Kuala Lumpur','extraction_status':'success','verification_status':'unverified'},
+            ],
+        }
+        self.assertEqual(self.client.post('/internal/v1/jobs/'+claim['id']+'/complete',json=payload,headers=service).status_code,200)
+        stored=self.client.get('/api/v1/admin/ingestion-jobs/'+claim['id'])
+        self.assertEqual(stored.status_code,200,stored.text)
+        sources=stored.json()['result']['sources']
+        self.assertEqual(sources[0]['title'],'Unsafe source')
+        self.assertEqual(sources[0]['url'],'')
+        self.assertEqual(sources[1]['url'],'https://example.org/afpm')
+        self.assertNotIn('javascript:', stored.text)
+        with self.Session() as db:
+            rows=db.query(SourceDocument).filter_by(job_id=claim['id']).all()
+            self.assertEqual([row.canonical_url for row in rows],['https://example.org/afpm'])
 
     def test_expired_lease_complete_does_not_publish(self):
         header={'Idempotency-Key':'expired-lease-key'}

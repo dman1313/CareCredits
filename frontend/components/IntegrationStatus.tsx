@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '@/lib/portal';
+import { api, publicWebUrl } from '@/lib/portal';
 
 export type ServiceStatus = {
   backend: string;
@@ -103,6 +103,8 @@ export function IntegrationStatus({
       </p>
     ) : null;
   }
+  const weightsHref = publicWebUrl(integrations?.model_weights_url);
+  const licenseHref = publicWebUrl(integrations?.model_license_url);
   return (
     <>
       {error ? (
@@ -142,18 +144,18 @@ export function IntegrationStatus({
             ? ' · new events auto-publish'
             : ' · new events await operator publish'}
           .
-          {integrations.model_weights_url ? (
+          {weightsHref ? (
             <>
               {' '}
-              <a href={integrations.model_weights_url} target="_blank" rel="noreferrer">
+              <a href={weightsHref} target="_blank" rel="noreferrer">
                 Weights
               </a>
             </>
           ) : null}
-          {integrations.model_license_url ? (
+          {licenseHref ? (
             <>
               {' '}
-              <a href={integrations.model_license_url} target="_blank" rel="noreferrer">
+              <a href={licenseHref} target="_blank" rel="noreferrer">
                 Licence
               </a>
             </>

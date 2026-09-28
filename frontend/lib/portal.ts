@@ -169,6 +169,29 @@ export const emptyRecord: RecordData = {
   version: 0,
 };
 
+export function publicWebUrl(value?: string | null) {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname || '';
+    if (
+      (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+      !host.includes('.') ||
+      parsed.username ||
+      parsed.password ||
+      (parsed.port && parsed.port !== '80' && parsed.port !== '443') ||
+      host.endsWith('.local') ||
+      host.endsWith('.localhost') ||
+      host.endsWith('.internal')
+    ) {
+      return null;
+    }
+    return value;
+  } catch {
+    return null;
+  }
+}
+
 export function formatDate(value: string | null) {
   return value
     ? new Date(value + 'T00:00:00+08:00').toLocaleDateString('en-MY', {

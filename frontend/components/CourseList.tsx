@@ -3,6 +3,28 @@
 import { ArrowRight, BookOpen, CalendarDays, Check, GraduationCap, Loader2, MapPin } from 'lucide-react';
 import { Course, distanceLabel, feeLabel, formatDate, locationLabel, modeName } from '@/lib/portal';
 
+export function DateChip({ value, className = 'event-date' }: { value?: string | null; className?: string }) {
+  if (!value) {
+    return (
+      <span className={className}>
+        <strong>—</strong>
+        <small>TBC</small>
+      </span>
+    );
+  }
+  const date = new Date(value + 'T00:00:00+08:00');
+  return (
+    <span className={className}>
+      <strong>
+        {date.toLocaleDateString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', day: 'numeric' })}
+      </strong>
+      <small>
+        {date.toLocaleDateString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', month: 'short' })}
+      </small>
+    </span>
+  );
+}
+
 export function CourseCard({
   course: c,
   onOpen,
@@ -19,9 +41,7 @@ export function CourseCard({
           <GraduationCap size={15} />
           {modeName(c.mode)}
         </span>
-        <span className="cover-art" aria-hidden="true">
-          {c.mode === 'online' ? '◉' : '✳'}
-        </span>
+        <DateChip value={c.start_date} className="course-date" />
         <span className="point-badge">
           {c.points !== null ? `${c.points} ${c.credit_label || 'credits'}` : 'Points not listed'}
         </span>
@@ -83,11 +103,11 @@ export function Empty({ title, text, action }: { title: string; text: string; ac
   );
 }
 
-export function Loading() {
+export function Loading({ text = 'Finding your training…' }: { text?: string }) {
   return (
     <div className="empty-state" role="status">
       <Loader2 className="spin" />
-      <p>Finding your training…</p>
+      <p>{text}</p>
     </div>
   );
 }

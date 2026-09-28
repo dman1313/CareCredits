@@ -82,7 +82,7 @@ def source_url(value):
 def discover(query, max_results=5):
     key = os.getenv("TAVILY_API_KEY", "").strip()
     if not key:
-        raise ProviderError(503, "Tavily is not configured. Run python scripts/setup_tavily.py locally.")
+        raise ProviderError(503, "Tavily is not configured. Run python scripts/setup_integrations.py locally.")
     search = tavily_post("search", {
         "query": "Malaysia medical CPD courses conferences webinars " + query,
         "topic": "general", "search_depth": "basic", "max_results": max_results,

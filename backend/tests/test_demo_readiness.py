@@ -1,6 +1,7 @@
 import json
 import unittest
 from io import BytesIO
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
@@ -90,6 +91,16 @@ class DemoReadinessStackTests(unittest.TestCase):
         dumped = json.dumps(rows)
         self.assertNotIn('TAVILY', dumped)
         self.assertNotIn('MODEL_API_KEY', dumped)
+
+    def test_import_does_not_load_owner_env(self):
+        source = Path(__file__).resolve().parents[2] / 'scripts' / 'demo_readiness.py'
+        text = source.read_text(encoding='utf-8')
+        self.assertIn('def load_owner_env', text)
+        self.assertEqual(text.count('load_dotenv('), 1)
+        before, _, after = text.partition('def load_owner_env')
+        self.assertNotIn('load_dotenv(', before)
+        self.assertIn('load_dotenv(', after)
+        self.assertIn('load_owner_env()', text)
 
 
 if __name__ == '__main__':

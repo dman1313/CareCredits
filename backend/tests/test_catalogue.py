@@ -79,12 +79,15 @@ class CatalogueApiTests(unittest.TestCase):
             db.commit()
         self.client = TestClient(app, headers={'X-Care-Client': '1', 'Origin': 'http://127.0.0.1:3000'})
         self.service = {'Authorization': 'Bearer test-service-token'}
+        self.env = patch.dict(os.environ, {'TYPESAFE_API_KEY': ''}, clear=False)
+        self.env.start()
         self.keyfile = patch('jev.keyfile_path')
         mocked = self.keyfile.start()
         mocked.return_value.is_file.return_value = False
 
     def tearDown(self):
         self.keyfile.stop()
+        self.env.stop()
         app.dependency_overrides.clear()
 
     def test_connect_and_lookup_exact(self):

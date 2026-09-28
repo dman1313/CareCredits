@@ -80,6 +80,7 @@ class DiscoveryTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as error:
                 d.discover('cardiology')
             self.assertEqual(error.exception.status_code, 503)
+            self.assertIn('setup_integrations.py', error.exception.detail)
             call.assert_not_called()
 
     def test_url_filter(self):

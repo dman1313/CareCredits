@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Check, ExternalLink, Pause } from 'lucide-react';
-import { Candidate, feeLabel, formatDate } from '@/lib/portal';
+import { Candidate, feeLabel, formatDate, publicWebUrl } from '@/lib/portal';
 
 export function CandidateCard({
   candidate,
@@ -39,6 +39,7 @@ export function CandidateCard({
     fee: candidate.data.evidence?.fee || '',
     points: candidate.data.evidence?.points || '',
   });
+  const sourceHref = publicWebUrl(candidate.data.source_url);
   const original: Record<string, string> = {
     title: candidate.data.title || '',
     provider: candidate.data.provider || '',
@@ -73,9 +74,13 @@ export function CandidateCard({
         <div className="button-row">
           {candidate.data._fixture ? <span className="status fixture">fixture</span> : null}
           <span className={'status ' + candidate.status}>{candidate.status}</span>
-          <a href={candidate.data.source_url} target="_blank" rel="noreferrer" className="text-btn">
-            Open source <ExternalLink size={14} />
-          </a>
+          {sourceHref ? (
+            <a href={sourceHref} target="_blank" rel="noreferrer" className="text-btn">
+              Open source <ExternalLink size={14} />
+            </a>
+          ) : (
+            <span className="small-note">Original source URL is not available.</span>
+          )}
         </div>
       </div>
       <p>{candidate.data.description}</p>

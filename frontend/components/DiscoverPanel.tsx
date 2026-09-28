@@ -265,8 +265,13 @@ export function DiscoverPanel({
       )}
       <div className="results-heading">
         <span>
-          {tab === 'My learning' ? recordsTotal ?? records.length : total}{' '}
-          {tab === 'My learning' ? 'saved records' : 'training opportunities'}
+          {loading
+            ? tab === 'My learning'
+              ? 'Loading your records…'
+              : 'Searching…'
+            : `${tab === 'My learning' ? recordsTotal ?? records.length : total} ${
+                tab === 'My learning' ? 'saved records' : 'training opportunities'
+              }`}
         </span>
         <span>Source-linked · Details may change</span>
       </div>

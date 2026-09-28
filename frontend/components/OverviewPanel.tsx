@@ -12,6 +12,7 @@ export function OverviewPanel({
   digestBusy,
   certBusy,
   loading,
+  coursesLoading = false,
   audits = [],
   onDiscover,
   onLearning,
@@ -27,6 +28,7 @@ export function OverviewPanel({
   digestBusy: boolean;
   certBusy: boolean;
   loading: boolean;
+  coursesLoading?: boolean;
   audits?: AuditItem[];
   onDiscover: () => void;
   onLearning: () => void;
@@ -208,7 +210,7 @@ export function OverviewPanel({
           View all training <ArrowRight size={16} />
         </button>
       </div>
-      {loading ? (
+      {coursesLoading ? (
         <Loading />
       ) : courses.length ? (
         <div className="course-grid">

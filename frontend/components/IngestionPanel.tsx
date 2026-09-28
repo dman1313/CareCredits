@@ -2,7 +2,7 @@
 
 import { FormEvent, MutableRefObject, useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
-import { AuditItem, Candidate, Job } from '@/lib/portal';
+import { AuditItem, Candidate, Job, publicWebUrl } from '@/lib/portal';
 import { Empty, Loading } from '@/components/CourseList';
 import { IntegrationStatus } from '@/components/IntegrationStatus';
 import { CandidateCard } from '@/components/CandidateCard';
@@ -198,7 +198,7 @@ export function IngestionPanel({
       </div>
       <div className="job-list">
         {loading && !jobs.length ? (
-          <Loading />
+          <Loading text="Loading discovery jobs…" />
         ) : jobs.length ? (
           jobs.map((j) => (
             <article className="job-row" key={j.id}>
@@ -221,14 +221,21 @@ export function IngestionPanel({
                 </small>
                 {j.result?.sources?.length ? (
                   <ul className="source-list">
-                    {j.result.sources.map((source) => (
-                      <li key={source.url}>
-                        <a href={source.url} target="_blank" rel="noreferrer">
-                          {source.title || source.url}
-                        </a>
-                        {source.snippet ? <span> — {source.snippet}</span> : null}
-                      </li>
-                    ))}
+                    {j.result.sources.map((source, index) => {
+                      const href = publicWebUrl(source.url);
+                      return (
+                        <li key={source.url || source.title || index}>
+                          {href ? (
+                            <a href={href} target="_blank" rel="noreferrer">
+                              {source.title || source.url}
+                            </a>
+                          ) : (
+                            <span>{source.title || 'Source URL is not available'}</span>
+                          )}
+                          {source.snippet ? <span> — {source.snippet}</span> : null}
+                        </li>
+                      );
+                    })}
                   </ul>
                 ) : null}
               </div>
@@ -258,7 +265,7 @@ export function IngestionPanel({
         <span>{candidateTotal ?? candidates.length} awaiting review</span>
       </div>
       {loading && !candidates.length ? (
-        <Loading />
+        <Loading text="Loading review candidates…" />
       ) : candidates.length ? (
         <>
           {candidates.map((c) => <CandidateCard key={c.id} candidate={c} saving={saving} onReview={onReview} />)}

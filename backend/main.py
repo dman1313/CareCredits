@@ -31,7 +31,7 @@ from portal_models import (
     counts_toward_cpd, purge_expired_source_text, listed_filter,
 )
 from security import current_user, operator, worker, password_hash, password_matches, digest, throttle
-from shared.contracts import Training, validate_evidence
+from shared.contracts import Training, public_web_url, validate_evidence
 from shared.model_defaults import env_or_provisional
 from catalogue import (
     source_key, course_public, exact_course, near_neighbours,
@@ -558,11 +558,35 @@ def records_for(db, account_id, course_ids=None):
     return {row.course_id: row for row in query}
 
 
+def public_source_payload(item):
+    data = item.model_dump() if hasattr(item, 'model_dump') else dict(item)
+    data['url'] = public_web_url(data.get('url')) or ''
+    return data
+
+
+def job_json(job):
+    result = job.result
+    if isinstance(result, dict):
+        result = dict(result)
+        result['sources'] = [public_source_payload(item) for item in result.get('sources') or [] if isinstance(item, dict)]
+    return {
+        'id': job.id,
+        'query': job.query,
+        'status': job.status,
+        'created_at': job.created_at,
+        'max_results': job.max_results,
+        'attempt': job.attempt,
+        'result': result,
+    }
+
+
 def course_json(course, record=None, field_evidence=None):
     # Full source text and model configuration stay in operator review only.
     data = {k: v for k, v in (course.data or {}).items() if k not in ('source_text', 'model_weights_url', 'model_license_url')}
     for field in FILTER_FIELDS:
         data[field] = getattr(course, field)
+    data['source_url'] = public_web_url(data.get('source_url'))
+    data['registration_url'] = public_web_url(data.get('registration_url'))
     evidence_rows = []
     if field_evidence is not None:
         evidence_rows = [
@@ -1192,7 +1216,7 @@ def export(kind: Literal['csv', 'eml'], user=Depends(current_user), db: Session 
         writer = csv.writer(stream)
         writer.writerow(['Training', 'Provider', 'Signed up', 'Attended', 'Completed on', 'Recorded points', 'Credit label', 'Source', 'Evidence status'])
         for r, c in rows:
-            writer.writerow([cell(c.title), cell(c.provider), r.signed_up, r.attended, r.attended_on or '', r.points if r.points is not None else '', cell(r.credit_label), cell((c.data or {}).get('source_url')), 'Self-reported'])
+            writer.writerow([cell(c.title), cell(c.provider), r.signed_up, r.attended, r.attended_on or '', r.points if r.points is not None else '', cell(r.credit_label), cell(public_web_url((c.data or {}).get('source_url')) or ''), 'Self-reported'])
         content, mime = stream.getvalue(), 'text/csv; charset=utf-8'
     else:
         message = EmailMessage()
@@ -1214,7 +1238,8 @@ def public_profile(slug: str, db: Session = Depends(get_db)):
         raise HTTPException(404, 'This training profile is private or unavailable.')
     items = []
     for r, c in db.query(Record, Course).join(Course, Record.course_id == Course.id).filter(Record.account_id == account.id, Record.public.is_(True), Record.attended.is_(True)):
-        items.append({'title': c.title, 'provider': c.provider, 'attended_on': r.attended_on, 'source_url': (c.data or {}).get('source_url'), 'demo': c.demo})
+        raw = (c.data or {}).get('source_url')
+        items.append({'title': c.title, 'provider': c.provider, 'attended_on': r.attended_on, 'source_url': public_web_url(raw), 'demo': c.demo})
     return {'name': account.name, 'bio': account.bio, 'items': items, 'evidence_status': 'Self-reported training history; not independently verified.'}
 
 
@@ -1226,18 +1251,6 @@ def my_audit(page: int = 1, page_size: int = 20, user=Depends(current_user), db:
 @app.get('/api/v1/admin/audit')
 def admin_audit(page: int = 1, page_size: int = 20, user=Depends(operator), db: Session = Depends(get_db)):
     return paginated_audit(db, db.query(Audit), page, page_size)
-
-
-def job_json(job):
-    return {
-        'id': job.id,
-        'query': job.query,
-        'status': job.status,
-        'created_at': job.created_at,
-        'max_results': job.max_results,
-        'attempt': job.attempt,
-        'result': job.result,
-    }
 
 
 @app.post('/api/v1/admin/ingestion-jobs', status_code=202)
@@ -1464,23 +1477,26 @@ def complete(job_id: str, body: CompleteJob, db: Session = Depends(get_db)):
             db.add(Candidate(job_id=job.id, source_key=key, data=data, schema_version=CANDIDATE_SCHEMA_VERSION))
             seen.add(key)
     job.status = body.status
+    sources = [public_source_payload(item) for item in body.sources]
     job.result = {
         'candidate_count': len(seen),
         'warnings': [w[:500] for w in body.warnings],
         'usage': body.usage,
-        'sources': [item.model_dump() for item in body.sources],
+        'sources': sources,
     }
-    for item in body.sources:
-        url = item.url.split('#')[0]
-        digest_key = digest(url + '|' + (item.snippet or '')[:500])
+    for item in sources:
+        url = (item.get('url') or '').split('#')[0]
+        if not url:
+            continue
+        digest_key = digest(url + '|' + (item.get('snippet') or '')[:500])
         if not db.query(SourceDocument).filter_by(canonical_url=url, content_hash=digest_key).first():
             db.add(SourceDocument(
                 job_id=job.id,
                 canonical_url=url,
                 content_hash=digest_key,
-                extraction_status=item.extraction_status,
-                title=item.title[:300],
-                snippet=item.snippet[:2000],
+                extraction_status=item.get('extraction_status') or 'failed',
+                title=(item.get('title') or '')[:300],
+                snippet=(item.get('snippet') or '')[:2000],
             ))
     db.commit()
     job_line(

@@ -10,6 +10,7 @@ import {
   formatDate,
   locationLabel,
   modeName,
+  publicWebUrl,
   todayLocal,
 } from '@/lib/portal';
 
@@ -38,6 +39,8 @@ export function TrainingDetail({
 }) {
   const attendable = !course.start_date || course.start_date <= todayLocal();
   const dialogRef = useRef<HTMLElement>(null);
+  const sourceHref = publicWebUrl(course.source_url);
+  const registrationHref = publicWebUrl(course.registration_url);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     dialogRef.current?.focus();
@@ -135,13 +138,13 @@ export function TrainingDetail({
           </dl>
         ) : null}
         <div className="button-row">
-          {course.registration_url && (
-            <a className="secondary" href={course.registration_url} target="_blank" rel="noreferrer">
+          {registrationHref ? (
+            <a className="secondary" href={registrationHref} target="_blank" rel="noreferrer">
               Provider registration <ExternalLink size={14} />
             </a>
-          )}
-          {course.source_url ? (
-            <a className="text-btn" href={course.source_url} target="_blank" rel="noreferrer">
+          ) : null}
+          {sourceHref ? (
+            <a className="text-btn" href={sourceHref} target="_blank" rel="noreferrer">
               View original source <ExternalLink size={14} />
             </a>
           ) : (

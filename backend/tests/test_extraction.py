@@ -10,6 +10,8 @@ class ModelTests(unittest.TestCase):
     def setUp(self):
         self.env=patch.dict(os.environ,{'MODEL_ID':'test/open-weight-model','MODEL_API_KEY':'test-secret','MODEL_WEIGHTS_URL':'https://example.org/weights','MODEL_LICENSE_URL':'https://example.org/license','MODEL_OPEN_WEIGHT_CONFIRMED':'true','MODEL_BASE_URL':'https://example.org/v1','MODEL_MAX_INPUT_CHARS':'12000','MODEL_MAX_OUTPUT_TOKENS':'4000'})
         self.env.start();self.addCleanup(self.env.stop)
+        self.firehose=patch('scraper.worker.firehose_configured', return_value=False)
+        self.firehose.start();self.addCleanup(self.firehose.stop)
         self.text='Primary care seminar. Provider: Medical School. Online for Malaysian doctors.'
         self.row={'title':'Primary care seminar','provider':'Medical School','mode':'online','country':'MY','evidence':{k:self.text for k in ['title','provider','mode','country']}}
         self.source={'url':'https://example.org/event','raw_content':self.text}
@@ -296,6 +298,15 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(result['status'],'succeeded')
             self.assertEqual(result['candidates'],[])
             model.assert_not_called()
+
+    def test_empty_search_skips_model_configuration(self):
+        with patch.dict(os.environ, {'MODEL_API_KEY': ''}, clear=False), patch(
+            'scraper.worker.discover', return_value={'sources': [], 'warnings': []}
+        ), patch('scraper.worker.configuration') as config:
+            result = run_job({'query': 'GP', 'lease_token': 'test'}, lambda: None)
+        self.assertEqual(result['status'], 'succeeded')
+        self.assertEqual(result['warnings'], [])
+        config.assert_not_called()
 
     def test_missing_model_key_or_confirmation_blocks_configuration(self):
         from scraper.extraction import configuration

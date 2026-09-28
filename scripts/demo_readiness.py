@@ -23,7 +23,11 @@ from dotenv import load_dotenv  # noqa: E402
 from scripts.dev import is_live_body  # noqa: E402
 from shared.model_defaults import PROVISIONAL_MODEL  # noqa: E402
 
-load_dotenv(root / '.env')
+
+def load_owner_env() -> None:
+    """Load ignored `.env` for the CLI / opted-in T-10 run. Importing this module must not."""
+    load_dotenv(root / '.env')
+
 
 FRONTEND_PORTS = (3030, 3021, 3020, 3010, 3000)
 BACKEND_PORTS = (8022, 8021, 8020, 8010, 8000)
@@ -178,6 +182,7 @@ def format_stack_row(row: dict) -> str:
 
 
 def main() -> int:
+    load_owner_env()
     checks = readiness_checks()
     # Match scraper/worker.py: unset URL defaults to local backend.
     backend_url = (os.getenv('BACKEND_INTERNAL_URL') or 'http://127.0.0.1:8000').strip()

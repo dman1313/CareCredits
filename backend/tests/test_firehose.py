@@ -5,7 +5,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 
 from scraper import firehose as f
-from scraper.worker import merge_sources, run_job
+from scraper.worker import merge_sources, public_sources, run_job
 
 
 SSE = (
@@ -136,6 +136,15 @@ class FirehoseTests(unittest.TestCase):
         extra = [{'url': f'https://example.org/{i}'} for i in range(8)]
         merged = merge_sources([{'url': 'https://example.org/seed'}], extra, limit=5)
         self.assertEqual(len(merged), 5)
+
+    def test_public_sources_omit_unsafe_urls(self):
+        items = public_sources([
+            {'url': 'javascript:alert(1)', 'title': 'Unsafe', 'snippet': 'skip'},
+            {'url': 'https://example.org/afpm', 'title': 'Primary Care Update', 'snippet': 'CPD'},
+        ])
+        self.assertEqual(items[0]['url'], '')
+        self.assertEqual(items[0]['title'], 'Unsafe')
+        self.assertEqual(items[1]['url'], 'https://example.org/afpm')
 
 
 if __name__ == '__main__':
