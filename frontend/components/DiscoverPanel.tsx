@@ -276,7 +276,7 @@ export function DiscoverPanel({
         <span>Source-linked · Details may change</span>
       </div>
       {loading ? (
-        <Loading />
+        <Loading text={tab === 'My learning' ? 'Loading your records…' : 'Finding your training…'} />
       ) : list.length ? (
         <div className="course-grid">
           {list.map((c) => (

@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from io import BytesIO
 from pathlib import Path
@@ -9,7 +10,9 @@ from scripts.demo_readiness import (
     classify_backend,
     classify_frontend,
     classify_scraper,
+    format_check,
     local_stack,
+    present,
 )
 
 
@@ -101,6 +104,15 @@ class DemoReadinessStackTests(unittest.TestCase):
         self.assertNotIn('load_dotenv(', before)
         self.assertIn('load_dotenv(', after)
         self.assertIn('load_owner_env()', text)
+
+    def test_cli_labels_open03_sample_defaults(self):
+        with patch.dict(os.environ, {'MODEL_ID': '', 'MODEL_API_KEY': ''}, clear=False):
+            self.assertTrue(present('MODEL_ID'))
+            self.assertFalse(present('MODEL_API_KEY'))
+            self.assertEqual(format_check('MODEL_ID', True), '  OK  MODEL_ID (OPEN-03 sample default)')
+            self.assertEqual(format_check('MODEL_API_KEY', False), '  NO  MODEL_API_KEY')
+        with patch.dict(os.environ, {'MODEL_ID': 'Qwen/owner-chosen'}, clear=False):
+            self.assertEqual(format_check('MODEL_ID', True), '  OK  MODEL_ID')
 
 
 if __name__ == '__main__':

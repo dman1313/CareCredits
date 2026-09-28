@@ -32,7 +32,7 @@ from portal_models import (
 )
 from security import current_user, operator, worker, password_hash, password_matches, digest, throttle
 from shared.contracts import Training, public_web_url, validate_evidence
-from shared.model_defaults import env_or_provisional
+from shared.model_defaults import env_or_provisional, using_provisional
 from catalogue import (
     source_key, course_public, exact_course, near_neighbours,
     save_new_candidate, link_existing, publish_new_event,
@@ -754,8 +754,12 @@ def integrations(user=Depends(operator)):
         'model_host': env_or_provisional('MODEL_HOST') or None,
         'model_weights_url': weights,
         'model_license_url': license_url,
+        'model_identity_provisional': using_provisional('MODEL_ID'),
+        'model_weights_provisional': using_provisional('MODEL_WEIGHTS_URL'),
+        'model_license_provisional': using_provisional('MODEL_LICENSE_URL'),
         'model_open_weight_confirmed': os.getenv('MODEL_OPEN_WEIGHT_CONFIRMED') == 'true',
         'model_caps_configured': bool(input_chars and output_tokens),
+        'model_caps_provisional': using_provisional('MODEL_MAX_INPUT_CHARS') or using_provisional('MODEL_MAX_OUTPUT_TOKENS'),
         'model_max_input_chars': input_chars,
         'model_max_output_tokens': output_tokens,
         'model_key_configured': bool((os.getenv('MODEL_API_KEY') or '').strip() or os.getenv('MODEL_KEY_CONFIGURED') == 'true'),

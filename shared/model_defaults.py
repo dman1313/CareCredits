@@ -26,3 +26,9 @@ def env_or_provisional(name: str, environ: dict | None = None) -> str:
     if current:
         return current
     return PROVISIONAL_MODEL.get(name, '')
+
+
+def using_provisional(name: str, environ: dict | None = None) -> bool:
+    """True when the value is the OPEN-03 sample default, not an owner-set env field."""
+    source = environ if environ is not None else __import__('os').environ
+    return not (source.get(name) or '').strip() and name in PROVISIONAL_MODEL

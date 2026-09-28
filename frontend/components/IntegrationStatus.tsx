@@ -23,8 +23,12 @@ export type IntegrationFlags = {
   model_host: string | null;
   model_weights_url: string | null;
   model_license_url: string | null;
+  model_identity_provisional?: boolean;
+  model_weights_provisional?: boolean;
+  model_license_provisional?: boolean;
   model_open_weight_confirmed: boolean;
   model_caps_configured: boolean;
+  model_caps_provisional?: boolean;
   model_max_input_chars?: number | null;
   model_max_output_tokens?: number | null;
   model_key_configured: boolean;
@@ -133,10 +137,15 @@ export function IntegrationStatus({
           Model {integrations.model_id || 'not selected'}
           {integrations.model_publisher ? ` · ${integrations.model_publisher}` : ''}
           {integrations.model_host ? ` · ${integrations.model_host}` : ''}
+          {integrations.model_identity_provisional
+            ? ' · OPEN-03 sample default (not a live run)'
+            : ''}
           {integrations.model_open_weight_confirmed ? ' · open-weight confirmed' : ' · open-weight not confirmed'}
           {integrations.model_key_configured ? ' · key present' : ' · key missing'}
           {integrations.model_caps_configured
-            ? ` · caps ${integrations.model_max_input_chars || '?'} / ${integrations.model_max_output_tokens || '?'}`
+            ? ` · caps ${integrations.model_max_input_chars || '?'} / ${integrations.model_max_output_tokens || '?'}${
+                integrations.model_caps_provisional ? ' (OPEN-03 sample default)' : ''
+              }`
             : ' · caps missing'}
           {integrations.typesafe_configured ? ' · Jev ready' : ' · Jev key missing'}
           {integrations.scraper_token_configured ? ' · scraper token set' : ' · scraper token missing'}
@@ -149,6 +158,7 @@ export function IntegrationStatus({
               {' '}
               <a href={weightsHref} target="_blank" rel="noreferrer">
                 Weights
+                {integrations.model_weights_provisional ? ' (OPEN-03 sample default)' : ''}
               </a>
             </>
           ) : null}
@@ -157,6 +167,7 @@ export function IntegrationStatus({
               {' '}
               <a href={licenseHref} target="_blank" rel="noreferrer">
                 Licence
+                {integrations.model_license_provisional ? ' (OPEN-03 sample default)' : ''}
               </a>
             </>
           ) : null}{' '}

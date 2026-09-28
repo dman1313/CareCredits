@@ -714,7 +714,11 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(body['model_id'], 'Qwen/Qwen3-30B-A3B-Instruct-2507')
         self.assertEqual(body['model_publisher'], 'Qwen')
         self.assertEqual(body['model_host'], 'Nebius Token Factory')
+        self.assertTrue(body['model_identity_provisional'])
         self.assertTrue(body['model_caps_configured'])
+        self.assertTrue(body['model_caps_provisional'])
+        self.assertTrue(body['model_weights_provisional'])
+        self.assertTrue(body['model_license_provisional'])
         self.assertEqual(body['model_max_input_chars'], 12000)
         self.assertEqual(body['model_max_output_tokens'], 4000)
         self.assertFalse(body['model_open_weight_confirmed'])
@@ -727,6 +731,18 @@ class PortalTests(unittest.TestCase):
         self.assertIn('model_max_output_tokens', body)
         self.assertIn('catalogue_auto_publish_new', body)
         self.assertFalse(body['catalogue_auto_publish_new'])
+        with patch.dict(os.environ, {**blank, 'MODEL_ID': 'Qwen/owner-chosen'}, clear=False):
+            owned = self.client.get('/api/v1/admin/integrations').json()
+        self.assertEqual(owned['model_id'], 'Qwen/owner-chosen')
+        self.assertFalse(owned['model_identity_provisional'])
+        with patch.dict(os.environ, {**blank, 'MODEL_MAX_INPUT_CHARS': '8000', 'MODEL_MAX_OUTPUT_TOKENS': '2000'}, clear=False):
+            capped = self.client.get('/api/v1/admin/integrations').json()
+        self.assertFalse(capped['model_caps_provisional'])
+        self.assertEqual(capped['model_max_input_chars'], 8000)
+        with patch.dict(os.environ, {**blank, 'MODEL_WEIGHTS_URL': 'https://example.org/weights', 'MODEL_LICENSE_URL': 'https://example.org/license'}, clear=False):
+            linked = self.client.get('/api/v1/admin/integrations').json()
+        self.assertFalse(linked['model_weights_provisional'])
+        self.assertFalse(linked['model_license_provisional'])
         blob=result.text
         self.assertNotIn('TAVILY_API_KEY', blob)
         self.assertNotIn('MODEL_API_KEY', blob)

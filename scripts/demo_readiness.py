@@ -21,7 +21,7 @@ sys.path[:0] = [str(root), str(root / 'backend')]
 
 from dotenv import load_dotenv  # noqa: E402
 from scripts.dev import is_live_body  # noqa: E402
-from shared.model_defaults import PROVISIONAL_MODEL  # noqa: E402
+from shared.model_defaults import PROVISIONAL_MODEL, using_provisional  # noqa: E402
 
 
 def load_owner_env() -> None:
@@ -59,6 +59,13 @@ def readiness_checks():
 
 def live_ready() -> bool:
     return all(ok for _, ok in readiness_checks())
+
+
+def format_check(label: str, ok: bool) -> str:
+    """CLI line for a readiness flag. Provisional OPEN-03 identity is still OK, but labelled."""
+    if ok and using_provisional(label):
+        return f'  OK  {label} (OPEN-03 sample default)'
+    return f'  {"OK " if ok else "NO "} {label}'
 
 
 def fetch(url: str, timeout: float = 2):
@@ -188,7 +195,7 @@ def main() -> int:
     backend_url = (os.getenv('BACKEND_INTERNAL_URL') or 'http://127.0.0.1:8000').strip()
     print('CareCredits DEMO-01 readiness (no secrets printed, no paid API calls):')
     for label, ok in checks:
-        print(f'  {"OK " if ok else "NO "} {label}')
+        print(format_check(label, ok))
     print(f'  OK  BACKEND_INTERNAL_URL (effective: {backend_url})')
 
     fixture = root / 'backend' / 'seed_demo.py'

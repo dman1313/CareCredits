@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from scripts.dev import free_port, is_live_body, probe_live, service_environments, wait_for_live
-from shared.model_defaults import apply_provisional_model
+from shared.model_defaults import apply_provisional_model, using_provisional
 
 
 class DevPortTests(unittest.TestCase):
@@ -65,6 +65,8 @@ class DevPortTests(unittest.TestCase):
         self.assertEqual(filled['MODEL_ID'], 'Qwen/Qwen3-30B-A3B-Instruct-2507')
         self.assertEqual(filled['TAVILY_API_KEY'], 'keep')
         self.assertNotIn('MODEL_API_KEY', filled)
+        self.assertTrue(using_provisional('MODEL_ID', {'MODEL_ID': ''}))
+        self.assertFalse(using_provisional('MODEL_ID', {'MODEL_ID': 'Qwen/owner-chosen'}))
 
     def test_wait_for_live_requires_status_live(self):
         self.assertTrue(is_live_body({'status': 'live'}))
