@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { TrainingDetail } from '@/components/TrainingDetail';
 import { LiveIngestion } from '@/components/LiveIngestion';
-import { api, Course, distanceLabel, emptyRecord, formatDate, Progress, RecordData, RecordHistoryItem, User } from '@/lib/portal';
+import { api, AuditItem, Course, distanceLabel, emptyRecord, formatDate, Progress, RecordData, RecordHistoryItem, User } from '@/lib/portal';
 
 const PAGE_SIZE = 12;
 
@@ -103,13 +103,16 @@ export default function LiveSearch() {
     { id: string; title: string; provider?: string; start_date?: string | null; city?: string | null; reason?: string; points?: number | null }[]
   >([]);
   const [certBusy, setCertBusy] = useState(false);
+  const [digestBusy, setDigestBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [locationBusy, setLocationBusy] = useState(false);
   const [opening, setOpening] = useState(false);
   const [records, setRecords] = useState<Course[]>([]);
   const [recordsTotal, setRecordsTotal] = useState(0);
   const [learningFilter, setLearningFilter] = useState<'all' | 'signed_up' | 'attended'>('all');
+  const [learningPage, setLearningPage] = useState(1);
   const [learningBusy, setLearningBusy] = useState(false);
+  const [audits, setAudits] = useState<AuditItem[]>([]);
 
   useEffect(() => {
     Promise.all([
@@ -193,16 +196,26 @@ export default function LiveSearch() {
     }
   }
 
-  async function loadLearning(filter: 'all' | 'signed_up' | 'attended' = learningFilter) {
+  async function loadLearning(
+    filter: 'all' | 'signed_up' | 'attended' = learningFilter,
+    nextPage = filter === learningFilter ? learningPage : 1,
+  ) {
     setLearningBusy(true);
     try {
-      const params = new URLSearchParams({ page: '1', page_size: '12' });
+      const params = new URLSearchParams({ page: String(nextPage), page_size: '12' });
       if (filter === 'signed_up') params.set('signup_status', 'signed_up');
       if (filter === 'attended') params.set('attendance_status', 'attended');
       const data = await api('/me/trainings?' + params);
+      const total = data.total || 0;
+      const pageCount = Math.max(1, Math.ceil(total / 12));
+      if (nextPage > pageCount) {
+        await loadLearning(filter, pageCount);
+        return;
+      }
       setRecords(data.items || []);
-      setRecordsTotal(data.total || 0);
+      setRecordsTotal(total);
       setLearningFilter(filter);
+      setLearningPage(nextPage);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -213,14 +226,16 @@ export default function LiveSearch() {
   async function loadWorkspace(nextCity = city, nextState = state) {
     await search({ city: nextCity, state: nextState, page: 1 });
     try {
-      const [nextProgress, digest, nextSuggestions] = await Promise.all([
+      const [nextProgress, digest, nextSuggestions, mine] = await Promise.all([
         api('/me/progress?year=' + year),
         api('/me/digest'),
         api('/me/suggestions'),
+        api('/me/audit?page=1&page_size=8').catch(() => null),
       ]);
       setProgress(nextProgress);
       setDigestOptIn(!!digest.opted_in);
       setSuggestions(nextSuggestions.items || []);
+      if (mine) setAudits(mine.items || []);
       await loadLearning(learningFilter);
     } catch (e) {
       setError((e as Error).message);
@@ -319,6 +334,7 @@ export default function LiveSearch() {
 
   async function toggleDigest(next: boolean) {
     setError('');
+    setDigestBusy(true);
     try {
       const d = await api('/me/digest', {
         method: 'PATCH',
@@ -327,6 +343,8 @@ export default function LiveSearch() {
       setDigestOptIn(!!d.opted_in);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setDigestBusy(false);
     }
   }
 
@@ -338,7 +356,7 @@ export default function LiveSearch() {
         method: 'POST',
         body: JSON.stringify({ year }),
       });
-      window.open('/api/v1/me/certificates/' + cert.id, '_blank');
+      window.open('/api/v1/me/certificates/' + cert.id, '_blank', 'noopener');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -542,7 +560,7 @@ export default function LiveSearch() {
             <span className="avatar">{initials(user.name)}</span>
             <div>
               <strong>{user.name}</strong>
-              <small>General Practice</small>
+              <small>{user.role === 'operator' ? 'Operator' : user.city || 'Malaysia'}</small>
             </div>
             <button
               className="text-link"
@@ -777,9 +795,31 @@ export default function LiveSearch() {
                     </div>
                   </article>
                 </section>
+                <section className="card" id="live-audit">
+                  <div className="card-heading">
+                    <div>
+                      <span className="heading-icon">▤</span>
+                      <h2>Your activity</h2>
+                    </div>
+                  </div>
+                  <p className="empty-copy">Your own audit trail. Personal notes and secrets are never shown here.</p>
+                  {audits.length ? (
+                    <ul className="source-list">
+                      {audits.slice(0, 8).map((item) => (
+                        <li key={item.id}>
+                          {item.action} · {item.entity_id}
+                          {item.at ? ` · ${new Date(item.at * 1000).toLocaleString('en-MY')}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="empty-copy">Sign-up, attendance, and profile saves will appear here.</p>
+                  )}
+                </section>
               </>
             )}
             <div className="dashboard-grid">
+              {(tab === 'Discover' || tab === 'Events' || tab === 'Overview') && (
               <div className="left-column">
                 <section className="card">
                   <div className="card-heading">
@@ -853,6 +893,7 @@ export default function LiveSearch() {
                   )}
                 </section>
               </div>
+              )}
               <div className="right-column">
                 {user.role === 'operator' && (
                   <LiveIngestion
@@ -1086,24 +1127,49 @@ export default function LiveSearch() {
                         Loading your learning record…
                       </p>
                     ) : records.length ? (
-                      records.map((course) => (
-                        <button key={course.id} className="event" type="button" onClick={() => openCourse(course)}>
-                          <span className="event-name">
-                            <strong>{course.title}</strong>
-                            <small>
-                              {formatDate(course.start_date)} ·{' '}
-                              {course.record?.attendance_status === 'attended'
-                                ? 'Attended'
-                                : course.record?.signup_status === 'signed_up'
-                                  ? 'Signed up'
-                                  : course.record?.signup_status === 'cancelled'
-                                    ? 'Sign-up cancelled'
-                                    : 'Saved'}
-                            </small>
-                          </span>
-                          <ChevronRight />
-                        </button>
-                      ))
+                      <>
+                        {records.map((course) => (
+                          <button key={course.id} className="event" type="button" onClick={() => openCourse(course)}>
+                            <span className="event-name">
+                              <strong>{course.title}</strong>
+                              <small>
+                                {formatDate(course.start_date)} ·{' '}
+                                {course.record?.attendance_status === 'attended'
+                                  ? 'Attended'
+                                  : course.record?.signup_status === 'signed_up'
+                                    ? 'Signed up'
+                                    : course.record?.signup_status === 'cancelled'
+                                      ? 'Sign-up cancelled'
+                                      : 'Saved'}
+                              </small>
+                            </span>
+                            <ChevronRight />
+                          </button>
+                        ))}
+                        {recordsTotal > 12 && (
+                          <div className="pager" data-testid="live-learning-pager">
+                            <button
+                              className="text-link"
+                              type="button"
+                              disabled={learningPage <= 1 || learningBusy}
+                              onClick={() => loadLearning(learningFilter, learningPage - 1)}
+                            >
+                              Previous
+                            </button>
+                            <span>
+                              Page {learningPage} of {Math.max(1, Math.ceil(recordsTotal / 12))}
+                            </span>
+                            <button
+                              className="text-link"
+                              type="button"
+                              disabled={learningPage * 12 >= recordsTotal || learningBusy}
+                              onClick={() => loadLearning(learningFilter, learningPage + 1)}
+                            >
+                              Next
+                            </button>
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <p className="empty-copy">
                         Your learning story starts here. Open a catalogue course to record sign-up or attendance.
@@ -1126,6 +1192,7 @@ export default function LiveSearch() {
                       <input
                         type="checkbox"
                         checked={digestOptIn}
+                        disabled={digestBusy}
                         onChange={(e) => toggleDigest(e.target.checked)}
                       />{' '}
                       Email me the biweekly digest

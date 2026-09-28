@@ -87,7 +87,7 @@ def service_environments(
         'DEMO_MODE': str(demo).lower(),
         'ALLOW_SIGNUP': 'true' if demo else settings.get('ALLOW_SIGNUP', 'false'),
         'SCRAPER_SERVICE_TOKEN': token,
-        'DAILY_SCRAPE_ENABLED': settings.get('DAILY_SCRAPE_ENABLED', 'true'),
+        'DAILY_SCRAPE_ENABLED': 'false' if demo else settings.get('DAILY_SCRAPE_ENABLED', 'true'),
         'PUBLIC_API_BASE': api,
         'PUBLIC_FRONTEND_BASE': frontend,
         'ALLOWED_ORIGINS': 'http://localhost:' + str(frontend_port) + ',' + frontend,
@@ -115,7 +115,11 @@ def service_environments(
         'SCRAPER_HEALTH_HOST': settings.get('SCRAPER_HEALTH_HOST') or '127.0.0.1',
         'SCRAPER_HEALTH_PORT': str(health_port),
     }
-    frontend_env = {**common, 'BACKEND_URL': api}
+    frontend_env = {
+        **common,
+        'BACKEND_URL': api,
+        'NEXT_DIST_DIR': str(root / '.data' / ('next-dev-' + str(frontend_port))),
+    }
     return backend, scraper, frontend_env
 
 

@@ -25,6 +25,7 @@ import { IngestionPanel } from '@/components/IngestionPanel';
 import { TrainingDetail } from '@/components/TrainingDetail';
 import {
   api,
+  AuditItem,
   Candidate,
   Course,
   emptyRecord,
@@ -67,7 +68,9 @@ export default function Home() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [records, setRecords] = useState<Course[]>([]);
   const [progress, setProgress] = useState<Progress | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [recordsLoading, setRecordsLoading] = useState(false);
+  const [coursesLoading, setCoursesLoading] = useState(false);
+  const [operatorLoading, setOperatorLoading] = useState(false);
   const [filters, setFilters] = useState<DiscoverFilters>(initialFilters);
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<Course | null>(null);
@@ -85,10 +88,25 @@ export default function Home() {
   const [year, setYear] = useState(() => new Date().getFullYear());
   const [jobMaxResults, setJobMaxResults] = useState(5);
   const [candidateTotal, setCandidateTotal] = useState(0);
+  const [candidatePage, setCandidatePage] = useState(1);
+  const [audits, setAudits] = useState<AuditItem[]>([]);
+  const [operatorAudits, setOperatorAudits] = useState<AuditItem[]>([]);
+  const [topics, setTopics] = useState<{ query: string; max_results: number }[]>([]);
+  const [scrapeCeiling, setScrapeCeiling] = useState<number | null>(null);
+  const [scrapeDay, setScrapeDay] = useState('');
+  const [forceScrape, setForceScrape] = useState(false);
+  const [scrapeResult, setScrapeResult] = useState<{
+    enqueued: number;
+    skipped: number;
+    day: string;
+    ceiling: number;
+    topics: number;
+  } | null>(null);
   const [learning, setLearning] = useState<LearningFilters>({ signupStatus: '', attended: '', page: 1 });
   const [recordsTotal, setRecordsTotal] = useState(0);
   const jobKey = useRef('');
   const retryRef = useRef<() => void>(() => {});
+  const operatorBoot = useRef(true);
 
   function fail(err: unknown, retry: () => void) {
     setError((err as Error).message);
@@ -113,26 +131,31 @@ export default function Home() {
     });
     if (learning.signupStatus) params.set('signup_status', learning.signupStatus);
     if (learning.attended) params.set('attendance_status', learning.attended);
-    setLoading(true);
+    setRecordsLoading(true);
     try {
       const [r, p] = await Promise.all([api('/me/trainings?' + params), api('/me/progress?year=' + year)]);
       setRecords(r.items);
       setRecordsTotal(r.total || 0);
       setProgress(p);
-      const [digest, next] = await Promise.all([api('/me/digest'), api('/me/suggestions')]);
+      const [digest, next, mine] = await Promise.all([
+        api('/me/digest'),
+        api('/me/suggestions'),
+        api('/me/audit?page=1&page_size=8').catch(() => null),
+      ]);
       setDigestOptIn(!!digest.opted_in);
       setSuggestions(next.items || []);
+      if (mine) setAudits(mine.items || []);
     } catch (e) {
       fail(e, () => {
         refreshRecords().catch((err) => fail(err, () => refreshRecords()));
       });
     } finally {
-      setLoading(false);
+      setRecordsLoading(false);
     }
   }, [year, learning]);
 
   const loadCourses = useCallback(async () => {
-    setLoading(true);
+    setCoursesLoading(true);
     setError('');
     try {
       const params = new URLSearchParams({
@@ -163,7 +186,7 @@ export default function Home() {
         loadCourses();
       });
     } finally {
-      setLoading(false);
+      setCoursesLoading(false);
     }
   }, [filters]);
 
@@ -178,11 +201,34 @@ export default function Home() {
   }, [user, loadCourses]);
 
   const refreshOperator = useCallback(async () => {
-    const [j, c] = await Promise.all([api('/admin/ingestion-jobs'), api('/admin/candidates?page=1&page_size=20')]);
-    setJobs(j.items);
-    setCandidates(c.items);
-    setCandidateTotal(c.total || c.items.length);
-  }, []);
+    if (operatorBoot.current) setOperatorLoading(true);
+    try {
+      const [j, c, topicPayload, auditPayload] = await Promise.all([
+        api('/admin/ingestion-jobs'),
+        api('/admin/candidates?page=' + candidatePage + '&page_size=20'),
+        api('/admin/scrape-topics').catch(() => null),
+        api('/admin/audit?page=1&page_size=10').catch(() => null),
+      ]);
+      if (topicPayload) {
+        setTopics(topicPayload.topics || []);
+        setScrapeCeiling(topicPayload.ceiling ?? null);
+        setScrapeDay(topicPayload.day || '');
+      }
+      const total = c.total || c.items.length;
+      const pageCount = Math.max(1, Math.ceil(total / 20));
+      if (candidatePage > pageCount) {
+        setCandidatePage(pageCount);
+        return;
+      }
+      setJobs(j.items);
+      setCandidates(c.items);
+      setCandidateTotal(total);
+      if (auditPayload) setOperatorAudits(auditPayload.items || []);
+    } finally {
+      operatorBoot.current = false;
+      setOperatorLoading(false);
+    }
+  }, [candidatePage]);
 
   useEffect(() => {
     if (user?.role !== 'operator' || tab !== 'Ingestion') return;
@@ -288,6 +334,7 @@ export default function Home() {
         body: JSON.stringify({ query: jobQuery, max_results: jobMaxResults }),
       });
       jobKey.current = '';
+      setCandidatePage(1);
       await refreshOperator();
       setNotice('Job queued. The scraper will process it when running.');
     } catch (e) {
@@ -403,7 +450,7 @@ export default function Home() {
           <span className="avatar">{user.name.replace('Dr ', '').slice(0, 1)}</span>
           <div>
             <strong>{user.name}</strong>
-            <small>General practitioner</small>
+            <small>{user.role === 'operator' ? 'Operator' : user.city || 'Malaysia'}</small>
           </div>
           <button
             className="icon-btn"
@@ -469,7 +516,8 @@ export default function Home() {
               digestOptIn={digestOptIn}
               digestBusy={digestBusy}
               certBusy={certBusy}
-              loading={loading}
+              loading={recordsLoading}
+              audits={audits}
               onDiscover={() => navigate('Discover training')}
               onLearning={() => navigate('My learning')}
               onOpen={openCourse}
@@ -515,7 +563,7 @@ export default function Home() {
               courses={courses}
               records={records}
               total={total}
-              loading={loading}
+              loading={tab === 'My learning' ? recordsLoading : coursesLoading}
               learning={learning}
               recordsTotal={recordsTotal}
               onFilters={(patch) => setFilters((f) => ({ ...f, ...patch }))}
@@ -541,6 +589,7 @@ export default function Home() {
               jobMaxResults={jobMaxResults}
               jobs={jobs}
               candidates={candidates}
+              candidatePage={candidatePage}
               candidateTotal={candidateTotal}
               submitting={submitting}
               saving={saving}
@@ -551,13 +600,25 @@ export default function Home() {
               onRefresh={() => refreshOperator().catch((e) => fail(e, () => refreshOperator()))}
               onRetry={retryJob}
               onReview={review}
+              onCandidatePage={setCandidatePage}
+              loading={operatorLoading}
+              topics={topics}
+              ceiling={scrapeCeiling}
+              scrapeDay={scrapeDay}
+              forceScrape={forceScrape}
+              onForceScrape={setForceScrape}
+              scrapeResult={scrapeResult}
+              audits={operatorAudits}
               onDailyScrape={async () => {
                 setSaving(true);
                 setError('');
                 try {
-                  await api('/admin/daily-scrape', { method: 'POST' });
+                  const result = await api('/admin/daily-scrape?force=' + String(forceScrape), { method: 'POST' });
+                  setScrapeResult(result);
                   await refreshOperator();
-                  setNotice('Daily scrape topics queued for the owned catalogue.');
+                  setNotice(
+                    `Daily scrape ${result.day}: ${result.enqueued} queued, ${result.skipped} skipped (ceiling ${result.ceiling}).`,
+                  );
                 } catch (e) {
                   fail(e, () => refreshOperator());
                 } finally {

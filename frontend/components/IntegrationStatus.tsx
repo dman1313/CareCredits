@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type ServiceStatus = {
   backend: string;
@@ -31,14 +31,38 @@ export type IntegrationFlags = {
   catalogue_auto_publish_new?: boolean;
 };
 
-export function IntegrationStatus({ className = 'small-note' }: { className?: string }) {
+export function liveDiscoveryReady(
+  services: ServiceStatus | null,
+  integrations: IntegrationFlags | null,
+) {
+  const tavily = !!services?.scraper?.tavily_configured;
+  const model =
+    !!services?.scraper?.model_ready ||
+    !!(
+      integrations?.model_key_configured &&
+      integrations?.model_caps_configured &&
+      integrations?.model_open_weight_confirmed
+    );
+  return tavily && model;
+}
+
+export function IntegrationStatus({
+  className = 'small-note',
+  onLiveReady,
+}: {
+  className?: string;
+  onLiveReady?: (ready: boolean, loading: boolean) => void;
+}) {
   const [integrations, setIntegrations] = useState<IntegrationFlags | null>(null);
   const [services, setServices] = useState<ServiceStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const readyRef = useRef(onLiveReady);
+  readyRef.current = onLiveReady;
 
   const load = useCallback(() => {
     setLoading(true);
+    readyRef.current?.(false, true);
     setError('');
     const headers = { 'X-Care-Client': '1' };
     Promise.allSettled([
@@ -56,6 +80,7 @@ export function IntegrationStatus({ className = 'small-note' }: { className?: st
         const nextIntegrations = integrationsResult.status === 'fulfilled' ? integrationsResult.value : null;
         setServices(nextServices);
         setIntegrations(nextIntegrations);
+        readyRef.current?.(liveDiscoveryReady(nextServices, nextIntegrations), false);
         if (!nextServices && !nextIntegrations) {
           const first =
             (servicesResult.status === 'rejected' && servicesResult.reason) ||

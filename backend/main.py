@@ -38,7 +38,7 @@ from catalogue import (
 )
 from observe import setup as setup_logs, request_line, job_line
 from jev import decide_existence, JevError, api_key as typesafe_key
-from schedule import enqueue_daily, load_topics, local_today
+from schedule import daily_ceiling, enqueue_daily, load_topics, local_today
 from digest import (
     ensure_preference, preference_json, run_due_digests,
 )
@@ -50,6 +50,12 @@ from oauth import authorize_url, configured as google_oauth, exchange_code, issu
 
 def today():
     return datetime.now(ZoneInfo('Asia/Kuala_Lumpur')).date()
+
+
+def client_host(request: Request) -> str:
+    if request.client and request.client.host:
+        return request.client.host
+    return 'unknown'
 
 
 def initialize():
@@ -574,6 +580,28 @@ def audit(db, account_id, action, entity, changed):
     db.add(Audit(account_id=account_id, action=action, entity_id=entity, changed=changed))
 
 
+AUDIT_HIDDEN = {'notes', 'password', 'password_hash', 'token', 'secret', 'api_key'}
+
+
+def audit_json(row: Audit) -> dict:
+    changed = row.changed if isinstance(row.changed, dict) else {}
+    return {
+        'id': row.id,
+        'action': row.action,
+        'entity_id': row.entity_id,
+        'changed': {key: value for key, value in changed.items() if key not in AUDIT_HIDDEN},
+        'at': row.created_at,
+    }
+
+
+def paginated_audit(db: Session, query, page: int, page_size: int):
+    if page < 1 or not 1 <= page_size <= 50:
+        raise HTTPException(422, 'Invalid pagination.')
+    total = query.count()
+    rows = query.order_by(Audit.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {'items': [audit_json(row) for row in rows], 'total': total, 'page': page, 'page_size': page_size}
+
+
 class CatalogueLookup(BaseModel):
     candidate: Training
 
@@ -691,7 +719,7 @@ def integrations(user=Depends(operator)):
 def register(body: Credentials, request: Request, db: Session = Depends(get_db)):
     if os.getenv('ALLOW_SIGNUP') != 'true':
         raise HTTPException(403, 'Registration is disabled. Contact the application operator.')
-    throttle(db, 'register:' + request.client.host, 10, 3600)
+    throttle(db, 'register:' + client_host(request), 10, 3600)
     account = Account(email=body.email, name=body.name, password_hash=password_hash(body.password))
     db.add(account)
     try:
@@ -705,9 +733,15 @@ def register(body: Credentials, request: Request, db: Session = Depends(get_db))
 _DUMMY = password_hash('not-an-account-password')
 
 
+def client_host(request: Request) -> str:
+    if request.client and request.client.host:
+        return request.client.host
+    return 'unknown'
+
+
 @app.post('/api/v1/auth/login')
 def login(body: Credentials, request: Request, response: Response, db: Session = Depends(get_db)):
-    throttle(db, 'login-ip:' + request.client.host, 30, 300)
+    throttle(db, 'login-ip:' + client_host(request), 30, 300)
     throttle(db, 'login-email:' + body.email, 10, 300)
     account = db.query(Account).filter_by(email=body.email).first()
     valid = password_matches(body.password, account.password_hash if account else _DUMMY)
@@ -1148,6 +1182,16 @@ def public_profile(slug: str, db: Session = Depends(get_db)):
     return {'name': account.name, 'bio': account.bio, 'items': items, 'evidence_status': 'Self-reported training history; not independently verified.'}
 
 
+@app.get('/api/v1/me/audit')
+def my_audit(page: int = 1, page_size: int = 20, user=Depends(current_user), db: Session = Depends(get_db)):
+    return paginated_audit(db, db.query(Audit).filter_by(account_id=user.id), page, page_size)
+
+
+@app.get('/api/v1/admin/audit')
+def admin_audit(page: int = 1, page_size: int = 20, user=Depends(operator), db: Session = Depends(get_db)):
+    return paginated_audit(db, db.query(Audit), page, page_size)
+
+
 def job_json(job):
     return {
         'id': job.id,
@@ -1467,6 +1511,16 @@ def catalogue_decide(body: CatalogueDecide, db: Session = Depends(get_db)):
     except JevError as exc:
         raise HTTPException(exc.status_code, exc.detail)
     judgment['source_key'] = key
+    pending = (
+        db.query(Candidate)
+        .filter(Candidate.source_key == key, Candidate.status.in_(['pending', 'held']))
+        .order_by(Candidate.id)
+        .first()
+    )
+    if pending:
+        pending.data = {**(pending.data or {}), '_judgment': judgment}
+        db.commit()
+        judgment['candidate_id'] = pending.id
     return judgment
 
 
@@ -1513,6 +1567,17 @@ def catalogue_save(body: CatalogueSave, db: Session = Depends(get_db)):
         raise HTTPException(409, str(exc))
     db.commit()
     return {'status': 'published', 'candidate_id': candidate.id, 'course_id': course.id, 'decision': 'new'}
+
+
+@app.get('/api/v1/admin/scrape-topics')
+def scrape_topics(user=Depends(operator)):
+    topics = load_topics()
+    return {
+        'topics': topics,
+        'ceiling': daily_ceiling(),
+        'day': local_today(),
+        'source': 'config/scrape_topics.json',
+    }
 
 
 @app.post('/api/v1/admin/daily-scrape', status_code=202)

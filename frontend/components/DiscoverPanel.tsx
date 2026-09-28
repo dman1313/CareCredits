@@ -177,7 +177,11 @@ export function DiscoverPanel({
             {location && (
               <label>
                 Radius
-                <select value={radius} onChange={(e) => onFilters({ radius: e.target.value })}>
+                <select
+                  aria-label="Search radius"
+                  value={radius}
+                  onChange={(e) => onFilters({ radius: e.target.value, page: 1 })}
+                >
                   {[10, 25, 50, 100].map((n) => (
                     <option key={n} value={n}>
                       {n} km
@@ -246,6 +250,7 @@ export function DiscoverPanel({
               type="checkbox"
               checked={includeUnknown}
               onChange={(e) => onFilters({ includeUnknown: e.target.checked, page: 1 })}
+              aria-label="Include date not confirmed and unknown fees or points"
             />
             <span>Include date not confirmed and unknown fees or points</span>
           </label>

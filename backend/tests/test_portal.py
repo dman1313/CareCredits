@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from main import app, today, migrate_schema
 from database import Base, get_db
-from portal_models import Account, Course, Record, Job, Candidate, SchemaVersion, SourceDocument, fill_course, purge_expired_source_text
+from portal_models import Account, Audit, Course, Record, Job, Candidate, SchemaVersion, SourceDocument, fill_course, purge_expired_source_text
 from security import password_hash
 
 PASSWORD = 'Testing-strong-password'
@@ -75,6 +75,28 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(self.client.get('/users/').status_code,404)
         self.assertEqual(self.client.get('/internal/v1/catalogue/connect').status_code,403)
 
+    def test_login_without_peer_address_still_authenticates(self):
+        from starlette.requests import Request
+        from main import client_host
+
+        scope = {
+            'type': 'http',
+            'asgi': {'spec_version': '2.3', 'version': '3.0'},
+            'http_version': '1.1',
+            'method': 'POST',
+            'scheme': 'http',
+            'path': '/api/v1/auth/login',
+            'raw_path': b'/api/v1/auth/login',
+            'query_string': b'',
+            'headers': [],
+            'client': None,
+            'server': ('127.0.0.1', 8000),
+        }
+        self.assertEqual(client_host(Request(scope)), 'unknown')
+        with patch('main.client_host', return_value='unknown'):
+            result = self.client.post('/api/v1/auth/login', json={'email': 'a@example.com', 'password': PASSWORD})
+        self.assertEqual(result.status_code, 200, result.text)
+
     def test_two_user_isolation_and_roles(self):
         self.assertEqual(self.save().status_code,200)
         self.login('b@example.com')
@@ -85,10 +107,45 @@ class PortalTests(unittest.TestCase):
         self.assertNotIn('PRIVATE NOTE', self.client.get('/api/v1/me/export/csv').text)
         self.assertEqual(self.client.get('/api/v1/me/progress').json()['attended'], 0)
         self.assertEqual(self.client.get('/api/v1/me/trainings/' + self.course + '/history').json()['items'], [])
+        self.assertEqual(self.client.get('/api/v1/admin/audit').status_code, 403)
+        own = self.client.get('/api/v1/me/audit').json()
+        self.assertEqual(own['items'], [])
         self.assertEqual(self.client.get('/api/v1/me/digest').status_code, 200)
         self.assertEqual(self.client.get('/api/v1/me/suggestions').status_code, 200)
         self.assertEqual(self.client.post('/api/v1/me/certificates', json={'year': 2026}).status_code, 201)
         self.assertNotIn('PRIVATE NOTE', self.client.get('/api/v1/me/progress').text)
+
+    def test_personal_notes_stay_out_of_logs_and_audit(self):
+        import io
+        import logging
+
+        from observe import setup
+
+        setup()
+        buffer = io.StringIO()
+        handler = logging.StreamHandler(buffer)
+        log = logging.getLogger('carecredits')
+        log.addHandler(handler)
+        try:
+            self.assertEqual(self.save().status_code, 200)
+            self.assertNotIn('PRIVATE NOTE', buffer.getvalue())
+        finally:
+            log.removeHandler(handler)
+        with self.Session() as db:
+            dumped = ' '.join(str(row.changed) for row in db.query(Audit).all())
+            self.assertNotIn('PRIVATE NOTE', dumped)
+        mine = self.client.get('/api/v1/me/audit').json()
+        self.assertGreaterEqual(mine['total'], 1)
+        self.assertNotIn('PRIVATE NOTE', str(mine))
+        admin = self.client.get('/api/v1/admin/audit').json()
+        self.assertGreaterEqual(admin['total'], 1)
+        self.assertTrue(all('notes' not in (item.get('changed') or {}) for item in admin['items']))
+        self.assertEqual(self.client.get('/api/v1/me/audit?page=0').status_code, 422)
+        self.assertEqual(self.client.get('/api/v1/me/audit?page_size=51').status_code, 422)
+        paged = self.client.get('/api/v1/admin/audit?page=1&page_size=1').json()
+        self.assertEqual(paged['page'], 1)
+        self.assertEqual(paged['page_size'], 1)
+        self.assertEqual(len(paged['items']), 1)
 
     def test_record_idempotency_and_points_corrections(self):
         first=self.save();self.assertEqual(first.status_code,200,first.text)

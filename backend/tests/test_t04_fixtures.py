@@ -320,3 +320,26 @@ class T04FixtureEvaluation(unittest.TestCase):
         self.assertEqual(len(accepted), 10)
         self.assertEqual(len(rejected), 10)
         self.assertEqual(len(IN_SCOPE) + len(NEGATIVE), 20)
+
+    def test_in_scope_pages_yield_usable_heuristic_candidates(self):
+        """T-04: at least 8 of 10 in-scope pages extract without a mocked model."""
+        from scraper.extraction import heuristic_extract
+
+        usable = []
+        for case in IN_SCOPE:
+            rows = heuristic_extract(case['source'])
+            valid = []
+            for raw in rows:
+                training = Training(**{k: v for k, v in raw.items() if k in Training.model_fields})
+                validate_evidence(training)
+                self.assertIsNone(training.points, case['id'])
+                self.assertIsNone(training.fee, case['id'])
+                self.assertIsNone(training.difficulty, case['id'])
+                self.assertEqual(training.country, 'MY', case['id'])
+                self.assertTrue(training.start_date, case['id'])
+                valid.append(training)
+            if valid:
+                usable.append(case['id'])
+                self.assertTrue(any(item.mode == case['row']['mode'] for item in valid), case['id'])
+        self.assertGreaterEqual(len(usable), 8, usable)
+        self.assertEqual(len(IN_SCOPE), 10)

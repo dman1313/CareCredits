@@ -25,7 +25,7 @@ os.environ['DATABASE_URL'] = 'sqlite:///' + str(DB_PATH)
 
 from main import app, source_key
 from database import Base, get_db, engine
-from portal_models import Account, Course, Job, fill_course
+from portal_models import Account, Candidate, Course, Job, fill_course
 from security import password_hash
 from shared.contracts import Training
 from schedule import enqueue_daily, load_topics
@@ -100,6 +100,29 @@ class CatalogueApiTests(unittest.TestCase):
             headers=self.service,
         )
         self.assertEqual(decide.json()['decision'], 'exists')
+
+    def test_decide_stores_judgment_on_existing_candidate(self):
+        training = sample(title='Held GP Workshop', source_url='https://example.org/held-gp-workshop')
+        key = source_key(training)
+        with self.Session() as db:
+            job = Job(account_id=db.query(Account).first().id, request_key='held-decide', query='GP', status='succeeded')
+            db.add(job)
+            db.flush()
+            candidate = Candidate(job_id=job.id, source_key=key, data=training, status='pending')
+            db.add(candidate)
+            db.commit()
+            candidate_id = candidate.id
+        decide = self.client.post(
+            '/internal/v1/catalogue/decide',
+            json={'candidate': training, 'matches': []},
+            headers=self.service,
+        )
+        self.assertEqual(decide.status_code, 200, decide.text)
+        self.assertEqual(decide.json()['decision'], 'new')
+        self.assertEqual(decide.json()['candidate_id'], candidate_id)
+        with self.Session() as db:
+            stored = db.get(Candidate, candidate_id)
+            self.assertEqual((stored.data or {}).get('_judgment', {}).get('decision'), 'new')
 
     def test_decide_new_without_matches_and_save(self):
         training = sample(title='Brand New GP Workshop', source_url='https://example.org/new-gp-workshop')
@@ -185,6 +208,26 @@ class CatalogueApiTests(unittest.TestCase):
         self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': 'CareCredits-demo-2026'})
         forced = self.client.post('/api/v1/admin/daily-scrape?force=true')
         self.assertEqual(forced.status_code, 202, forced.text)
+        listed = self.client.get('/api/v1/admin/scrape-topics')
+        self.assertEqual(listed.status_code, 200, listed.text)
+        body = listed.json()
+        self.assertGreaterEqual(len(body['topics']), 1)
+        self.assertEqual(body['topics'][0].keys(), {'query', 'max_results'})
+        self.assertGreaterEqual(body['ceiling'], 1)
+        self.assertTrue(body['day'])
+        with self.Session() as db:
+            db.add(
+                Account(
+                    email='doc@example.com',
+                    name='Doctor',
+                    password_hash=password_hash('CareCredits-demo-2026'),
+                    role='doctor',
+                )
+            )
+            db.commit()
+        self.client.post('/api/v1/auth/logout')
+        self.client.post('/api/v1/auth/login', json={'email': 'doc@example.com', 'password': 'CareCredits-demo-2026'})
+        self.assertEqual(self.client.get('/api/v1/admin/scrape-topics').status_code, 403)
 
     def test_changed_content_queues_refresh_without_duplicate(self):
         training = sample()

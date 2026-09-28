@@ -2,8 +2,8 @@
 
 import { FormEvent, MutableRefObject } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
-import { Candidate, Job } from '@/lib/portal';
-import { Empty } from '@/components/CourseList';
+import { AuditItem, Candidate, Job } from '@/lib/portal';
+import { Empty, Loading } from '@/components/CourseList';
 import { IntegrationStatus } from '@/components/IntegrationStatus';
 import { CandidateCard } from '@/components/CandidateCard';
 
@@ -12,6 +12,7 @@ export function IngestionPanel({
   jobMaxResults,
   jobs,
   candidates,
+  candidatePage = 1,
   candidateTotal,
   submitting,
   saving,
@@ -23,11 +24,21 @@ export function IngestionPanel({
   onRetry,
   onReview,
   onDailyScrape,
+  onCandidatePage,
+  loading = false,
+  topics = [],
+  ceiling = null,
+  scrapeDay = '',
+  forceScrape = false,
+  onForceScrape,
+  scrapeResult,
+  audits = [],
 }: {
   jobQuery: string;
   jobMaxResults: number;
   jobs: Job[];
   candidates: Candidate[];
+  candidatePage?: number;
   candidateTotal?: number;
   submitting: boolean;
   saving: boolean;
@@ -46,6 +57,15 @@ export function IngestionPanel({
     evidence?: Record<string, string>,
   ) => void;
   onDailyScrape?: () => void;
+  onCandidatePage?: (page: number) => void;
+  loading?: boolean;
+  topics?: { query: string; max_results: number }[];
+  ceiling?: number | null;
+  scrapeDay?: string;
+  forceScrape?: boolean;
+  onForceScrape?: (next: boolean) => void;
+  scrapeResult?: { enqueued: number; skipped: number; day: string; ceiling: number; topics: number } | null;
+  audits?: AuditItem[];
 }) {
   return (
     <>
@@ -97,6 +117,34 @@ export function IngestionPanel({
             </button>
           )}
         </div>
+        {onDailyScrape && onForceScrape ? (
+          <label className="check-row">
+            <input type="checkbox" checked={forceScrape} onChange={(e) => onForceScrape(e.target.checked)} />
+            <span>Re-queue idle jobs (force)</span>
+          </label>
+        ) : null}
+        {scrapeResult ? (
+          <p className="small-note">
+            Daily scrape {scrapeResult.day}: {scrapeResult.enqueued} queued, {scrapeResult.skipped} skipped, ceiling{' '}
+            {scrapeResult.ceiling}, {scrapeResult.topics} topics.
+          </p>
+        ) : null}
+        {topics.length ? (
+          <div className="small-note">
+            <p>
+              Curated daily topics ({topics.length}
+              {ceiling != null ? ` · ceiling ${ceiling}` : ''}
+              {scrapeDay ? ` · ${scrapeDay}` : ''}). Edit config/scrape_topics.json to change the list.
+            </p>
+            <ul className="source-list">
+              {topics.map((topic) => (
+                <li key={topic.query}>
+                  {topic.query} · up to {topic.max_results}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <p className="small-note">
           A live run uses Tavily Search and Extract for up to five sources. Missing Tavily credentials fail honestly.
           Structured candidates still need a configured open-weight model.
@@ -110,7 +158,9 @@ export function IngestionPanel({
         </button>
       </div>
       <div className="job-list">
-        {jobs.length ? (
+        {loading && !jobs.length ? (
+          <Loading />
+        ) : jobs.length ? (
           jobs.map((j) => (
             <article className="job-row" key={j.id}>
               <div>
@@ -161,10 +211,53 @@ export function IngestionPanel({
         <h2>Review candidates</h2>
         <span>{candidateTotal ?? candidates.length} awaiting review</span>
       </div>
-      {candidates.length ? (
-        candidates.map((c) => <CandidateCard key={c.id} candidate={c} saving={saving} onReview={onReview} />)
+      {loading && !candidates.length ? (
+        <Loading />
+      ) : candidates.length ? (
+        <>
+          {candidates.map((c) => <CandidateCard key={c.id} candidate={c} saving={saving} onReview={onReview} />)}
+          {onCandidatePage && (candidateTotal ?? 0) > 20 && (
+            <div className="pagination">
+              <button
+                className="secondary"
+                type="button"
+                disabled={candidatePage <= 1 || saving}
+                onClick={() => onCandidatePage(candidatePage - 1)}
+              >
+                Previous
+              </button>
+              <span>
+                Page {candidatePage} of {Math.max(1, Math.ceil((candidateTotal || 0) / 20))}
+              </span>
+              <button
+                className="secondary"
+                type="button"
+                disabled={candidatePage * 20 >= (candidateTotal || 0) || saving}
+                onClick={() => onCandidatePage(candidatePage + 1)}
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <Empty title="No candidates awaiting review" text="Queued jobs will appear here after the scraper finishes." />
+      )}
+      <div className="section-heading">
+        <h2>Operator audit</h2>
+        <span>{audits.length} recent</span>
+      </div>
+      {audits.length ? (
+        <ul className="source-list">
+          {audits.map((item) => (
+            <li key={item.id}>
+              {item.action} · {item.entity_id}
+              {item.at ? ` · ${new Date(item.at * 1000).toLocaleString('en-MY')}` : ''}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="small-note">Review and profile actions appear here. Personal notes are never stored on this list.</p>
       )}
     </>
   );

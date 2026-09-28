@@ -141,6 +141,14 @@ export type Candidate = {
   resulting_course_id?: string | null;
 };
 
+export type AuditItem = {
+  id: string;
+  action: string;
+  entity_id: string;
+  changed: Record<string, unknown>;
+  at: number;
+};
+
 export type WorkspaceTab =
   | 'Overview'
   | 'Discover training'

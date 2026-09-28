@@ -9,9 +9,44 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 CANDIDATES = [
     os.getenv('T08_FRONTEND_URL', '').rstrip('/'),
-    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3020',
+    'http://127.0.0.1:8020',
     'http://127.0.0.1:3010',
+    'http://127.0.0.1:3000',
 ]
+FRONTEND_ORIGIN = os.getenv('T08_ORIGIN', 'http://127.0.0.1:3010').rstrip('/')
+
+
+def _origin(candidate):
+    host = candidate.rsplit(':', 1)[-1]
+    return FRONTEND_ORIGIN if host in {'8000', '8010', '8020'} else candidate
+
+
+def _current_carecredits(opener, candidate):
+    request = Request(
+        candidate + '/api/v1/config',
+        method='GET',
+        headers={'X-Care-Client': '1', 'Origin': _origin(candidate)},
+    )
+    try:
+        with opener.open(request, timeout=3) as response:
+            payload = json.loads(response.read().decode())
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError):
+        return False
+    if not (isinstance(payload, dict) and {'demo', 'signup_enabled'} <= set(payload)):
+        return False
+    probe = Request(
+        candidate + '/api/v1/me/audit',
+        method='GET',
+        headers={'X-Care-Client': '1', 'Origin': _origin(candidate)},
+    )
+    try:
+        with opener.open(probe, timeout=3):
+            return True
+    except HTTPError as exc:
+        return exc.code == 401
+    except (URLError, TimeoutError, OSError):
+        return False
 
 
 def _carecredits_frontend():
@@ -21,17 +56,7 @@ def _carecredits_frontend():
             continue
         seen.append(candidate)
         opener = build_opener(HTTPCookieProcessor(CookieJar()))
-        request = Request(
-            candidate + '/api/v1/config',
-            method='GET',
-            headers={'X-Care-Client': '1', 'Origin': candidate},
-        )
-        try:
-            with opener.open(request, timeout=3) as response:
-                payload = json.loads(response.read().decode())
-        except (HTTPError, URLError, TimeoutError, OSError, ValueError):
-            continue
-        if isinstance(payload, dict) and {'demo', 'signup_enabled'} <= set(payload):
+        if _current_carecredits(opener, candidate):
             return candidate
     return None
 
@@ -42,8 +67,9 @@ FRONTEND = _carecredits_frontend()
 class LivePortalWalkTests(unittest.TestCase):
     def setUp(self):
         if not FRONTEND:
-            self.skipTest('CareCredits frontend is not running on :3000 or :3010')
+            self.skipTest('A current CareCredits API is not running on :3020, :8020, :3010, or :3000')
         self.opener = build_opener(HTTPCookieProcessor(CookieJar()))
+        self.origin = _origin(FRONTEND)
 
     def _open(self, method, path, body=None):
         data = None if body is None else json.dumps(body).encode()
@@ -51,7 +77,7 @@ class LivePortalWalkTests(unittest.TestCase):
             FRONTEND + path,
             data=data,
             method=method,
-            headers={'Content-Type': 'application/json', 'X-Care-Client': '1', 'Origin': FRONTEND},
+            headers={'Content-Type': 'application/json', 'X-Care-Client': '1', 'Origin': self.origin},
         )
         try:
             with self.opener.open(request, timeout=8) as response:
@@ -85,9 +111,19 @@ class LivePortalWalkTests(unittest.TestCase):
         digest = self._json('GET', '/api/v1/me/digest')
         self.assertEqual(digest[0], 200, digest[1])
         self.assertIn('opted_in', digest[1])
+        audit = self._json('GET', '/api/v1/me/audit?page=1&page_size=8')
+        self.assertEqual(audit[0], 200, audit[1])
+        self.assertIn('items', audit[1])
+        self.assertNotIn('notes', str(audit[1]).lower())
         export_status, export_type, _raw = self._open('GET', '/api/v1/me/export/csv')
         self.assertEqual(export_status, 200)
         self.assertIn('text/csv', export_type)
+        eml_status, eml_type, _eml = self._open('GET', '/api/v1/me/export/eml')
+        self.assertEqual(eml_status, 200)
+        self.assertIn('message/rfc822', eml_type)
+        cert = self._json('POST', '/api/v1/me/certificates', {'year': 2026})
+        self.assertEqual(cert[0], 201, cert[1])
+        self.assertTrue(cert[1].get('id'))
         listed = self._json('GET', '/api/v1/trainings?period=upcoming&q=GP&page_size=5')
         self.assertEqual(listed[0], 200, listed[1])
         items = listed[1].get('items') or []
@@ -102,5 +138,8 @@ class LivePortalWalkTests(unittest.TestCase):
         self.assertEqual(detail[0], 200, detail[1])
         self.assertIn('title', detail[1])
         self.assertIsNone(detail[1].get('record'))
+        history = self._json('GET', '/api/v1/me/trainings/' + course_id + '/history')
+        self.assertEqual(history[0], 200, history[1])
+        self.assertIn('items', history[1])
         after = self._json('GET', '/api/v1/me/trainings')
         self.assertEqual(before[1].get('total'), after[1].get('total'))

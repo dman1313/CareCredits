@@ -1,7 +1,7 @@
 'use client';
 
 import { ArrowRight, BookOpen, GraduationCap } from 'lucide-react';
-import { Course, Progress, Suggestion, formatDate } from '@/lib/portal';
+import { AuditItem, Course, Progress, Suggestion, formatDate } from '@/lib/portal';
 import { CourseCard, Empty, Loading } from '@/components/CourseList';
 
 export function OverviewPanel({
@@ -12,6 +12,7 @@ export function OverviewPanel({
   digestBusy,
   certBusy,
   loading,
+  audits = [],
   onDiscover,
   onLearning,
   onOpen,
@@ -26,6 +27,7 @@ export function OverviewPanel({
   digestBusy: boolean;
   certBusy: boolean;
   loading: boolean;
+  audits?: AuditItem[];
   onDiscover: () => void;
   onLearning: () => void;
   onOpen: (course: Course) => void;
@@ -95,7 +97,7 @@ export function OverviewPanel({
             </label>
           )}
           <div className="points-total">
-            {progress?.points ?? 0}
+            {loading && !progress ? '…' : progress?.points ?? 0}
             <span>CPDs recorded</span>
           </div>
           <p className="muted">Self-reported learning points</p>
@@ -130,7 +132,11 @@ export function OverviewPanel({
           <span className="section-kicker">CONSIDER NEXT</span>
           <h2>Suggested upcoming courses</h2>
           <p className="muted">Advisory catalogue matches by city and date. CareCredits does not decide MMC, MOH, or APC compliance.</p>
-          {suggestions.length ? (
+          {loading && !suggestions.length ? (
+            <p className="small-note" role="status" aria-busy="true">
+              Loading suggestions…
+            </p>
+          ) : suggestions.length ? (
             <ul className="source-list">
               {suggestions.slice(0, 5).map((item) => (
                 <li key={item.id}>
@@ -170,6 +176,27 @@ export function OverviewPanel({
           <button className="secondary" type="button" disabled={certBusy} onClick={onIssueCertificate}>
             {certBusy ? 'Preparing…' : 'Issue printable certificate'}
           </button>
+        </section>
+        <section className="panel" id="owner-audit">
+          <span className="section-kicker">YOUR ACTIVITY</span>
+          <h2>Recent account actions</h2>
+          <p className="muted">Your own audit trail. Personal notes and secrets are never shown here.</p>
+          {loading && !audits.length ? (
+            <p className="small-note" role="status" aria-busy="true">
+              Loading your activity…
+            </p>
+          ) : audits.length ? (
+            <ul className="source-list">
+              {audits.slice(0, 8).map((item) => (
+                <li key={item.id}>
+                  {item.action} · {item.entity_id}
+                  {item.at ? ` · ${new Date(item.at * 1000).toLocaleString('en-MY')}` : ''}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="small-note">Sign-up, attendance, and profile saves will appear here.</p>
+          )}
         </section>
       </div>
       <div className="section-heading">

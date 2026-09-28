@@ -6,6 +6,9 @@ import { CandidateCard } from '@/components/CandidateCard';
 import { IntegrationStatus } from '@/components/IntegrationStatus';
 import { api, Candidate, Job } from '@/lib/portal';
 
+type Topic = { query: string; max_results: number };
+type ScrapeResult = { enqueued: number; skipped: number; day: string; ceiling: number; topics: number };
+
 const TERMINAL = new Set(['succeeded', 'partial', 'failed']);
 
 function isFixtureJob(job: Job | null) {
@@ -22,28 +25,58 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
   const [maxResults, setMaxResults] = useState(3);
   const [job, setJob] = useState<Job | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [candidatePage, setCandidatePage] = useState(1);
+  const [candidateTotal, setCandidateTotal] = useState(0);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [liveReady, setLiveReady] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(true);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [ceiling, setCeiling] = useState<number | null>(null);
+  const [scrapeDay, setScrapeDay] = useState('');
+  const [forceScrape, setForceScrape] = useState(false);
+  const [scrapeBusy, setScrapeBusy] = useState(false);
+  const [scrapeResult, setScrapeResult] = useState<ScrapeResult | null>(null);
   const keyRef = useRef('');
+  const CANDIDATE_PAGE = 20;
 
-  async function loadCandidates() {
+  async function loadCandidates(page = candidatePage) {
     try {
-      const data = await api('/admin/candidates?page=1&page_size=5');
+      const data = await api('/admin/candidates?page=' + page + '&page_size=' + CANDIDATE_PAGE);
+      const total = data.total || 0;
+      const pageCount = Math.max(1, Math.ceil(total / CANDIDATE_PAGE));
+      if (page > pageCount) {
+        await loadCandidates(pageCount);
+        return;
+      }
       setCandidates(data.items || []);
-    } catch {
-      setCandidates([]);
+      setCandidateTotal(total);
+      setCandidatePage(page);
+    } catch (e) {
+      setError((e as Error).message);
     }
   }
 
   useEffect(() => {
-    Promise.all([api('/admin/ingestion-jobs'), loadCandidates()])
-      .then(([jobs]) => {
-        const items: Job[] = jobs.items || [];
+    Promise.all([
+      api('/admin/ingestion-jobs'),
+      loadCandidates(),
+      api('/admin/scrape-topics').catch(() => null),
+    ])
+      .then(([jobList, _candidates, topicPayload]) => {
+        const items: Job[] = jobList.items || [];
+        setJobs(items);
         const fixture = items.find((item) => isFixtureJob(item));
         if (fixture) setJob(fixture);
+        if (topicPayload) {
+          setTopics(topicPayload.topics || []);
+          setCeiling(topicPayload.ceiling ?? null);
+          setScrapeDay(topicPayload.day || '');
+        }
       })
-      .catch(() => {});
+      .catch((e) => setError((e as Error).message));
   }, []);
 
   useEffect(() => {
@@ -63,8 +96,27 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
     return () => window.clearInterval(timer);
   }, [job?.id, job?.status]);
 
+  async function queueDaily() {
+    setScrapeBusy(true);
+    setError('');
+    try {
+      const result = await api('/admin/daily-scrape?force=' + String(forceScrape), { method: 'POST' });
+      setScrapeResult(result);
+      const jobList = await api('/admin/ingestion-jobs');
+      setJobs(jobList.items || []);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setScrapeBusy(false);
+    }
+  }
+
   async function start(event: FormEvent) {
     event.preventDefault();
+    if (!liveReady) {
+      setError('Live discovery stays off until Tavily and the open-weight model are ready.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -76,7 +128,7 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
       });
       keyRef.current = '';
       setJob(created);
-      await loadCandidates();
+      await loadCandidates(1);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -112,7 +164,13 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
           <h2>{fixtureJob || fixtureCandidates ? 'Fixture review queue' : 'Live ingestion'}</h2>
         </div>
       </div>
-      <IntegrationStatus className="empty-copy" />
+      <IntegrationStatus
+        className="empty-copy"
+        onLiveReady={(ready, loading) => {
+          setLiveReady(ready);
+          setStatusLoading(loading);
+        }}
+      />
       {(fixtureJob || fixtureCandidates) && (
         <p className="empty-copy" data-testid="fixture-review-banner">
           <span className="badge">FIXTURE</span> Pending candidates below are fictional demo fixtures for offline
@@ -120,6 +178,47 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
           live credentials are configured.
         </p>
       )}
+      {topics.length ? (
+        <div className="empty-copy" data-testid="live-scrape-topics">
+          <p>
+            Curated daily topics ({topics.length}
+            {ceiling != null ? ` · ceiling ${ceiling}` : ''}
+            {scrapeDay ? ` · ${scrapeDay}` : ''}). Edit config/scrape_topics.json to change the list.
+          </p>
+          <ul>
+            {topics.map((topic) => (
+              <li key={topic.query}>
+                {topic.query} · up to {topic.max_results}
+              </li>
+            ))}
+          </ul>
+          <label>
+            <input type="checkbox" checked={forceScrape} onChange={(e) => setForceScrape(e.target.checked)} />{' '}
+            Re-queue idle jobs (force)
+          </label>{' '}
+          <button className="secondary" type="button" disabled={scrapeBusy} onClick={queueDaily}>
+            {scrapeBusy ? 'Queuing…' : 'Queue daily scrape'}
+          </button>
+          {scrapeResult ? (
+            <p>
+              Daily scrape {scrapeResult.day}: {scrapeResult.enqueued} queued, {scrapeResult.skipped} skipped, ceiling{' '}
+              {scrapeResult.ceiling}, {scrapeResult.topics} topics.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {jobs.length ? (
+        <div className="empty-copy" data-testid="live-job-list">
+          <p>Recent jobs</p>
+          <ul>
+            {jobs.slice(0, 8).map((item) => (
+              <li key={item.id}>
+                {item.status} · {item.query}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <form className="empty-copy" onSubmit={start}>
         <label>
           Malaysia training topic
@@ -151,14 +250,15 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
             ))}
           </select>
         </label>
-        <button className="primary" disabled={busy}>
+        <button className="primary" disabled={busy || !liveReady || statusLoading}>
           {busy ? <Loader2 className="spin" size={16} /> : null}
           {busy ? 'Queuing…' : 'Start bounded discovery'}
         </button>
       </form>
       <p className="empty-copy">
-        One Search and, if URLs return, one Extract for up to five pages. Doctor search never calls Tavily. Live jobs
-        spend operator credits; fixture queue items do not.
+        {liveReady
+          ? 'One Search and, if URLs return, one Extract for up to five pages. Doctor search never calls Tavily. Live jobs spend operator credits; fixture queue items do not.'
+          : 'Live discovery stays off until Tavily and the open-weight model are ready. Review the fixture queue without spending credits.'}
       </p>
       {error && (
         <p role="alert" className="alert">
@@ -196,29 +296,54 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
       <div data-testid="live-review-queue">
         <h3 className="empty-copy">Review candidates</h3>
         {candidates.length ? (
-          candidates.map((item) => (
-            <CandidateCard
-              key={item.id}
-              candidate={item}
-              saving={saving}
-              onReview={async (id, action, reason, version, corrections, evidence) => {
-                setSaving(true);
-                setError('');
-                try {
-                  await api('/admin/candidates/' + id + '/review', {
-                    method: 'POST',
-                    body: JSON.stringify({ action, reason, version, corrections, evidence }),
-                  });
-                  await loadCandidates();
-                  if (action === 'publish') onPublished?.();
-                } catch (e) {
-                  setError((e as Error).message);
-                } finally {
-                  setSaving(false);
-                }
-              }}
-            />
-          ))
+          <>
+            {candidates.map((item) => (
+              <CandidateCard
+                key={item.id}
+                candidate={item}
+                saving={saving}
+                onReview={async (id, action, reason, version, corrections, evidence) => {
+                  setSaving(true);
+                  setError('');
+                  try {
+                    await api('/admin/candidates/' + id + '/review', {
+                      method: 'POST',
+                      body: JSON.stringify({ action, reason, version, corrections, evidence }),
+                    });
+                    await loadCandidates(candidatePage);
+                    if (action === 'publish') onPublished?.();
+                  } catch (e) {
+                    setError((e as Error).message);
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+              />
+            ))}
+            {candidateTotal > CANDIDATE_PAGE && (
+              <div className="pager" data-testid="live-candidate-pager">
+                <button
+                  className="text-link"
+                  type="button"
+                  disabled={candidatePage <= 1 || saving}
+                  onClick={() => loadCandidates(candidatePage - 1)}
+                >
+                  Previous
+                </button>
+                <span>
+                  Page {candidatePage} of {Math.max(1, Math.ceil(candidateTotal / CANDIDATE_PAGE))}
+                </span>
+                <button
+                  className="text-link"
+                  type="button"
+                  disabled={candidatePage * CANDIDATE_PAGE >= candidateTotal || saving}
+                  onClick={() => loadCandidates(candidatePage + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
         ) : (
           <p className="empty-copy">No candidates awaiting review.</p>
         )}

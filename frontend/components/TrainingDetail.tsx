@@ -140,9 +140,13 @@ export function TrainingDetail({
               Provider registration <ExternalLink size={14} />
             </a>
           )}
-          <a className="text-btn" href={course.source_url} target="_blank" rel="noreferrer">
-            View original source <ExternalLink size={14} />
-          </a>
+          {course.source_url ? (
+            <a className="text-btn" href={course.source_url} target="_blank" rel="noreferrer">
+              View original source <ExternalLink size={14} />
+            </a>
+          ) : (
+            <span className="small-note">Original source URL is not available.</span>
+          )}
           {canCancel && onCancel && course.publication_status !== 'cancelled' ? (
             <button type="button" className="text-btn" disabled={saving} onClick={onCancel}>
               Cancel published session

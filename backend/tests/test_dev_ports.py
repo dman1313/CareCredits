@@ -48,6 +48,7 @@ class DevPortTests(unittest.TestCase):
         self.assertEqual(backend['MODEL_PUBLISHER'], 'Qwen')
         self.assertEqual(backend['MODEL_KEY_CONFIGURED'], 'true')
         self.assertEqual(backend['SCRAPE_TOPICS_FILE'], '/tmp/topics.json')
+        self.assertEqual(backend['DAILY_SCRAPE_ENABLED'], 'false')
         self.assertNotIn('MODEL_API_KEY', backend)
         self.assertNotIn('TAVILY_API_KEY', backend)
         self.assertNotIn('FIREHOSE_MGMT_KEY', backend)
@@ -57,4 +58,5 @@ class DevPortTests(unittest.TestCase):
         self.assertEqual(scraper['BACKEND_INTERNAL_URL'], 'http://127.0.0.1:8000')
         self.assertNotIn('TYPESAFE_API_KEY', scraper)
         self.assertEqual(frontend['BACKEND_URL'], 'http://127.0.0.1:8000')
+        self.assertEqual(frontend['NEXT_DIST_DIR'], str(root / '.data' / 'next-dev-3000'))
         self.assertNotIn('MODEL_API_KEY', frontend)

@@ -283,13 +283,23 @@ def heuristic_extract(source) -> list[dict]:
     if not title:
         for line in content.splitlines():
             line = line.strip()
-            if 16 <= len(line) <= 160 and not line.lower().startswith(('http', 'cookie', 'privacy')):
-                if any(j in line.lower() for j in junk):
-                    continue
-                if not EVENT_WORDS.search(line):
-                    continue
-                title = line
+            if not line or line.lower().startswith(('http', 'cookie', 'privacy')):
+                continue
+            if any(j in line.lower() for j in junk):
+                continue
+            if not EVENT_WORDS.search(line):
+                continue
+            chunk = line if len(line) <= 160 else line[:160].rsplit(' ', 1)[0]
+            if 16 <= len(chunk) <= 160 and EVENT_WORDS.search(chunk):
+                title = chunk
                 break
+            match = EVENT_WORDS.search(line)
+            if match:
+                start = max(0, match.start() - 48)
+                window = line[start:match.end() + 24].strip(' .,;:')
+                if 16 <= len(window) <= 160:
+                    title = window
+                    break
     if title and (title.lower() not in content.lower() or not EVENT_WORDS.search(title) or any(j in title.lower() for j in junk)):
         title = None
 
