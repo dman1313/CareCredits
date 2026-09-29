@@ -8,13 +8,32 @@ DEMO_PASSWORD = 'CareCredits-demo-2026'
 DEMO_EMAILS = ('demo@carecredits.local', 'doctor@carecredits.local')
 
 
-REVIEW_QUOTE = (
-    'Fictional demo CME: Asthma updates for GPs by Demo CME Network in Malaysia Kuala Lumpur online. '
-    '2026-06-15. CPD points 3. Demonstration source only — not a live Tavily or model result.'
+REVIEW_QUOTE_TEMPLATE = (
+    'Fictional demo CME: {title} by Demo CME Network in Malaysia Kuala Lumpur online. '
+    '{start_date}. CPD points 3. Fee MYR 120. Register at {registration_url}. '
+    'Demonstration source only — not a live Tavily or model result.'
 )
 
 
 def _candidate_payload(title, start_date, source_key_suffix):
+    start = str(start_date)
+    registration = 'https://example.org/carecredits-demo-candidate-' + source_key_suffix + '/register'
+    source_url = 'https://example.org/carecredits-demo-candidate-' + source_key_suffix
+    quote = REVIEW_QUOTE_TEMPLATE.format(title=title, start_date=start, registration_url=registration)
+    evidence_fields = (
+        'title',
+        'provider',
+        'mode',
+        'country',
+        'start_date',
+        'city',
+        'points',
+        'credit_label',
+        'difficulty',
+        'fee',
+        'currency',
+        'registration_url',
+    )
     training = Training(
         title=title,
         provider='Demo CME Network',
@@ -28,25 +47,10 @@ def _candidate_payload(title, start_date, source_key_suffix):
         difficulty='intermediate',
         fee=120,
         currency='MYR',
-        source_url='https://example.org/carecredits-demo-candidate-' + source_key_suffix,
-        registration_url='https://example.org/carecredits-demo-candidate-' + source_key_suffix + '/register',
-        source_text=REVIEW_QUOTE,
-        evidence={
-            key: REVIEW_QUOTE
-            for key in (
-                'title',
-                'provider',
-                'mode',
-                'country',
-                'start_date',
-                'city',
-                'points',
-                'credit_label',
-                'difficulty',
-                'fee',
-                'currency',
-            )
-        },
+        source_url=source_url,
+        registration_url=registration,
+        source_text=quote,
+        evidence={key: quote for key in evidence_fields},
     )
     return training.model_dump(mode='json')
 
@@ -122,11 +126,6 @@ def seed(db):
         course_ids[i] = course.id
 
     # Offline DEMO-01 steps 3–4: pending labelled candidates for /live review (no Tavily/model).
-    pending = (
-        db.query(Candidate)
-        .filter(Candidate.status == 'pending', Candidate.source_key.like('demo-candidate-%'))
-        .count()
-    )
     fixture_result = {
         'extraction_status': 'fixture',
         'candidate_count': 2,
@@ -167,14 +166,19 @@ def seed(db):
         job.result = fixture_result
         job.status = 'succeeded'
         job.query = 'Demo review queue (fictional fixtures)'
-    if pending == 0:
-        db.query(Candidate).filter_by(job_id=job.id).delete()
-        for title, suffix, offset in (
-            ('Asthma updates for GPs (demo)', 'asthma', 40),
-            ('Adult vaccination clinic skills (demo)', 'vaccine', 55),
-        ):
-            payload = _candidate_payload(title, str(today() + timedelta(days=offset)), suffix)
-            payload['_fixture'] = True
+    # Keep offline review fixtures publishable: refresh evidence when DEMO_MODE reseeds.
+    for title, suffix, offset in (
+        ('Asthma updates for GPs (demo)', 'asthma', 40),
+        ('Adult vaccination clinic skills (demo)', 'vaccine', 55),
+    ):
+        payload = _candidate_payload(title, str(today() + timedelta(days=offset)), suffix)
+        payload['_fixture'] = True
+        existing = db.query(Candidate).filter_by(source_key='demo-candidate-' + suffix).first()
+        if existing:
+            if existing.status in ('pending', 'held'):
+                existing.data = payload
+                existing.job_id = job.id
+        else:
             db.add(
                 Candidate(
                     job_id=job.id,

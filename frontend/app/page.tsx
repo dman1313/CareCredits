@@ -70,6 +70,9 @@ export default function Home() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [recordsLoading, setRecordsLoading] = useState(true);
   const [coursesLoading, setCoursesLoading] = useState(true);
+  const [coursesFailed, setCoursesFailed] = useState(false);
+  const [recordsFailed, setRecordsFailed] = useState(false);
+  const [operatorFailed, setOperatorFailed] = useState(false);
   const [operatorLoading, setOperatorLoading] = useState(true);
   const [filters, setFilters] = useState<DiscoverFilters>(initialFilters);
   const [total, setTotal] = useState(0);
@@ -146,7 +149,9 @@ export default function Home() {
       setDigestOptIn(!!digest.opted_in);
       setSuggestions(next.items || []);
       if (mine) setAudits(mine.items || []);
+      setRecordsFailed(false);
     } catch (e) {
+      setRecordsFailed(true);
       fail(e, () => {
         refreshRecords().catch((err) => fail(err, () => refreshRecords()));
       });
@@ -182,7 +187,9 @@ export default function Home() {
       const data = await api('/trainings?' + params);
       setCourses(data.items);
       setTotal(data.total);
+      setCoursesFailed(false);
     } catch (e) {
+      setCoursesFailed(true);
       fail(e, () => {
         loadCourses();
       });
@@ -225,6 +232,10 @@ export default function Home() {
       setCandidates(c.items);
       setCandidateTotal(total);
       if (auditPayload) setOperatorAudits(auditPayload.items || []);
+      setOperatorFailed(false);
+    } catch (e) {
+      setOperatorFailed(true);
+      throw e;
     } finally {
       operatorBoot.current = false;
       setOperatorLoading(false);
@@ -509,6 +520,7 @@ export default function Home() {
           {tab === 'Overview' && (
             <OverviewPanel
               progress={progress}
+              year={year}
               courses={courses}
               suggestions={suggestions}
               digestOptIn={digestOptIn}
@@ -521,6 +533,7 @@ export default function Home() {
               onLearning={() => navigate('My learning')}
               onOpen={openCourse}
               onYear={setYear}
+              onRetrySuggestions={() => refreshRecords().catch((e) => fail(e, () => refreshRecords()))}
               onToggleDigest={async (next) => {
                 setDigestBusy(true);
                 setError('');
@@ -563,6 +576,7 @@ export default function Home() {
               records={records}
               total={total}
               loading={tab === 'My learning' ? recordsLoading : coursesLoading}
+              failed={tab === 'My learning' ? recordsFailed : coursesFailed}
               learning={learning}
               recordsTotal={recordsTotal}
               onFilters={(patch) => setFilters((f) => ({ ...f, ...patch }))}
@@ -571,6 +585,11 @@ export default function Home() {
               onOpen={openCourse}
               onClearFilters={() => setFilters(initialFilters)}
               onLearningFilters={(patch) => setLearning((f) => ({ ...f, ...patch }))}
+              onRetry={() =>
+                tab === 'My learning'
+                  ? refreshRecords().catch((e) => fail(e, () => refreshRecords()))
+                  : loadCourses()
+              }
             />
           )}
           {tab === 'Public profile' && (
@@ -601,6 +620,7 @@ export default function Home() {
               onReview={review}
               onCandidatePage={setCandidatePage}
               loading={operatorLoading}
+              failed={operatorFailed}
               topics={topics}
               ceiling={scrapeCeiling}
               scrapeDay={scrapeDay}

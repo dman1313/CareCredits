@@ -26,6 +26,7 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
   const [job, setJob] = useState<Job | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(true);
+  const [candidatesFailed, setCandidatesFailed] = useState(false);
   const [candidatePage, setCandidatePage] = useState(1);
   const [candidateTotal, setCandidateTotal] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -61,9 +62,11 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
         setCandidates(data.items || []);
         setCandidateTotal(total);
         setCandidatePage(current);
+        setCandidatesFailed(false);
         break;
       }
     } catch (e) {
+      setCandidatesFailed(true);
       setError((e as Error).message);
     } finally {
       setCandidatesLoading(false);
@@ -392,7 +395,9 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
           </>
         ) : (
           <p className="empty-copy" data-testid="live-review-empty">
-            No candidates awaiting review.{' '}
+            {candidatesFailed
+              ? "Couldn't load review candidates. "
+              : 'No candidates awaiting review. '}
             <button className="text-link" type="button" onClick={() => loadCandidates(1)}>
               Retry
             </button>

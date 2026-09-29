@@ -223,6 +223,9 @@ class DigestCertificateTests(unittest.TestCase):
         html = self.client.get(body['download_path'] + '?format=html')
         self.assertEqual(html.status_code, 200)
         self.assertIn('CareCredits', html.text)
+        self.assertIn('not an MMC', html.text)
+        self.assertIn('MOH', html.text)
+        self.assertIn('APC', html.text)
         # Unicode names fold for Helvetica PDF but remain intact in HTML.
         from certificates import _pdf_escape
 

@@ -718,9 +718,8 @@ def _paid_scrape_ready(scraper=None):
 
 
 def _reject_tavily_spend_without_model():
-    """UI already blocks unpaid-ready enqueue; keep curl/API from spending Tavily-only."""
-    scraper = _scraper_service_status()
-    if scraper.get('tavily_configured') and not scraper.get('model_ready'):
+    """Keep curl/API aligned with UI paid_scrape_ready: fail closed until Tavily+model are ready."""
+    if not _paid_scrape_ready():
         raise HTTPException(409, PAID_SCRAPE_BLOCKED)
 
 
@@ -1374,11 +1373,12 @@ def review(candidate_id: str, body: Review, user=Depends(operator), db: Session 
         except ValueError:
             raise HTTPException(422, 'Source evidence is incomplete. Reject or ingest a better source.')
         payload = training.model_dump(mode='json')
+        is_fixture = bool((candidate.data or {}).get('_fixture'))
         course = resolve_review_course(db, candidate)
         if course:
-            fill_course(course, payload)
+            fill_course(course, payload, demo=True if is_fixture else None)
         else:
-            course = fill_course(Course(source_key=candidate.source_key), payload)
+            course = fill_course(Course(source_key=candidate.source_key), payload, demo=is_fixture)
             db.add(course)
         db.flush()
         now = time.time()
@@ -1433,7 +1433,7 @@ def cancel_training(course_id: str, user=Depends(operator), db: Session = Depend
 @app.post('/internal/v1/jobs/claim', dependencies=[Depends(worker)])
 def claim(db: Session = Depends(get_db)):
     scraper = _scraper_service_status()
-    if scraper.get('tavily_configured') and not scraper.get('model_ready'):
+    if not _paid_scrape_ready(scraper):
         return Response(status_code=204)
     expire_jobs(db)
     # One worker process is the default; conditional claims also prevent double ownership.

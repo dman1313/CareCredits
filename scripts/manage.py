@@ -9,7 +9,7 @@ sys.path[:0]=[str(root),str(root/'backend')]
 load_dotenv(root/'.env')
 from main import initialize
 from database import SessionLocal
-from portal_models import Account
+from portal_models import Account, SCHEMA_VERSION
 from security import password_hash
 
 
@@ -19,7 +19,7 @@ def main():
     args=parser.parse_args()
     initialize()
     if args.command=='migrate':
-            print('Portal schema v3 is ready. Catalogue filters and candidate review reasons are in place.');return
+            print(f'Portal schema v{SCHEMA_VERSION} is ready. Catalogue filters and candidate review reasons are in place.');return
     email=input('Account email: ').strip().lower()
     if '@' not in email or '.' not in email.split('@')[-1]:raise SystemExit('Invalid email.')
     password=getpass.getpass('Password (12–128 characters, hidden): ')

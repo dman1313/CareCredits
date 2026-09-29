@@ -26,6 +26,7 @@ export function IngestionPanel({
   onDailyScrape,
   onCandidatePage,
   loading = false,
+  failed = false,
   topics = [],
   ceiling = null,
   scrapeDay = '',
@@ -61,6 +62,7 @@ export function IngestionPanel({
   onDailyScrape?: () => void;
   onCandidatePage?: (page: number) => void;
   loading?: boolean;
+  failed?: boolean;
   topics?: { query: string; max_results: number }[];
   ceiling?: number | null;
   scrapeDay?: string;
@@ -257,12 +259,27 @@ export function IngestionPanel({
             </article>
           ))
         ) : (
-          <Empty title="No discovery jobs yet" text="Start a search above to populate the review queue." />
+          <Empty
+            title={failed ? "Couldn't load discovery jobs" : 'No discovery jobs yet'}
+            text={
+              failed
+                ? 'Check your connection, then try again.'
+                : 'Start a search above to populate the review queue.'
+            }
+            action={onRefresh}
+            actionLabel="Retry"
+          />
         )}
       </div>
       <div className="section-heading">
         <h2>Review candidates</h2>
-        <span>{candidateTotal ?? candidates.length} awaiting review</span>
+        <span>
+          {loading && !candidates.length
+            ? 'Loading…'
+            : failed
+              ? "Couldn't load…"
+              : `${candidateTotal ?? candidates.length} awaiting review`}
+        </span>
       </div>
       {loading && !candidates.length ? (
         <Loading text="Loading review candidates…" />
@@ -294,13 +311,26 @@ export function IngestionPanel({
           )}
         </>
       ) : (
-        <Empty title="No candidates awaiting review" text="Queued jobs will appear here after the scraper finishes." />
+        <Empty
+          title={failed ? "Couldn't load review candidates" : 'No candidates awaiting review'}
+          text={
+            failed
+              ? 'Check your connection, then try again.'
+              : 'Queued jobs will appear here after the scraper finishes.'
+          }
+          action={onRefresh}
+          actionLabel="Retry"
+        />
       )}
       <div className="section-heading">
         <h2>Operator audit</h2>
-        <span>{audits.length} recent</span>
+        <span>{loading && !audits.length ? 'Loading…' : `${audits.length} recent`}</span>
       </div>
-      {audits.length ? (
+      {loading && !audits.length ? (
+        <p className="small-note" role="status" aria-busy="true">
+          Loading operator activity…
+        </p>
+      ) : audits.length ? (
         <ul className="source-list">
           {audits.map((item) => (
             <li key={item.id}>

@@ -6,6 +6,7 @@ import { CourseCard, Empty, Loading } from '@/components/CourseList';
 
 export function OverviewPanel({
   progress,
+  year,
   courses,
   suggestions,
   digestOptIn,
@@ -20,8 +21,10 @@ export function OverviewPanel({
   onToggleDigest,
   onIssueCertificate,
   onYear,
+  onRetrySuggestions,
 }: {
   progress: Progress | null;
+  year: number;
   courses: Course[];
   suggestions: Suggestion[];
   digestOptIn: boolean;
@@ -36,7 +39,12 @@ export function OverviewPanel({
   onToggleDigest: (next: boolean) => void;
   onIssueCertificate: () => void;
   onYear?: (year: number) => void;
+  onRetrySuggestions?: () => void;
 }) {
+  const progressBusy = loading || !progress || progress.year !== year;
+  const points = progressBusy ? '…' : progress.points ?? 0;
+  const attended = progressBusy ? '…' : progress.attended ?? 0;
+  const signed = progressBusy ? '…' : progress.signed_up ?? 0;
   return (
     <>
       <div className="page-title">
@@ -53,7 +61,7 @@ export function OverviewPanel({
         <section className="learning-hero">
           <div>
             <span className="pill">
-              <GraduationCap size={15} /> Your learning record · {progress?.year}
+              <GraduationCap size={15} /> Your learning record · {year}
             </span>
             <h2>
               Good care starts
@@ -77,14 +85,14 @@ export function OverviewPanel({
               Year
               <select
                 aria-label="Progress year"
-                value={progress?.year || new Date().getFullYear()}
+                value={year}
                 onChange={(e) => onYear(Number(e.target.value))}
               >
                 {[0, 1, 2].map((offset) => {
-                  const year = new Date().getFullYear() - offset;
+                  const optionYear = new Date().getFullYear() - offset;
                   return (
-                    <option key={year} value={year}>
-                      {year}
+                    <option key={optionYear} value={optionYear}>
+                      {optionYear}
                     </option>
                   );
                 })}
@@ -92,21 +100,21 @@ export function OverviewPanel({
             </label>
           )}
           <div className="points-total">
-            {loading && !progress ? '…' : progress?.points ?? 0}
+            {points}
             <span>CPDs recorded</span>
           </div>
           <p className="muted">Self-reported learning points</p>
           <div className="mini-stats">
             <div>
-              <strong>{loading && !progress ? '…' : progress?.attended ?? 0}</strong>
+              <strong>{attended}</strong>
               <span>Courses attended</span>
             </div>
             <div>
-              <strong>{loading && !progress ? '…' : progress?.signed_up ?? 0}</strong>
+              <strong>{signed}</strong>
               <span>Signed up</span>
             </div>
           </div>
-          {!!progress?.excluded && (
+          {!progressBusy && !!progress.excluded && (
             <small>
               {progress.excluded} attended record(s) excluded
               {progress.excluded_reasons?.length
@@ -146,7 +154,17 @@ export function OverviewPanel({
               ))}
             </ul>
           ) : (
-            <p className="small-note">No upcoming catalogue suggestions yet. Discover training to browse the owned catalogue.</p>
+            <p className="small-note">
+              No upcoming catalogue suggestions yet. Discover training to browse the owned catalogue.
+              {onRetrySuggestions ? (
+                <>
+                  {' '}
+                  <button className="text-btn" type="button" onClick={onRetrySuggestions}>
+                    Retry
+                  </button>
+                </>
+              ) : null}
+            </p>
           )}
         </section>
         <section className="panel">
@@ -165,8 +183,7 @@ export function OverviewPanel({
             </span>
           </label>
           <p className="small-note">
-            Print a CareCredits affiliation statement for {progress?.year || new Date().getFullYear()}. It is not an MMC,
-            MOH, or APC certificate.
+            Print a CareCredits affiliation statement for {year}. It is not an MMC, MOH, or APC certificate.
           </p>
           <button className="secondary" type="button" disabled={certBusy} onClick={onIssueCertificate}>
             {certBusy ? 'Preparing…' : 'Issue printable certificate'}

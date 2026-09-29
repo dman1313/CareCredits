@@ -81,12 +81,18 @@ class CatalogueApiTests(unittest.TestCase):
         self.service = {'Authorization': 'Bearer test-service-token'}
         self.env = patch.dict(os.environ, {'TYPESAFE_API_KEY': ''}, clear=False)
         self.env.start()
+        self.scraper_ready = patch(
+            'main._scraper_service_status',
+            return_value={'status': 'ready', 'reachable': True, 'tavily_configured': True, 'model_ready': True},
+        )
+        self.scraper_ready.start()
         self.keyfile = patch('jev.keyfile_path')
         mocked = self.keyfile.start()
         mocked.return_value.is_file.return_value = False
 
     def tearDown(self):
         self.keyfile.stop()
+        self.scraper_ready.stop()
         self.env.stop()
         app.dependency_overrides.clear()
 
@@ -285,6 +291,21 @@ class CatalogueApiTests(unittest.TestCase):
             claimed = self.client.post('/internal/v1/jobs/claim', headers=self.service)
         self.assertEqual(claimed.status_code, 200, claimed.text)
         self.assertEqual(claimed.json()['id'], job_id)
+
+    def test_operator_api_blocks_when_scraper_health_unreachable(self):
+        self.client.post('/api/v1/auth/login', json={'email': 'op@example.com', 'password': 'CareCredits-demo-2026'})
+        unreachable = {'status': 'unreachable', 'reachable': False, 'tavily_configured': False, 'model_ready': False}
+        with patch('main._scraper_service_status', return_value=unreachable):
+            blocked = self.client.post(
+                '/api/v1/admin/ingestion-jobs',
+                json={'query': 'GP CPD Kuala Lumpur'},
+                headers={'Idempotency-Key': 'health-down-block'},
+            )
+            self.assertEqual(blocked.status_code, 409, blocked.text)
+            daily = self.client.post('/api/v1/admin/daily-scrape')
+            self.assertEqual(daily.status_code, 409, daily.text)
+            claim = self.client.post('/internal/v1/jobs/claim', headers=self.service)
+            self.assertEqual(claim.status_code, 204, claim.text)
 
     def test_changed_content_queues_refresh_without_duplicate(self):
         training = sample()

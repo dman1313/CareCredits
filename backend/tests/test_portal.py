@@ -38,6 +38,11 @@ class PortalTests(unittest.TestCase):
         app.dependency_overrides[get_db]=dependency
         self.env=patch.dict(os.environ,{'APP_ENV':'test','DEMO_MODE':'false','SCRAPER_SERVICE_TOKEN':'test-service-token','ALLOW_SIGNUP':'true','DAILY_SCRAPE_ENABLED':'false','DIGEST_ENABLED':'false'})
         self.env.start()
+        self.scraper_ready=patch(
+            'main._scraper_service_status',
+            return_value={'status': 'ready', 'reachable': True, 'tavily_configured': True, 'model_ready': True},
+        )
+        self.scraper_ready.start()
         self.client=TestClient(app,headers={'X-Care-Client':'1','Origin':'http://127.0.0.1:3000'})
         with self.Session() as db:
             a=Account(email='a@example.com',name='Doctor A',password_hash=HASH,role='operator')
@@ -50,7 +55,7 @@ class PortalTests(unittest.TestCase):
         self.login()
 
     def tearDown(self):
-        self.client.close();app.dependency_overrides.clear();self.env.stop();self.engine.dispose();self.folder.cleanup()
+        self.client.close();app.dependency_overrides.clear();self.scraper_ready.stop();self.env.stop();self.engine.dispose();self.folder.cleanup()
 
     def login(self,email='a@example.com'):
         result=self.client.post('/api/v1/auth/login',json={'email':email,'password':PASSWORD})
@@ -160,6 +165,18 @@ class PortalTests(unittest.TestCase):
 
     def test_future_and_unknown_credits(self):
         self.assertEqual(self.save(attended_on=(today()+timedelta(days=1)).isoformat()).status_code,422)
+        future_start=(today()+timedelta(days=7)).isoformat()
+        with self.Session() as db:
+            course=db.get(Course,self.course)
+            fill_course(course,{**course.data,'start_date':future_start})
+            db.commit()
+        # Future sessions cannot be marked attended: completion before start, or a future attended_on, both reject.
+        self.assertEqual(self.save(attended_on=today().isoformat()).status_code,422)
+        self.assertEqual(self.save(attended_on=future_start).status_code,422)
+        with self.Session() as db:
+            course=db.get(Course,self.course)
+            fill_course(course,{**course.data,'start_date':'2026-01-01'})
+            db.commit()
         self.assertEqual(self.save(points=None,credit_label='CME').status_code,200)
         p=self.client.get('/api/v1/me/progress').json();self.assertEqual((p['points'],p['excluded']),(0,1))
         self.assertEqual(p['excluded_reasons'][0]['reason'],'unknown_points')
@@ -466,6 +483,10 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(in_person['total'], 0)
         self.assertEqual(any_mode['total'], 1)
         self.assertIsNone(any_mode['items'][0]['distance_km'])
+        # Empty mode is "Any format": Near me still includes online (online/hybrid inclusion via Any).
+        any_format=self.client.get('/api/v1/trainings?period=all&latitude=3.139&longitude=101.687&radius_km=25').json()
+        self.assertEqual(any_format['total'], 1)
+        self.assertIsNone(any_format['items'][0]['distance_km'])
 
     def test_unknown_dates_and_fees_need_explicit_inclusion(self):
         with self.Session() as db:
@@ -760,8 +781,12 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/v1/admin/integrations').status_code,403)
 
     def test_operator_services_report_database_owner_without_secrets(self):
-        with patch.dict(os.environ, {'SCRAPER_HEALTH_URL': ''}, clear=False):
-            result = self.client.get('/api/v1/admin/services')
+        self.scraper_ready.stop()
+        try:
+            with patch.dict(os.environ, {'SCRAPER_HEALTH_URL': ''}, clear=False):
+                result = self.client.get('/api/v1/admin/services')
+        finally:
+            self.scraper_ready.start()
         self.assertEqual(result.status_code, 200, result.text)
         body = result.json()
         self.assertEqual(body['backend'], 'ready')
@@ -787,11 +812,15 @@ class PortalTests(unittest.TestCase):
             def __exit__(self, *args):
                 return False
 
-        with patch.dict(os.environ, {'SCRAPER_HEALTH_URL': 'http://127.0.0.1:8002'}, clear=False), patch(
-            'main.urlopen', return_value=FakeResponse()
-        ):
-            self.login()
-            body = self.client.get('/api/v1/admin/services').json()
+        self.scraper_ready.stop()
+        try:
+            with patch.dict(os.environ, {'SCRAPER_HEALTH_URL': 'http://127.0.0.1:8002'}, clear=False), patch(
+                'main.urlopen', return_value=FakeResponse()
+            ):
+                self.login()
+                body = self.client.get('/api/v1/admin/services').json()
+        finally:
+            self.scraper_ready.start()
         self.assertEqual(body['scraper']['status'], 'ready')
         self.assertTrue(body['scraper']['reachable'])
         self.assertTrue(body['scraper']['tavily_configured'])
@@ -810,10 +839,14 @@ class PortalTests(unittest.TestCase):
             def __exit__(self, *args):
                 return False
 
-        with patch.dict(os.environ, {'SCRAPER_HEALTH_URL': 'http://127.0.0.1:8002'}, clear=False), patch(
-            'main.urlopen', return_value=LiveReadyResponse()
-        ):
-            ready = self.client.get('/api/v1/admin/services').json()
+        self.scraper_ready.stop()
+        try:
+            with patch.dict(os.environ, {'SCRAPER_HEALTH_URL': 'http://127.0.0.1:8002'}, clear=False), patch(
+                'main.urlopen', return_value=LiveReadyResponse()
+            ):
+                ready = self.client.get('/api/v1/admin/services').json()
+        finally:
+            self.scraper_ready.start()
         self.assertTrue(ready['paid_scrape_ready'])
         self.assertNotIn('missing', body['scraper'])
 
@@ -1048,7 +1081,7 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(detail['venue'],'Menara')
 
     def test_demo_seed_exposes_provider_registration_urls(self):
-        from seed_demo import seed
+        from seed_demo import seed, DEMO_PASSWORD
         from security import password_hash, password_matches
         from portal_models import Candidate, Record
         with self.Session() as db:
@@ -1063,6 +1096,9 @@ class PortalTests(unittest.TestCase):
             for cand in pending:
                 self.assertIn('Demonstration source only', (cand.data or {}).get('source_text',''))
                 self.assertTrue((cand.data or {}).get('_fixture'))
+                self.assertIn('registration_url', (cand.data or {}).get('evidence') or {})
+                reg=(cand.data or {}).get('registration_url') or ''
+                self.assertIn(reg, (cand.data or {}).get('source_text',''))
             from portal_models import Job
             job=db.query(Job).filter_by(request_key='demo-review-queue').one()
             self.assertEqual((job.result or {}).get('extraction_status'), 'fixture')
@@ -1070,6 +1106,20 @@ class PortalTests(unittest.TestCase):
             operator=db.query(Account).filter_by(email='demo@carecredits.local').one()
             self.assertGreaterEqual(db.query(Record).filter_by(account_id=doctor.id).count(),2)
             self.assertGreaterEqual(db.query(Record).filter_by(account_id=operator.id).count(),2)
+            fixture_id=pending[0].id
+            # Offline DEMO-01 steps 3–4: fixture candidates must publish with demo labelling.
+            login=self.client.post('/api/v1/auth/login',json={'email':'demo@carecredits.local','password':DEMO_PASSWORD})
+            self.assertEqual(login.status_code,200,login.text)
+            published=self.client.post(
+                '/api/v1/admin/candidates/'+fixture_id+'/review',
+                json={'action':'publish','reason':'Publish fictional fixture for offline DEMO-01'},
+            )
+            self.assertEqual(published.status_code,200,published.text)
+            self.assertEqual(published.json()['status'],'published')
+            course_id=published.json()['resulting_course_id']
+            detail=self.client.get('/api/v1/trainings/'+course_id).json()
+            self.assertTrue(detail.get('demo'))
+            self.assertTrue((detail.get('registration_url') or '').endswith('/register'))
             first=rows[0]
             first.data={**(first.data or {}), 'registration_url': None}
             demo=db.query(Account).filter_by(email='demo@carecredits.local').one()
@@ -1080,10 +1130,14 @@ class PortalTests(unittest.TestCase):
             self.assertTrue((refreshed.data or {}).get('registration_url', '').endswith('/register'))
             demo=db.query(Account).filter_by(email='demo@carecredits.local').one()
             self.assertTrue(password_matches('CareCredits-demo-2026', demo.password_hash))
-            # Reseed keeps pending review candidates when already present.
-            self.assertGreaterEqual(
+            # Reseed keeps remaining pending fixtures; published fixtures stay published.
+            self.assertEqual(
                 db.query(Candidate).filter(Candidate.status=='pending', Candidate.source_key.like('demo-candidate-%')).count(),
-                2,
+                1,
+            )
+            self.assertEqual(
+                db.query(Candidate).filter(Candidate.status=='published', Candidate.source_key.like('demo-candidate-%')).count(),
+                1,
             )
 
     def test_demo_mode_login_reseeds_documented_accounts(self):

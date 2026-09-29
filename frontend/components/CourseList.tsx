@@ -88,7 +88,17 @@ export function CourseCard({
   );
 }
 
-export function Empty({ title, text, action }: { title: string; text: string; action?: () => void }) {
+export function Empty({
+  title,
+  text,
+  action,
+  actionLabel = 'Explore training',
+}: {
+  title: string;
+  text: string;
+  action?: () => void;
+  actionLabel?: string;
+}) {
   return (
     <div className="empty-state">
       <BookOpen size={30} aria-hidden="true" />
@@ -96,7 +106,7 @@ export function Empty({ title, text, action }: { title: string; text: string; ac
       <p>{text}</p>
       {action && (
         <button className="secondary" onClick={action}>
-          Explore training <ArrowRight size={16} />
+          {actionLabel} <ArrowRight size={16} />
         </button>
       )}
     </div>

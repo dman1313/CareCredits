@@ -34,6 +34,7 @@ export function DiscoverPanel({
   records,
   total,
   loading,
+  failed = false,
   learning,
   recordsTotal,
   onFilters,
@@ -42,6 +43,7 @@ export function DiscoverPanel({
   onOpen,
   onClearFilters,
   onLearningFilters,
+  onRetry,
 }: {
   tab: 'Discover training' | 'My learning';
   filters: DiscoverFilters;
@@ -49,6 +51,7 @@ export function DiscoverPanel({
   records: Course[];
   total: number;
   loading: boolean;
+  failed?: boolean;
   learning?: LearningFilters;
   recordsTotal?: number;
   onFilters: (patch: Partial<DiscoverFilters>) => void;
@@ -57,6 +60,7 @@ export function DiscoverPanel({
   onOpen: (course: Course) => void;
   onClearFilters?: () => void;
   onLearningFilters?: (patch: Partial<LearningFilters>) => void;
+  onRetry?: () => void;
 }) {
   const list = tab === 'My learning' ? records : courses;
   const {
@@ -269,9 +273,11 @@ export function DiscoverPanel({
             ? tab === 'My learning'
               ? 'Loading your records…'
               : 'Searching…'
-            : `${tab === 'My learning' ? recordsTotal ?? records.length : total} ${
-                tab === 'My learning' ? 'saved records' : 'training opportunities'
-              }`}
+            : failed
+              ? "Couldn't load…"
+              : `${tab === 'My learning' ? recordsTotal ?? records.length : total} ${
+                  tab === 'My learning' ? 'saved records' : 'training opportunities'
+                }`}
         </span>
         <span>Source-linked · Details may change</span>
       </div>
@@ -285,13 +291,24 @@ export function DiscoverPanel({
         </div>
       ) : (
         <Empty
-          title={tab === 'My learning' ? 'Your learning story starts here' : 'No matching training yet'}
-          text={
-            tab === 'My learning'
-              ? 'Open a course to record your sign-up or attendance.'
-              : 'Try another city or fewer filters. The catalogue may need more sources.'
+          title={
+            failed
+              ? tab === 'My learning'
+                ? "Couldn't load your records"
+                : "Couldn't load training"
+              : tab === 'My learning'
+                ? 'Your learning story starts here'
+                : 'No matching training yet'
           }
-          action={onDiscover}
+          text={
+            failed
+              ? 'Check your connection, then try again.'
+              : tab === 'My learning'
+                ? 'Open a course to record your sign-up or attendance.'
+                : 'Try another city or fewer filters. The catalogue may need more sources.'
+          }
+          action={failed ? onRetry : onDiscover}
+          actionLabel={failed ? 'Retry' : 'Explore training'}
         />
       )}
       {tab === 'Discover training' && total > 9 && (

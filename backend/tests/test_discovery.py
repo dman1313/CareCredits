@@ -185,6 +185,18 @@ class DiscoveryTests(unittest.TestCase):
             self.assertNotIn('MODEL_OPEN_WEIGHT_CONFIRMED=true', saved)
             self.assertIn('MODEL_API_KEY=\n', saved)
 
+    def test_repo_env_sample_leaves_open03_identity_blank(self):
+        sample = (Path(__file__).resolve().parents[2] / '.env.sample').read_text()
+        self.assertIn('MODEL_ID=\n', sample)
+        self.assertIn('MODEL_PUBLISHER=\n', sample)
+        self.assertIn('MODEL_HOST=\n', sample)
+        self.assertIn('MODEL_MAX_INPUT_CHARS=\n', sample)
+        self.assertIn('MODEL_MAX_OUTPUT_TOKENS=\n', sample)
+        self.assertNotIn('Qwen/Qwen3-30B-A3B-Instruct-2507', sample)
+        self.assertNotIn('Nebius Token Factory', sample)
+        self.assertNotIn('huggingface.co/Qwen', sample)
+        self.assertIn('MODEL_OPEN_WEIGHT_CONFIRMED=false', sample)
+
 
 if __name__ == '__main__':
     unittest.main()

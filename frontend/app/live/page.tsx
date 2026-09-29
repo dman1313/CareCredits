@@ -97,6 +97,8 @@ export default function LiveSearch() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [searchFailed, setSearchFailed] = useState(false);
+  const [learningFailed, setLearningFailed] = useState(false);
   const [digestOptIn, setDigestOptIn] = useState(false);
   const [suggestions, setSuggestions] = useState<
     { id: string; title: string; provider?: string; start_date?: string | null; city?: string | null; reason?: string; points?: number | null }[]
@@ -191,7 +193,9 @@ export default function LiveSearch() {
       setCourses(data.items);
       setTotal(data.total);
       setPage(nextPage);
+      setSearchFailed(false);
     } catch (e) {
+      setSearchFailed(true);
       setError((e as Error).message);
     } finally {
       setLoading(false);
@@ -218,7 +222,9 @@ export default function LiveSearch() {
       setRecordsTotal(total);
       setLearningFilter(filter);
       setLearningPage(nextPage);
+      setLearningFailed(false);
     } catch (e) {
+      setLearningFailed(true);
       setError((e as Error).message);
     } finally {
       setLearningBusy(false);
@@ -523,9 +529,10 @@ export default function LiveSearch() {
     );
   }
 
-  const points = progressBusy || !progress ? '…' : progress.points ?? 0;
-  const attended = progressBusy || !progress ? '…' : progress.attended ?? 0;
-  const signed = progressBusy || !progress ? '…' : progress.signed_up ?? 0;
+  const progressReady = !progressBusy && !!progress && progress.year === year;
+  const points = progressReady ? progress.points ?? 0 : '…';
+  const attended = progressReady ? progress.attended ?? 0 : '…';
+  const signed = progressReady ? progress.signed_up ?? 0 : '…';
 
   return (
     <div className="dash">
@@ -761,7 +768,7 @@ export default function LiveSearch() {
                         {points} <span>self-reported CPD points</span>
                       </h2>
                       <p>
-                        <CalendarDays /> {progress?.year || new Date().getFullYear()} record
+                        <CalendarDays /> {year} record
                         <br />
                         <strong>
                           {attended} attended · {signed} signed up
@@ -800,7 +807,7 @@ export default function LiveSearch() {
                     <div>
                       <p>Signed up</p>
                       <strong>{signed}</strong>
-                      {!!progress?.excluded && <small>{excludedCopy(progress)}</small>}
+                      {progressReady && !!progress.excluded && <small>{excludedCopy(progress)}</small>}
                     </div>
                   </article>
                 </section>
@@ -846,7 +853,13 @@ export default function LiveSearch() {
                             : 'Listed training'}
                       </h2>
                     </div>
-                    <p>{loading ? 'Searching…' : `${total} event${total === 1 ? '' : 's'}`}</p>
+                    <p>
+                      {loading
+                        ? 'Searching…'
+                        : searchFailed
+                          ? "Couldn't load…"
+                          : `${total} event${total === 1 ? '' : 's'}`}
+                    </p>
                   </div>
                   {loading ? (
                     <p className="empty-copy" role="status" aria-busy="true" data-testid="live-search-loading">
@@ -905,7 +918,9 @@ export default function LiveSearch() {
                     </>
                   ) : (
                     <p className="empty-copy" data-testid="live-search-empty">
-                      No matching training. Try a broader topic or clear filters.{' '}
+                      {searchFailed
+                        ? "Couldn't load training. Check your connection, then try again. "
+                        : 'No matching training. Try a broader topic or clear filters. '}
                       <button className="text-link" type="button" onClick={() => search()}>
                         Retry
                       </button>
@@ -1066,7 +1081,7 @@ export default function LiveSearch() {
                     </select>
                   </label>
                   <p className="empty-copy">
-                    {progress?.excluded
+                    {progressReady && progress.excluded
                       ? excludedCopy(progress)
                       : 'Opening a source does not register you with the provider.'}
                   </p>
@@ -1097,7 +1112,7 @@ export default function LiveSearch() {
                       </div>
                     </div>
                     <p className="empty-copy">
-                      Print a CareCredits affiliation record for {progress?.year || new Date().getFullYear()}. It is not an MMC, MOH, or APC certificate.
+                      Print a CareCredits affiliation record for {year}. It is not an MMC, MOH, or APC certificate.
                     </p>
                     <button className="primary" disabled={certBusy} onClick={issueCertificate}>
                       {certBusy ? 'Preparing…' : 'Issue printable certificate'}
@@ -1114,7 +1129,9 @@ export default function LiveSearch() {
                       <p>
                         {learningBusy
                           ? 'Loading your records…'
-                          : `${recordsTotal} saved record${recordsTotal === 1 ? '' : 's'}`}
+                          : learningFailed
+                            ? "Couldn't load…"
+                            : `${recordsTotal} saved record${recordsTotal === 1 ? '' : 's'}`}
                       </p>
                     </div>
                     <p className="empty-copy">
@@ -1200,7 +1217,9 @@ export default function LiveSearch() {
                       </>
                     ) : (
                       <p className="empty-copy">
-                        Your learning story starts here. Open a catalogue course to record sign-up or attendance.
+                        {learningFailed
+                          ? "Couldn't load your records. Check your connection, then use Retry."
+                          : 'Your learning story starts here. Open a catalogue course to record sign-up or attendance.'}
                       </p>
                     )}
                   </section>
