@@ -67,6 +67,28 @@ class DevPortTests(unittest.TestCase):
         self.assertNotIn('MODEL_API_KEY', filled)
         self.assertTrue(using_provisional('MODEL_ID', {'MODEL_ID': ''}))
         self.assertFalse(using_provisional('MODEL_ID', {'MODEL_ID': 'Qwen/owner-chosen'}))
+        # OPEN-03 samples filled for the scraper must not land on the backend process env.
+        filled = apply_provisional_model({})
+        backend_empty, scraper_filled, _fe = service_environments(
+            root,
+            filled,
+            {'HOME': '/tmp'},
+            backend_port=8010,
+            frontend_port=3010,
+            health_port=8012,
+            demo=True,
+            token='shared-token',
+            typesafe_keyfile=root / 'missing-typesafe-key',
+            owner_settings={},
+        )
+        self.assertNotIn('MODEL_ID', backend_empty)
+        self.assertNotIn('MODEL_PUBLISHER', backend_empty)
+        self.assertNotIn('MODEL_HOST', backend_empty)
+        self.assertNotIn('MODEL_WEIGHTS_URL', backend_empty)
+        self.assertNotIn('MODEL_LICENSE_URL', backend_empty)
+        self.assertNotIn('MODEL_MAX_INPUT_CHARS', backend_empty)
+        self.assertNotIn('MODEL_MAX_OUTPUT_TOKENS', backend_empty)
+        self.assertEqual(scraper_filled['MODEL_ID'], 'Qwen/Qwen3-30B-A3B-Instruct-2507')
 
     def test_wait_for_live_requires_status_live(self):
         self.assertTrue(is_live_body({'status': 'live'}))

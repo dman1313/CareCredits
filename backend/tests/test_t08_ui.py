@@ -211,6 +211,7 @@ class PortalAccessibilityTests(unittest.TestCase):
         self.assertIn('new events await operator publish', status)
         self.assertIn('live-learning', live)
         self.assertIn('My learning', live)
+        self.assertIn("learningBusy\n                          ? 'Loading your records…'", live)
         self.assertIn('live-learning-pager', live)
         self.assertIn('/me/trainings', live)
         self.assertIn('Your learning story starts here', live)

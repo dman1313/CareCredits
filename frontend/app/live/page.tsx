@@ -1105,7 +1105,11 @@ export default function LiveSearch() {
                         <span className="heading-icon">▣</span>
                         <h2>My learning</h2>
                       </div>
-                      <p>{recordsTotal} saved records</p>
+                      <p>
+                        {learningBusy
+                          ? 'Loading your records…'
+                          : `${recordsTotal} saved record${recordsTotal === 1 ? '' : 's'}`}
+                      </p>
                     </div>
                     <p className="empty-copy">
                       Signed-up and attended lists from your personal record. Opening a provider link does not create a

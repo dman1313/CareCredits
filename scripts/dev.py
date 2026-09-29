@@ -101,8 +101,14 @@ def service_environments(
     demo: bool,
     token: str,
     typesafe_keyfile: Path | None = None,
+    owner_settings: dict | None = None,
 ):
-    """Split local env so paid secrets stay on the owning process (SEC-01 / DEMO-01)."""
+    """Split local env so paid secrets stay on the owning process (SEC-01 / DEMO-01).
+
+    OPEN-03 sample identity must not be written into the backend process env: leave those
+    fields unset so `/admin/integrations` can label them `*_provisional`. The scraper may
+    still receive filled provisional values for local adapter convenience.
+    """
     frontend = 'http://127.0.0.1:' + str(frontend_port)
     api = 'http://127.0.0.1:' + str(backend_port)
     health = 'http://127.0.0.1:' + str(health_port)
@@ -130,9 +136,13 @@ def service_environments(
         'ALLOWED_ORIGINS': 'http://localhost:' + str(frontend_port) + ',' + frontend,
         'SCRAPER_HEALTH_URL': health,
     }
-    for key in (*BACKEND_OPTIONAL, *MODEL_IDENTITY):
+    owned = owner_settings if owner_settings is not None else settings
+    for key in BACKEND_OPTIONAL:
         if settings.get(key):
             backend[key] = settings[key]
+    for key in MODEL_IDENTITY:
+        if (owned.get(key) or '').strip():
+            backend[key] = owned[key]
     if (settings.get('MODEL_API_KEY') or '').strip():
         backend['MODEL_KEY_CONFIGURED'] = 'true'
     if not (backend.get('TYPESAFE_API_KEY') or '').strip():
@@ -167,7 +177,8 @@ def main():
     parser.add_argument('--frontend-port', type=int, default=int(os.getenv('FRONTEND_PORT') or 3000))
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    settings = apply_provisional_model({k: v for k, v in dotenv_values(root / '.env').items() if v is not None})
+    owner = {k: v for k, v in dotenv_values(root / '.env').items() if v is not None}
+    settings = apply_provisional_model(dict(owner))
     backend_port = free_port(args.backend_port)
     frontend_port = free_port(args.frontend_port)
     health_port = free_port(int(settings.get('SCRAPER_HEALTH_PORT') or os.getenv('SCRAPER_HEALTH_PORT') or 8002))
@@ -182,6 +193,7 @@ def main():
         health_port,
         args.demo,
         token,
+        owner_settings=owner,
     )
     processes = []
     try:
