@@ -112,6 +112,7 @@ export default function LiveSearch() {
   const [learningFilter, setLearningFilter] = useState<'all' | 'signed_up' | 'attended'>('all');
   const [learningPage, setLearningPage] = useState(1);
   const [learningBusy, setLearningBusy] = useState(true);
+  const [progressBusy, setProgressBusy] = useState(true);
   const [audits, setAudits] = useState<AuditItem[]>([]);
   const [auditBusy, setAuditBusy] = useState(true);
 
@@ -228,6 +229,7 @@ export default function LiveSearch() {
     setLoading(true);
     setSuggestionsBusy(true);
     setLearningBusy(true);
+    setProgressBusy(true);
     setAuditBusy(true);
     await search({ city: nextCity, state: nextState, page: 1 });
     setSuggestionsBusy(true);
@@ -247,6 +249,7 @@ export default function LiveSearch() {
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      setProgressBusy(false);
       setSuggestionsBusy(false);
       setAuditBusy(false);
     }
@@ -520,9 +523,9 @@ export default function LiveSearch() {
     );
   }
 
-  const points = progress?.points ?? 0;
-  const attended = progress?.attended ?? 0;
-  const signed = progress?.signed_up ?? 0;
+  const points = progressBusy || !progress ? '…' : progress.points ?? 0;
+  const attended = progressBusy || !progress ? '…' : progress.attended ?? 0;
+  const signed = progressBusy || !progress ? '…' : progress.signed_up ?? 0;
 
   return (
     <div className="dash">
@@ -1042,10 +1045,13 @@ export default function LiveSearch() {
                       onChange={async (e) => {
                         const next = Number(e.target.value);
                         setYear(next);
+                        setProgressBusy(true);
                         try {
                           setProgress(await api('/me/progress?year=' + next));
                         } catch (err) {
                           setError((err as Error).message);
+                        } finally {
+                          setProgressBusy(false);
                         }
                       }}
                     >

@@ -160,7 +160,7 @@ class DiscoveryTests(unittest.TestCase):
             self.assertNotIn('sk-test-only', output.getvalue())
             self.assertEqual((root / '.env').stat().st_mode & 0o777, 0o600)
 
-    def test_setup_integrations_applies_open03_when_identity_blank(self):
+    def test_setup_integrations_leaves_open03_identity_blank(self):
         sample = (
             'TAVILY_API_KEY=\nMODEL_API_KEY=\nTYPESAFE_API_KEY=\nMODEL_ID=\n'
             'MODEL_WEIGHTS_URL=\nMODEL_LICENSE_URL=\nMODEL_PUBLISHER=\nMODEL_HOST=\n'
@@ -175,10 +175,12 @@ class DiscoveryTests(unittest.TestCase):
             ), patch.object(setup_integrations, 'input', return_value=''), patch('sys.stdout', new_callable=io.StringIO):
                 setup_integrations.main()
             saved = (root / '.env').read_text()
-            self.assertIn('MODEL_ID=Qwen/Qwen3-30B-A3B-Instruct-2507', saved)
-            self.assertIn('MODEL_PUBLISHER=Qwen', saved)
-            self.assertIn('MODEL_HOST=Nebius Token Factory', saved)
-            self.assertIn('MODEL_MAX_INPUT_CHARS=12000', saved)
+            self.assertIn('MODEL_ID=\n', saved)
+            self.assertIn('MODEL_PUBLISHER=\n', saved)
+            self.assertIn('MODEL_HOST=\n', saved)
+            self.assertIn('MODEL_MAX_INPUT_CHARS=\n', saved)
+            self.assertNotIn('Qwen/Qwen3-30B-A3B-Instruct-2507', saved)
+            self.assertNotIn('Nebius Token Factory', saved)
             self.assertIn('MODEL_OPEN_WEIGHT_CONFIRMED=false', saved)
             self.assertNotIn('MODEL_OPEN_WEIGHT_CONFIRMED=true', saved)
             self.assertIn('MODEL_API_KEY=\n', saved)

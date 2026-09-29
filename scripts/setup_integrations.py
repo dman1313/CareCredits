@@ -6,12 +6,6 @@ import re
 import secrets
 import sys
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
-
-from shared.model_defaults import PROVISIONAL_MODEL  # noqa: E402
-
 
 def _existing(content: str, key: str) -> str:
     match = re.search(r'^' + key + r'=(.*)$', content, re.M)
@@ -39,16 +33,14 @@ def main():
         ('MODEL_MAX_INPUT_CHARS','Model max input characters', r'[1-9][0-9]{2,7}'),
         ('MODEL_MAX_OUTPUT_TOKENS','Model max output tokens', r'[1-9][0-9]{1,6}'),
     ]:
-        value=input(label+' (blank keeps existing or SDD OPEN-03 provisional): ').strip()
+        value=input(label+' (blank keeps existing; leave blank for OPEN-03 sample defaults at runtime): ').strip()
         if value:
             if not re.fullmatch(pattern,value):
                 raise SystemExit('Unexpected configuration format.')
             values[key]=value
     if input('Have you verified this model has available weights and a suitable licence? [yes/no]: ').strip().lower()=='yes':
         values['MODEL_OPEN_WEIGHT_CONFIRMED']='true'
-    for key, default in PROVISIONAL_MODEL.items():
-        if key not in values and not _existing(content, key):
-            values[key] = default
+    # Do not write OPEN-03 sample identity into .env: empty fields stay provisional via env_or_provisional().
     for key in ['SCRAPER_SERVICE_TOKEN','POSTGRES_PASSWORD']:
         if not re.search(r'^'+key+r'=\S+',content,re.M):
             values[key]=secrets.token_urlsafe(32)

@@ -98,11 +98,11 @@ export function OverviewPanel({
           <p className="muted">Self-reported learning points</p>
           <div className="mini-stats">
             <div>
-              <strong>{progress?.attended ?? 0}</strong>
+              <strong>{loading && !progress ? '…' : progress?.attended ?? 0}</strong>
               <span>Courses attended</span>
             </div>
             <div>
-              <strong>{progress?.signed_up ?? 0}</strong>
+              <strong>{loading && !progress ? '…' : progress?.signed_up ?? 0}</strong>
               <span>Signed up</span>
             </div>
           </div>
