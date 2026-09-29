@@ -90,6 +90,33 @@ BACKEND_OPTIONAL = (
     'SMTP_FROM',
 )
 
+# Keep local Next instances (3000–3030) mutating the API without a wildcard origin.
+# Must stay aligned with backend.main.DEFAULT_ALLOWED_ORIGINS and .env.sample.
+LOCAL_DEV_ALLOWED_ORIGINS = (
+    'http://localhost:3000,http://127.0.0.1:3000,'
+    'http://localhost:3010,http://127.0.0.1:3010,'
+    'http://localhost:3020,http://127.0.0.1:3020,'
+    'http://localhost:3021,http://127.0.0.1:3021,'
+    'http://localhost:3030,http://127.0.0.1:3030'
+)
+
+
+def allowed_origins_for_frontend(frontend_port: int) -> str:
+    """Union the documented localhost defaults with the selected frontend port."""
+    selected = (
+        'http://localhost:' + str(frontend_port),
+        'http://127.0.0.1:' + str(frontend_port),
+    )
+    merged = []
+    seen = set()
+    for origin in LOCAL_DEV_ALLOWED_ORIGINS.split(',') + list(selected):
+        origin = origin.strip()
+        if not origin or origin in seen:
+            continue
+        seen.add(origin)
+        merged.append(origin)
+    return ','.join(merged)
+
 
 def service_environments(
     root: Path,
@@ -133,7 +160,7 @@ def service_environments(
         'DAILY_SCRAPE_ENABLED': 'false' if demo else settings.get('DAILY_SCRAPE_ENABLED', 'true'),
         'PUBLIC_API_BASE': api,
         'PUBLIC_FRONTEND_BASE': frontend,
-        'ALLOWED_ORIGINS': 'http://localhost:' + str(frontend_port) + ',' + frontend,
+        'ALLOWED_ORIGINS': allowed_origins_for_frontend(frontend_port),
         'SCRAPER_HEALTH_URL': health,
     }
     owned = owner_settings if owner_settings is not None else settings
@@ -166,6 +193,10 @@ def service_environments(
         **common,
         'BACKEND_URL': api,
         'NEXT_DIST_DIR': str(root / 'frontend' / '.data' / ('next-dev-' + str(frontend_port))),
+        # Prefer polling over native FSEvents when the machine hits EMFILE watch limits
+        # (common with multiple Next/Turbopack instances). Does not change production builds.
+        'WATCHPACK_POLLING': 'true',
+        'CHOKIDAR_USEPOLLING': 'true',
     }
     return backend, scraper, frontend_env
 

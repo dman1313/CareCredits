@@ -72,7 +72,11 @@ export default function Home() {
   const [coursesLoading, setCoursesLoading] = useState(true);
   const [coursesFailed, setCoursesFailed] = useState(false);
   const [recordsFailed, setRecordsFailed] = useState(false);
+  const [suggestionsFailed, setSuggestionsFailed] = useState(false);
+  const [auditFailed, setAuditFailed] = useState(false);
+  const [digestFailed, setDigestFailed] = useState(false);
   const [operatorFailed, setOperatorFailed] = useState(false);
+  const [operatorAuditFailed, setOperatorAuditFailed] = useState(false);
   const [operatorLoading, setOperatorLoading] = useState(true);
   const [filters, setFilters] = useState<DiscoverFilters>(initialFilters);
   const [total, setTotal] = useState(0);
@@ -141,15 +145,36 @@ export default function Home() {
       setRecords(r.items);
       setRecordsTotal(r.total || 0);
       setProgress(p);
-      const [digest, next, mine] = await Promise.all([
-        api('/me/digest'),
-        api('/me/suggestions'),
-        api('/me/audit?page=1&page_size=8').catch(() => null),
-      ]);
-      setDigestOptIn(!!digest.opted_in);
-      setSuggestions(next.items || []);
-      if (mine) setAudits(mine.items || []);
       setRecordsFailed(false);
+      const [digestRes, suggestionsRes, auditRes] = await Promise.all([
+        api('/me/digest')
+          .then((d) => ({ ok: true as const, d }))
+          .catch((e) => ({ ok: false as const, e })),
+        api('/me/suggestions')
+          .then((d) => ({ ok: true as const, d }))
+          .catch((e) => ({ ok: false as const, e })),
+        api('/me/audit?page=1&page_size=8')
+          .then((d) => ({ ok: true as const, d }))
+          .catch((e) => ({ ok: false as const, e })),
+      ]);
+      if (digestRes.ok) {
+        setDigestOptIn(!!digestRes.d.opted_in);
+        setDigestFailed(false);
+      } else {
+        setDigestFailed(true);
+      }
+      if (suggestionsRes.ok) {
+        setSuggestions(suggestionsRes.d.items || []);
+        setSuggestionsFailed(false);
+      } else {
+        setSuggestionsFailed(true);
+      }
+      if (auditRes.ok) {
+        setAudits(auditRes.d.items || []);
+        setAuditFailed(false);
+      } else {
+        setAuditFailed(true);
+      }
     } catch (e) {
       setRecordsFailed(true);
       fail(e, () => {
@@ -211,11 +236,10 @@ export default function Home() {
   const refreshOperator = useCallback(async () => {
     if (operatorBoot.current) setOperatorLoading(true);
     try {
-      const [j, c, topicPayload, auditPayload] = await Promise.all([
+      const [j, c, topicPayload] = await Promise.all([
         api('/admin/ingestion-jobs'),
         api('/admin/candidates?page=' + candidatePage + '&page_size=20'),
         api('/admin/scrape-topics').catch(() => null),
-        api('/admin/audit?page=1&page_size=10').catch(() => null),
       ]);
       if (topicPayload) {
         setTopics(topicPayload.topics || []);
@@ -231,8 +255,14 @@ export default function Home() {
       setJobs(j.items);
       setCandidates(c.items);
       setCandidateTotal(total);
-      if (auditPayload) setOperatorAudits(auditPayload.items || []);
       setOperatorFailed(false);
+      try {
+        const auditPayload = await api('/admin/audit?page=1&page_size=10');
+        setOperatorAudits(auditPayload.items || []);
+        setOperatorAuditFailed(false);
+      } catch {
+        setOperatorAuditFailed(true);
+      }
     } catch (e) {
       setOperatorFailed(true);
       throw e;
@@ -525,15 +555,20 @@ export default function Home() {
               suggestions={suggestions}
               digestOptIn={digestOptIn}
               digestBusy={digestBusy}
+              digestFailed={digestFailed}
               certBusy={certBusy}
               loading={recordsLoading}
               coursesLoading={coursesLoading}
+              suggestionsFailed={suggestionsFailed}
+              auditFailed={auditFailed}
               audits={audits}
               onDiscover={() => navigate('Discover training')}
               onLearning={() => navigate('My learning')}
               onOpen={openCourse}
               onYear={setYear}
               onRetrySuggestions={() => refreshRecords().catch((e) => fail(e, () => refreshRecords()))}
+              onRetryAudit={() => refreshRecords().catch((e) => fail(e, () => refreshRecords()))}
+              onRetryDigest={() => refreshRecords().catch((e) => fail(e, () => refreshRecords()))}
               onToggleDigest={async (next) => {
                 setDigestBusy(true);
                 setError('');
@@ -621,6 +656,7 @@ export default function Home() {
               onCandidatePage={setCandidatePage}
               loading={operatorLoading}
               failed={operatorFailed}
+              auditFailed={operatorAuditFailed || operatorFailed}
               topics={topics}
               ceiling={scrapeCeiling}
               scrapeDay={scrapeDay}

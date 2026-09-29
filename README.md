@@ -74,7 +74,7 @@ python3 scripts/dev.py --demo
 
 Sign in as an operator, open **Training sources**, and start a bounded Malaysia topic. The scraper must have `TAVILY_API_KEY`, `MODEL_API_KEY`, `MODEL_ID`, weights/licence URLs, and `MODEL_OPEN_WEIGHT_CONFIRMED=true`. Missing configuration fails explicitly; it never returns demo results as live success.
 
-Each job makes one Search call and, if URLs are returned, one Extract call for up to five pages. Those Tavily sources are stored on the job. Structured candidates need the model settings above; missing model configuration no longer blocks Tavily. Interrupted jobs stay interrupted until you retry them.
+Each job makes one Search call and, if URLs are returned, one Extract call for up to five pages. Those Tavily sources are stored on the job. Operator enqueue, daily scrape, interrupted-job retry, and job claim stay off until Tavily **and** the open-weight model are ready (`paid_scrape_ready`); a claimed worker also skips Search/Firehose when the model is not ready. Interrupted jobs stay interrupted until you retry them.
 
 ## Verification
 

@@ -104,8 +104,10 @@ export default function LiveSearch() {
     { id: string; title: string; provider?: string; start_date?: string | null; city?: string | null; reason?: string; points?: number | null }[]
   >([]);
   const [suggestionsBusy, setSuggestionsBusy] = useState(true);
+  const [suggestionsFailed, setSuggestionsFailed] = useState(false);
   const [certBusy, setCertBusy] = useState(false);
   const [digestBusy, setDigestBusy] = useState(false);
+  const [digestFailed, setDigestFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [locationBusy, setLocationBusy] = useState(false);
   const [opening, setOpening] = useState(false);
@@ -117,6 +119,7 @@ export default function LiveSearch() {
   const [progressBusy, setProgressBusy] = useState(true);
   const [audits, setAudits] = useState<AuditItem[]>([]);
   const [auditBusy, setAuditBusy] = useState(true);
+  const [auditFailed, setAuditFailed] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -240,17 +243,40 @@ export default function LiveSearch() {
     await search({ city: nextCity, state: nextState, page: 1 });
     setSuggestionsBusy(true);
     try {
-      const [nextProgress, digest, nextSuggestions, mine] = await Promise.all([
-        api('/me/progress?year=' + year),
-        api('/me/digest'),
-        api('/me/suggestions'),
-        api('/me/audit?page=1&page_size=8').catch(() => null),
+      const [progressRes, digestRes, suggestionsRes, auditRes] = await Promise.all([
+        api('/me/progress?year=' + year)
+          .then((d) => ({ ok: true as const, d }))
+          .catch((e) => ({ ok: false as const, e })),
+        api('/me/digest')
+          .then((d) => ({ ok: true as const, d }))
+          .catch((e) => ({ ok: false as const, e })),
+        api('/me/suggestions')
+          .then((d) => ({ ok: true as const, d }))
+          .catch((e) => ({ ok: false as const, e })),
+        api('/me/audit?page=1&page_size=8')
+          .then((d) => ({ ok: true as const, d }))
+          .catch((e) => ({ ok: false as const, e })),
       ]);
-      setProgress(nextProgress);
-      setDigestOptIn(!!digest.opted_in);
-      setSuggestions(nextSuggestions.items || []);
-      if (mine) setAudits(mine.items || []);
-      else setAudits([]);
+      if (progressRes.ok) setProgress(progressRes.d);
+      else setError((progressRes.e as Error).message);
+      if (digestRes.ok) {
+        setDigestOptIn(!!digestRes.d.opted_in);
+        setDigestFailed(false);
+      } else {
+        setDigestFailed(true);
+      }
+      if (suggestionsRes.ok) {
+        setSuggestions(suggestionsRes.d.items || []);
+        setSuggestionsFailed(false);
+      } else {
+        setSuggestionsFailed(true);
+      }
+      if (auditRes.ok) {
+        setAudits(auditRes.d.items || []);
+        setAuditFailed(false);
+      } else {
+        setAuditFailed(true);
+      }
       await loadLearning(learningFilter);
     } catch (e) {
       setError((e as Error).message);
@@ -833,7 +859,16 @@ export default function LiveSearch() {
                       ))}
                     </ul>
                   ) : (
-                    <p className="empty-copy">Sign-up, attendance, and profile saves will appear here.</p>
+                    <p className="empty-copy" data-testid="live-audit-empty">
+                      {auditFailed
+                        ? "Couldn't load your activity. Check your connection, then try again. "
+                        : 'Sign-up, attendance, and profile saves will appear here.'}
+                      {auditFailed ? (
+                        <button className="text-link" type="button" onClick={() => loadWorkspace()}>
+                          Retry
+                        </button>
+                      ) : null}
+                    </p>
                   )}
                 </section>
               </>
@@ -1034,7 +1069,9 @@ export default function LiveSearch() {
                     ))
                   ) : (
                     <p className="empty-copy" data-testid="live-suggestions-empty">
-                      No upcoming catalogue suggestions yet. Save a city or browse Discover.{' '}
+                      {suggestionsFailed
+                        ? "Couldn't load suggestions. Check your connection, then try again. "
+                        : 'No upcoming catalogue suggestions yet. Save a city or browse Discover. '}
                       <button className="text-link" type="button" onClick={() => loadWorkspace()}>
                         Retry
                       </button>
@@ -1235,15 +1272,24 @@ export default function LiveSearch() {
                     <p className="empty-copy">
                       Opt in for a 14-day email with upcoming catalogue events, known prices, and your recorded CPD total.
                     </p>
-                    <label className="empty-copy">
-                      <input
-                        type="checkbox"
-                        checked={digestOptIn}
-                        disabled={digestBusy}
-                        onChange={(e) => toggleDigest(e.target.checked)}
-                      />{' '}
-                      Email me the biweekly digest
-                    </label>
+                    {digestFailed ? (
+                      <p className="empty-copy" data-testid="live-digest-failed">
+                        Couldn't load digest preference. Check your connection, then try again.{' '}
+                        <button className="text-link" type="button" onClick={() => loadWorkspace()}>
+                          Retry
+                        </button>
+                      </p>
+                    ) : (
+                      <label className="empty-copy">
+                        <input
+                          type="checkbox"
+                          checked={digestOptIn}
+                          disabled={digestBusy}
+                          onChange={(e) => toggleDigest(e.target.checked)}
+                        />{' '}
+                        Email me the biweekly digest
+                      </label>
+                    )}
                   </section>
                 )}
               </div>

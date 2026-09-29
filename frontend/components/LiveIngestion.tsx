@@ -35,6 +35,8 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
   const [liveReady, setLiveReady] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(true);
+  const [jobsFailed, setJobsFailed] = useState(false);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [ceiling, setCeiling] = useState<number | null>(null);
   const [scrapeDay, setScrapeDay] = useState('');
@@ -73,24 +75,33 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
     }
   }
 
+  async function loadJobs() {
+    setJobsLoading(true);
+    try {
+      const jobList = await api('/admin/ingestion-jobs');
+      const items: Job[] = jobList.items || [];
+      setJobs(items);
+      const fixture = items.find((item) => isFixtureJob(item));
+      if (fixture) setJob(fixture);
+      setJobsFailed(false);
+    } catch (e) {
+      setJobsFailed(true);
+      setError((e as Error).message);
+    } finally {
+      setJobsLoading(false);
+    }
+  }
+
   useEffect(() => {
-    Promise.all([
-      api('/admin/ingestion-jobs'),
-      loadCandidates(),
-      api('/admin/scrape-topics').catch(() => null),
-    ])
-      .then(([jobList, _candidates, topicPayload]) => {
-        const items: Job[] = jobList.items || [];
-        setJobs(items);
-        const fixture = items.find((item) => isFixtureJob(item));
-        if (fixture) setJob(fixture);
-        if (topicPayload) {
-          setTopics(topicPayload.topics || []);
-          setCeiling(topicPayload.ceiling ?? null);
-          setScrapeDay(topicPayload.day || '');
-        }
+    loadJobs();
+    loadCandidates();
+    api('/admin/scrape-topics')
+      .then((topicPayload) => {
+        setTopics(topicPayload.topics || []);
+        setCeiling(topicPayload.ceiling ?? null);
+        setScrapeDay(topicPayload.day || '');
       })
-      .catch((e) => setError((e as Error).message));
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -252,7 +263,11 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
           </p>
         ) : null}
       </div>
-      {jobs.length ? (
+      {jobsLoading && !jobs.length ? (
+        <p className="empty-copy" role="status" aria-busy="true" data-testid="live-job-loading">
+          Loading discovery jobs…
+        </p>
+      ) : jobs.length ? (
         <div className="empty-copy" data-testid="live-job-list">
           <p>Recent jobs</p>
           <ul>
@@ -263,6 +278,13 @@ export function LiveIngestion({ onPublished }: { onPublished?: () => void }) {
             ))}
           </ul>
         </div>
+      ) : jobsFailed ? (
+        <p className="empty-copy" data-testid="live-job-empty">
+          Couldn't load discovery jobs.{' '}
+          <button className="text-link" type="button" onClick={() => loadJobs()}>
+            Retry
+          </button>
+        </p>
       ) : null}
       <form className="empty-copy" onSubmit={start}>
         <label>

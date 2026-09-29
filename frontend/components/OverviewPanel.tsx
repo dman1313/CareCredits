@@ -11,9 +11,12 @@ export function OverviewPanel({
   suggestions,
   digestOptIn,
   digestBusy,
+  digestFailed = false,
   certBusy,
   loading,
   coursesLoading = false,
+  suggestionsFailed = false,
+  auditFailed = false,
   audits = [],
   onDiscover,
   onLearning,
@@ -22,6 +25,8 @@ export function OverviewPanel({
   onIssueCertificate,
   onYear,
   onRetrySuggestions,
+  onRetryAudit,
+  onRetryDigest,
 }: {
   progress: Progress | null;
   year: number;
@@ -29,9 +34,12 @@ export function OverviewPanel({
   suggestions: Suggestion[];
   digestOptIn: boolean;
   digestBusy: boolean;
+  digestFailed?: boolean;
   certBusy: boolean;
   loading: boolean;
   coursesLoading?: boolean;
+  suggestionsFailed?: boolean;
+  auditFailed?: boolean;
   audits?: AuditItem[];
   onDiscover: () => void;
   onLearning: () => void;
@@ -40,6 +48,8 @@ export function OverviewPanel({
   onIssueCertificate: () => void;
   onYear?: (year: number) => void;
   onRetrySuggestions?: () => void;
+  onRetryAudit?: () => void;
+  onRetryDigest?: () => void;
 }) {
   const progressBusy = loading || !progress || progress.year !== year;
   const points = progressBusy ? '…' : progress.points ?? 0;
@@ -155,7 +165,9 @@ export function OverviewPanel({
             </ul>
           ) : (
             <p className="small-note">
-              No upcoming catalogue suggestions yet. Discover training to browse the owned catalogue.
+              {suggestionsFailed
+                ? "Couldn't load suggestions. Check your connection, then try again."
+                : 'No upcoming catalogue suggestions yet. Discover training to browse the owned catalogue.'}
               {onRetrySuggestions ? (
                 <>
                   {' '}
@@ -170,18 +182,32 @@ export function OverviewPanel({
         <section className="panel">
           <span className="section-kicker">STAY INFORMED</span>
           <h2>Digest and certificate</h2>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={digestOptIn}
-              disabled={digestBusy}
-              onChange={(e) => onToggleDigest(e.target.checked)}
-            />
-            <span>
-              <strong>Email me the biweekly digest</strong>
-              <small>Upcoming catalogue events, known prices, and your recorded CPD total. Unsubscribe from any email.</small>
-            </span>
-          </label>
+          {digestFailed ? (
+            <p className="small-note">
+              Couldn't load digest preference. Check your connection, then try again.
+              {onRetryDigest ? (
+                <>
+                  {' '}
+                  <button className="text-btn" type="button" onClick={onRetryDigest}>
+                    Retry
+                  </button>
+                </>
+              ) : null}
+            </p>
+          ) : (
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={digestOptIn}
+                disabled={digestBusy}
+                onChange={(e) => onToggleDigest(e.target.checked)}
+              />
+              <span>
+                <strong>Email me the biweekly digest</strong>
+                <small>Upcoming catalogue events, known prices, and your recorded CPD total. Unsubscribe from any email.</small>
+              </span>
+            </label>
+          )}
           <p className="small-note">
             Print a CareCredits affiliation statement for {year}. It is not an MMC, MOH, or APC certificate.
           </p>
@@ -207,7 +233,19 @@ export function OverviewPanel({
               ))}
             </ul>
           ) : (
-            <p className="small-note">Sign-up, attendance, and profile saves will appear here.</p>
+            <p className="small-note">
+              {auditFailed
+                ? "Couldn't load your activity. Check your connection, then try again."
+                : 'Sign-up, attendance, and profile saves will appear here.'}
+              {auditFailed && onRetryAudit ? (
+                <>
+                  {' '}
+                  <button className="text-btn" type="button" onClick={onRetryAudit}>
+                    Retry
+                  </button>
+                </>
+              ) : null}
+            </p>
           )}
         </section>
       </div>

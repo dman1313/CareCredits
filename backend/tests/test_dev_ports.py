@@ -1,9 +1,22 @@
 import socket
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.dev import free_port, is_live_body, probe_live, service_environments, wait_for_live
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'backend'))
+sys.path.insert(0, str(ROOT))
+
+from scripts.dev import (
+    LOCAL_DEV_ALLOWED_ORIGINS,
+    allowed_origins_for_frontend,
+    free_port,
+    is_live_body,
+    probe_live,
+    service_environments,
+    wait_for_live,
+)
 from shared.model_defaults import apply_provisional_model, using_provisional
 
 
@@ -60,7 +73,11 @@ class DevPortTests(unittest.TestCase):
         self.assertNotIn('TYPESAFE_API_KEY', scraper)
         self.assertEqual(frontend['BACKEND_URL'], 'http://127.0.0.1:8000')
         self.assertEqual(frontend['NEXT_DIST_DIR'], str(root / 'frontend' / '.data' / 'next-dev-3000'))
+        self.assertEqual(frontend['WATCHPACK_POLLING'], 'true')
+        self.assertEqual(frontend['CHOKIDAR_USEPOLLING'], 'true')
         self.assertNotIn('MODEL_API_KEY', frontend)
+        self.assertIn('http://localhost:3000', backend['ALLOWED_ORIGINS'])
+        self.assertIn('http://127.0.0.1:3030', backend['ALLOWED_ORIGINS'])
         filled = apply_provisional_model({'MODEL_ID': '', 'TAVILY_API_KEY': 'keep'})
         self.assertEqual(filled['MODEL_ID'], 'Qwen/Qwen3-30B-A3B-Instruct-2507')
         self.assertEqual(filled['TAVILY_API_KEY'], 'keep')
@@ -89,6 +106,12 @@ class DevPortTests(unittest.TestCase):
         self.assertNotIn('MODEL_MAX_INPUT_CHARS', backend_empty)
         self.assertNotIn('MODEL_MAX_OUTPUT_TOKENS', backend_empty)
         self.assertEqual(scraper_filled['MODEL_ID'], 'Qwen/Qwen3-30B-A3B-Instruct-2507')
+        self.assertIn('http://localhost:3010', backend_empty['ALLOWED_ORIGINS'])
+        self.assertIn('http://localhost:3030', backend_empty['ALLOWED_ORIGINS'])
+        from main import DEFAULT_ALLOWED_ORIGINS
+
+        self.assertEqual(LOCAL_DEV_ALLOWED_ORIGINS, DEFAULT_ALLOWED_ORIGINS)
+        self.assertIn('http://127.0.0.1:3040', allowed_origins_for_frontend(3040))
 
     def test_wait_for_live_requires_status_live(self):
         self.assertTrue(is_live_body({'status': 'live'}))

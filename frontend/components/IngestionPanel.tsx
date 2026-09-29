@@ -27,6 +27,7 @@ export function IngestionPanel({
   onCandidatePage,
   loading = false,
   failed = false,
+  auditFailed = false,
   topics = [],
   ceiling = null,
   scrapeDay = '',
@@ -63,6 +64,7 @@ export function IngestionPanel({
   onCandidatePage?: (page: number) => void;
   loading?: boolean;
   failed?: boolean;
+  auditFailed?: boolean;
   topics?: { query: string; max_results: number }[];
   ceiling?: number | null;
   scrapeDay?: string;
@@ -324,7 +326,13 @@ export function IngestionPanel({
       )}
       <div className="section-heading">
         <h2>Operator audit</h2>
-        <span>{loading && !audits.length ? 'Loading…' : `${audits.length} recent`}</span>
+        <span>
+          {loading && !audits.length
+            ? 'Loading…'
+            : auditFailed && !audits.length
+              ? "Couldn't load…"
+              : `${audits.length} recent`}
+        </span>
       </div>
       {loading && !audits.length ? (
         <p className="small-note" role="status" aria-busy="true">
@@ -340,7 +348,19 @@ export function IngestionPanel({
           ))}
         </ul>
       ) : (
-        <p className="small-note">Review and profile actions appear here. Personal notes are never stored on this list.</p>
+        <p className="small-note">
+          {auditFailed
+            ? "Couldn't load operator activity. Check your connection, then try again."
+            : 'Review and profile actions appear here. Personal notes are never stored on this list.'}
+          {auditFailed ? (
+            <>
+              {' '}
+              <button className="text-btn" type="button" onClick={onRefresh}>
+                Retry
+              </button>
+            </>
+          ) : null}
+        </p>
       )}
     </>
   );
