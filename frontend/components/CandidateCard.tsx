@@ -55,11 +55,27 @@ export function CandidateCard({
     for (const field of Object.keys(edits)) {
       if ((edits[field] || '') !== (original[field] || '')) {
         corrections[field] = edits[field];
-        evidence[field] = excerpts[field] || '';
+        // Trim to match publishReady + backend verbatim check (whitespace-only cannot pass).
+        evidence[field] = (excerpts[field] || '').trim();
       }
     }
     return { corrections, evidence };
   }
+  // Whitespace-only source_text is unusable for verbatim excerpts — treat as missing (backend parity).
+  const sourceText = candidate.data.source_text || '';
+  const hasSourceText = sourceText.trim().length > 0;
+  function publishReady() {
+    const { corrections, evidence } = publishPayload();
+    const fields = Object.keys(corrections);
+    if (!fields.length) return true;
+    // Backend rejects corrections without a verbatim excerpt present in source_text.
+    if (!hasSourceText) return false;
+    return fields.every((field) => {
+      const excerpt = (evidence[field] || '').trim();
+      return excerpt.length > 0 && sourceText.includes(excerpt);
+    });
+  }
+  const canPublish = publishReady();
   return (
     <section className="panel candidate">
       <div className="section-heading">
@@ -84,6 +100,12 @@ export function CandidateCard({
         </div>
       </div>
       <p>{candidate.data.description}</p>
+      <p className="small-note" data-testid="candidate-provenance">
+        {candidate.data.retrieved_at
+          ? `Retrieved ${candidate.data.retrieved_at}`
+          : 'Retrieval time not recorded on this candidate.'}
+        {hasSourceText ? ' · Source text kept for operator review.' : ' · Source text missing.'}
+      </p>
       {candidate.data._judgment ? (
         <p className="small-note" data-testid="jev-judgment">
           Jev {candidate.data._judgment.decision || 'unknown'}
@@ -163,9 +185,16 @@ export function CandidateCard({
         Confirm the extracted values match the source, including Malaysia eligibility. Publishing is not accreditation
         verification.
       </p>
+      {!canPublish ? (
+        <p className="small-note" data-testid="publish-needs-excerpts">
+          {hasSourceText
+            ? 'Add a verbatim source excerpt (copied from the stored source text) for each corrected field before publishing.'
+            : 'Source text is missing, so field corrections cannot be published. Reject, hold, or ingest a better source.'}
+        </p>
+      ) : null}
       <div className="button-row">
         <button
-          disabled={saving}
+          disabled={saving || !canPublish}
           className="primary"
           onClick={() => {
             const payload = publishPayload();

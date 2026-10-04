@@ -47,6 +47,7 @@ export type RecordData = {
 export type RecordHistoryItem = {
   at: number;
   signup_status?: SignupStatus;
+  attendance_status?: AttendanceStatus;
   attended?: boolean;
   attended_on?: string | null;
   points?: number | null;
@@ -95,11 +96,12 @@ export type Progress = {
 };
 
 export type TavilySource = {
-  url: string;
+  url: string | null;
   title: string;
   snippet: string;
   extraction_status: string;
   verification_status: string;
+  retrieved_at?: string | null;
 };
 
 export type Job = {
@@ -128,7 +130,10 @@ export type JevJudgment = {
 
 export type Candidate = {
   id: string;
+  job_id?: string | null;
   data: Course & {
+    source_text?: string;
+    retrieved_at?: string | null;
     _refresh_diff?: RefreshDiff[];
     _matched_course_id?: string;
     _judgment?: JevJudgment;
@@ -169,6 +174,25 @@ export const emptyRecord: RecordData = {
   version: 0,
 };
 
+/** Heal status/bool drift so TrainingDetail selects and PUT payloads stay consistent. */
+export function normalizeRecordEdit(record?: Partial<RecordData> | null): RecordData {
+  const base = { ...emptyRecord, ...(record || {}) };
+  const signup_status: SignupStatus =
+    base.signup_status === 'cancelled'
+      ? 'cancelled'
+      : base.signup_status === 'signed_up' || base.signed_up
+        ? 'signed_up'
+        : 'not_recorded';
+  const attended = base.attendance_status === 'attended' || base.attended;
+  return {
+    ...base,
+    signup_status,
+    signed_up: signup_status === 'signed_up',
+    attendance_status: attended ? 'attended' : 'not_recorded',
+    attended,
+  };
+}
+
 export function publicWebUrl(value?: string | null) {
   if (!value) return null;
   try {
@@ -184,6 +208,10 @@ export function publicWebUrl(value?: string | null) {
       host.endsWith('.localhost') ||
       host.endsWith('.internal')
     ) {
+      return null;
+    }
+    // Match shared/contracts.public_web_url: reject literal IPv4/IPv6 hosts.
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(':')) {
       return null;
     }
     return value;
@@ -203,10 +231,13 @@ export function formatDate(value: string | null) {
     : 'Date to be confirmed';
 }
 
-export function feeLabel(c: Course) {
-  if (c.fee === null) return 'Fee not listed';
+export function feeLabel(c: { fee?: number | null; currency?: string | null }) {
+  if (c.fee == null) return 'Fee not listed';
   if (c.fee === 0) return 'Free';
-  return `${c.currency} ${c.fee.toLocaleString()}`;
+  // Whitespace-only currency is missing — do not invent MYR (SDD fee honesty).
+  const currency = (c.currency || '').trim();
+  if (!currency) return `${c.fee.toLocaleString()} (currency unknown)`;
+  return `${currency} ${c.fee.toLocaleString()}`;
 }
 
 export function modeName(value: string) {
@@ -232,6 +263,11 @@ export function distanceLabel(course: { distance_km?: number | null; mode: strin
 
 export function todayLocal() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }).format(new Date());
+}
+
+/** PROG-01 / CERT-01 calendar year in Asia/Kuala_Lumpur (parity with backend `today().year`). */
+export function calendarYearLocal() {
+  return Number(todayLocal().slice(0, 4));
 }
 
 export async function api(path: string, options: RequestInit = {}) {

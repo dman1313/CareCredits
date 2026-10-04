@@ -1,4 +1,4 @@
-"""Walk ingestion → hold → reject → hold → publish without spending Tavily or model credits.
+"""Walk reject → hold → publish (and a parallel hold → publish) without spending Tavily or model credits.
 
 Run from the repository root with the backend virtualenv:
 
@@ -21,9 +21,9 @@ os.environ.setdefault('ALLOW_SIGNUP', 'true')
 os.environ.setdefault('SCRAPER_SERVICE_TOKEN', 'happy-path-local-token')
 
 from fastapi.testclient import TestClient
-from main import app, initialize
+from main import app, initialize, source_key
 from database import SessionLocal
-from portal_models import Account, Candidate, Job
+from portal_models import Account, Candidate, Course, FieldEvidence, Job, Record
 from shared.contracts import Training
 
 QUOTE = (
@@ -52,6 +52,30 @@ def sample(title='Happy-path GP training'):
     return training.model_dump(mode='json')
 
 
+def _purge_prior(db, request_key: str) -> None:
+    """Remove prior happy-path job, candidates, and any catalogue rows they published."""
+    existing = db.query(Job).filter_by(request_key=request_key).first()
+    if not existing:
+        return
+    for cand in db.query(Candidate).filter_by(job_id=existing.id).all():
+        course_id = cand.resulting_course_id
+        if not course_id and isinstance(cand.data, dict):
+            try:
+                course = db.query(Course).filter_by(source_key=source_key(cand.data)).first()
+                course_id = course.id if course else None
+            except (KeyError, TypeError, AttributeError):
+                course_id = None
+        if course_id:
+            db.query(FieldEvidence).filter_by(course_id=course_id).delete()
+            db.query(Record).filter_by(course_id=course_id).delete()
+            course = db.get(Course, course_id)
+            if course:
+                db.delete(course)
+        db.delete(cand)
+    db.delete(existing)
+    db.flush()
+
+
 def main():
     initialize()
     with SessionLocal() as db:
@@ -59,17 +83,25 @@ def main():
         if not operator or operator.role != 'operator':
             raise SystemExit('Demo operator is missing. Run python3 scripts/dev.py --demo first.')
         for request_key in ('happy-path-review', 'happy-path-reject'):
-            existing = db.query(Job).filter_by(request_key=request_key).first()
-            if existing:
-                db.query(Candidate).filter_by(job_id=existing.id).delete()
-                db.delete(existing)
-                db.flush()
+            _purge_prior(db, request_key)
+        publish_payload = sample()
+        reject_payload = sample('Happy-path reject rehearsal')
+        # Distinct source URLs so EVT-02 identities do not collide when both publish.
+        reject_payload['source_url'] = 'https://example.org/carecredits-happy-path-reject'
         publish_job = Job(account_id=operator.id, request_key='happy-path-review', query='Happy-path review rehearsal')
         reject_job = Job(account_id=operator.id, request_key='happy-path-reject', query='Happy-path reject rehearsal')
         db.add_all([publish_job, reject_job])
         db.flush()
-        publish_candidate = Candidate(job_id=publish_job.id, source_key='happy-path-source', data=sample())
-        reject_candidate = Candidate(job_id=reject_job.id, source_key='happy-path-reject', data=sample('Happy-path reject rehearsal'))
+        publish_candidate = Candidate(
+            job_id=publish_job.id,
+            source_key=source_key(publish_payload),
+            data=publish_payload,
+        )
+        reject_candidate = Candidate(
+            job_id=reject_job.id,
+            source_key=source_key(reject_payload),
+            data=reject_payload,
+        )
         db.add_all([publish_candidate, reject_candidate])
         db.commit()
         publish_id = publish_candidate.id
@@ -78,21 +110,44 @@ def main():
         login = client.post('/api/v1/auth/login', json={'email': EMAIL, 'password': PASSWORD})
         if login.status_code != 200:
             raise SystemExit('Demo operator login failed. Check DEMO_MODE and the local database.')
-        blank = client.post('/api/v1/admin/candidates/' + reject_id + '/review', json={'action': 'reject'})
+        blank = client.post('/api/v1/admin/candidates/' + reject_id + '/review', json={'action': 'reject', 'version': 1})
         if blank.status_code != 422:
             raise SystemExit('Reject without a reason should return 422.')
         rejected = client.post(
             '/api/v1/admin/candidates/' + reject_id + '/review',
-            json={'action': 'reject', 'reason': 'Not a Malaysia CPD event'},
+            json={'action': 'reject', 'reason': 'Not a Malaysia CPD event', 'version': 1},
         )
         if rejected.status_code != 200:
             raise SystemExit('Reject failed: ' + rejected.text)
-        held = client.post('/api/v1/admin/candidates/' + publish_id + '/review', json={'action': 'hold', 'reason': 'Need MMC confirmation'})
+        reheld = client.post(
+            '/api/v1/admin/candidates/' + reject_id + '/review',
+            json={'action': 'hold', 'reason': 'Reopened after source check', 'version': rejected.json().get('version') or 2},
+        )
+        if reheld.status_code != 200:
+            raise SystemExit('Re-hold after reject failed: ' + reheld.text)
+        recovered = client.post(
+            '/api/v1/admin/candidates/' + reject_id + '/review',
+            json={
+                'action': 'publish',
+                'reason': 'Source excerpt confirmed after reopen',
+                'version': reheld.json().get('version') or 3,
+            },
+        )
+        if recovered.status_code != 200:
+            raise SystemExit('Publish after reject→hold failed: ' + recovered.text)
+        held = client.post(
+            '/api/v1/admin/candidates/' + publish_id + '/review',
+            json={'action': 'hold', 'reason': 'Need MMC confirmation', 'version': 1},
+        )
         if held.status_code != 200:
             raise SystemExit('Hold failed: ' + held.text)
         published = client.post(
             '/api/v1/admin/candidates/' + publish_id + '/review',
-            json={'action': 'publish', 'reason': 'Source excerpt confirmed on the labelled demo page'},
+            json={
+                'action': 'publish',
+                'reason': 'Source excerpt confirmed on the labelled demo page',
+                'version': held.json().get('version') or 2,
+            },
         )
         if published.status_code != 200:
             raise SystemExit('Publish failed: ' + published.text)
@@ -100,11 +155,11 @@ def main():
         if any(item['id'] in (publish_id, reject_id) for item in queue):
             raise SystemExit('Reviewed candidates are still in the review queue.')
         titles = [item['title'] for item in client.get('/api/v1/trainings?period=all').json()['items']]
-        if 'Happy-path reject rehearsal' in titles:
-            raise SystemExit('Rejected candidate appeared in the catalogue.')
+        if 'Happy-path reject rehearsal' not in titles:
+            raise SystemExit('Reject→hold→publish candidate is missing from the catalogue.')
         if 'Happy-path GP training' not in titles:
             raise SystemExit('Published candidate is missing from the catalogue.')
-    print('Reject, hold, and publish succeeded for the labelled happy-path candidates. No Tavily or model credits were used.')
+    print('Reject→hold→publish and hold→publish succeeded for the labelled happy-path candidates. No Tavily or model credits were used.')
 
 
 if __name__ == '__main__':

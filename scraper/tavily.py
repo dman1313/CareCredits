@@ -49,11 +49,14 @@ def reported_credits(payload):
     if not isinstance(usage, dict):
         return None
     raw = usage.get('credits')
+    # Reject bools: float(True)==1.0 / float(False)==0.0 would invent spend from junk JSON.
+    if raw is None or raw == '' or isinstance(raw, bool):
+        return None
     try:
         credits = float(raw)
     except (TypeError, ValueError):
         return None
-    if credits != credits or credits < 0:
+    if credits != credits or credits in (float('inf'), float('-inf')) or credits < 0:
         return None
     return credits
 
@@ -120,9 +123,13 @@ def discover(query, max_results=5):
         except ProviderError as error:
             warnings.append(error.detail + " Search snippets are retained; extraction is incomplete.")
     known = [value for value in credits if value is not None]
+    retrieved_at = datetime.now(timezone.utc).isoformat()
+    # Stamp each source so job-complete can persist scraper ISO (not only complete-time).
+    for item in sources.values():
+        item.setdefault("retrieved_at", retrieved_at)
     return {
         "provider": "tavily", "query": query,
-        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "retrieved_at": retrieved_at,
         "sources": list(sources.values()), "warnings": warnings,
         "usage": {"tavily_credits": sum(known) if known else None},
     }

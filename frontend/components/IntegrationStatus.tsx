@@ -53,17 +53,27 @@ export const OPEN03_SAMPLE = {
 export function open03SampleDefault(flag: boolean | undefined, matchesSample: boolean) {
   if (flag === true) return true;
   if (flag === false) return false;
+  // Stale backends may omit *provisional flags; match sample values or treat unset identity as provisional.
   return matchesSample;
+}
+
+/** When a stale integrations payload omits provisional flags and leaves model_id empty. */
+export function identityLooksProvisional(
+  flag: boolean | undefined,
+  modelId: string | null | undefined,
+) {
+  if (flag === true) return true;
+  if (flag === false) return false;
+  return !modelId || modelId === OPEN03_SAMPLE.modelId;
 }
 
 export function liveDiscoveryReady(
   services: ServiceStatus | null,
   _integrations: IntegrationFlags | null,
 ) {
-  if (typeof services?.paid_scrape_ready === 'boolean') {
-    return services.paid_scrape_ready;
-  }
-  return !!services?.scraper?.tavily_configured && !!services?.scraper?.model_ready;
+  // Fail closed: curl/API spend gate uses paid_scrape_ready only. A stale backend that
+  // omits the flag must not re-enable enqueue from scraper.tavily_configured && model_ready.
+  return services?.paid_scrape_ready === true;
 }
 
 export function IntegrationStatus({
@@ -79,13 +89,16 @@ export function IntegrationStatus({
   const [error, setError] = useState('');
   const readyRef = useRef(onLiveReady);
   readyRef.current = onLiveReady;
+  const loadId = useRef(0);
 
   const load = useCallback(() => {
+    const requestId = ++loadId.current;
     setLoading(true);
     readyRef.current?.(false, true);
     setError('');
     Promise.allSettled([api('/admin/services'), api('/admin/integrations')])
       .then(([servicesResult, integrationsResult]) => {
+        if (loadId.current !== requestId) return;
         const nextServices = servicesResult.status === 'fulfilled' ? servicesResult.value : null;
         const nextIntegrations = integrationsResult.status === 'fulfilled' ? integrationsResult.value : null;
         setServices(nextServices);
@@ -102,7 +115,9 @@ export function IntegrationStatus({
           setError('Integration status could not be loaded.');
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (loadId.current === requestId) setLoading(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -128,9 +143,9 @@ export function IntegrationStatus({
   }
   const weightsHref = publicWebUrl(integrations?.model_weights_url);
   const licenseHref = publicWebUrl(integrations?.model_license_url);
-  const identityProvisional = open03SampleDefault(
+  const identityProvisional = identityLooksProvisional(
     integrations?.model_identity_provisional,
-    (integrations?.model_id || '') === OPEN03_SAMPLE.modelId,
+    integrations?.model_id,
   );
   const publisherProvisional = open03SampleDefault(
     integrations?.model_publisher_provisional,
@@ -178,17 +193,22 @@ export function IntegrationStatus({
       ) : null}
       {integrations ? (
         <p className={className} data-testid="integration-status">
-          Model {integrations.model_id || 'not selected'}
+          Model{' '}
+          {integrations.model_id || (identityProvisional ? OPEN03_SAMPLE.modelId : 'not selected')}
           {integrations.model_publisher
             ? ` · ${integrations.model_publisher}${
                 !identityProvisional && publisherProvisional ? ' (OPEN-03 sample default)' : ''
               }`
-            : ''}
+            : identityProvisional
+              ? ` · ${OPEN03_SAMPLE.publisher} (OPEN-03 sample default)`
+              : ''}
           {integrations.model_host
             ? ` · ${integrations.model_host}${
                 !identityProvisional && hostProvisional ? ' (OPEN-03 sample default)' : ''
               }`
-            : ''}
+            : identityProvisional
+              ? ` · ${OPEN03_SAMPLE.host} (OPEN-03 sample default)`
+              : ''}
           {identityProvisional
             ? ' · OPEN-03 sample default (not a live run)'
             : ''}

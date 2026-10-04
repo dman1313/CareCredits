@@ -9,6 +9,7 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 CANDIDATES = [
     os.getenv('T08_FRONTEND_URL', '').rstrip('/'),
+    'http://127.0.0.1:3040',
     'http://127.0.0.1:3030',
     'http://127.0.0.1:3021',
     'http://127.0.0.1:3020',
@@ -84,7 +85,7 @@ FRONTEND = _carecredits_frontend()
 class LivePortalWalkTests(unittest.TestCase):
     def setUp(self):
         if not FRONTEND:
-            self.skipTest('A current CareCredits frontend is not running on :3030, :3020, :3010, or :3000')
+            self.skipTest('A current CareCredits frontend is not running on :3040, :3030, :3021, :3020, :3010, or :3000')
         self.opener = build_opener(HTTPCookieProcessor(CookieJar()))
         self.origin = FRONTEND
 

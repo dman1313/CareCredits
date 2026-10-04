@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import {
   BookOpen,
   CalendarDays,
@@ -19,7 +19,7 @@ import {
 import { TrainingDetail } from '@/components/TrainingDetail';
 import { LiveIngestion } from '@/components/LiveIngestion';
 import { DateChip } from '@/components/CourseList';
-import { api, AuditItem, Course, distanceLabel, emptyRecord, formatDate, Progress, RecordData, RecordHistoryItem, User } from '@/lib/portal';
+import { api, AuditItem, calendarYearLocal, Course, distanceLabel, emptyRecord, formatDate, locationLabel, normalizeRecordEdit, Progress, RecordData, RecordHistoryItem, User } from '@/lib/portal';
 
 const PAGE_SIZE = 12;
 
@@ -69,8 +69,9 @@ export default function LiveSearch() {
   const [oauth, setOauth] = useState(false);
   const [demo, setDemo] = useState(false);
   const [history, setHistory] = useState<RecordHistoryItem[]>([]);
+  const [historyFailed, setHistoryFailed] = useState(false);
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<'register' | 'signin'>('register');
+  const [mode, setMode] = useState<'register' | 'signin'>('signin');
   const [tab, setTab] = useState<(typeof nav)[number][1]>('Discover');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -89,7 +90,7 @@ export default function LiveSearch() {
   const [radius, setRadius] = useState('25');
   const [page, setPage] = useState(1);
   const [nearby, setNearby] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [year, setYear] = useState(() => new Date().getFullYear());
+  const [year, setYear] = useState(() => calendarYearLocal());
   const [courses, setCourses] = useState<Course[]>([]);
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<Course | null>(null);
@@ -103,11 +104,13 @@ export default function LiveSearch() {
   const [suggestions, setSuggestions] = useState<
     { id: string; title: string; provider?: string; start_date?: string | null; city?: string | null; reason?: string; points?: number | null }[]
   >([]);
+  const [suggestionsCity, setSuggestionsCity] = useState<string | null>(null);
   const [suggestionsBusy, setSuggestionsBusy] = useState(true);
   const [suggestionsFailed, setSuggestionsFailed] = useState(false);
   const [certBusy, setCertBusy] = useState(false);
   const [digestBusy, setDigestBusy] = useState(false);
   const [digestFailed, setDigestFailed] = useState(false);
+  const [digestPreferenceBusy, setDigestPreferenceBusy] = useState(true);
   const [saving, setSaving] = useState(false);
   const [locationBusy, setLocationBusy] = useState(false);
   const [opening, setOpening] = useState(false);
@@ -117,9 +120,81 @@ export default function LiveSearch() {
   const [learningPage, setLearningPage] = useState(1);
   const [learningBusy, setLearningBusy] = useState(true);
   const [progressBusy, setProgressBusy] = useState(true);
+  const [progressFailed, setProgressFailed] = useState(false);
   const [audits, setAudits] = useState<AuditItem[]>([]);
   const [auditBusy, setAuditBusy] = useState(true);
   const [auditFailed, setAuditFailed] = useState(false);
+  const progressRequest = useRef(0);
+  const learningRequest = useRef(0);
+  const catalogueRequest = useRef(0);
+  const workspaceRequest = useRef(0);
+  const detailRequest = useRef(0);
+  // Detail save/cancel busy flag: generation so a stale finally cannot clear a newer busy state.
+  const savingGen = useRef(0);
+  // When set, page/modal Retry runs this action (cancel). Otherwise Retry reloads the workspace.
+  const retryRef = useRef<(() => void) | null>(null);
+  const userRef = useRef(user);
+  userRef.current = user;
+
+  function beginSaving() {
+    const gen = ++savingGen.current;
+    setSaving(true);
+    return gen;
+  }
+
+  function endSaving(gen: number) {
+    if (savingGen.current === gen) setSaving(false);
+  }
+
+  function fail(err: unknown, retry?: () => void) {
+    // After logout, ignore in-flight workspace failures so they cannot paint on the sign-in gate.
+    if (!userRef.current) {
+      retryRef.current = null;
+      return;
+    }
+    setError((err as Error).message);
+    retryRef.current = retry || null;
+  }
+  // FIND-01: pager uses last successful Search filters; Retry re-issues a failed attempt via pendingSearch.
+  const appliedSearch = useRef({
+    query: '',
+    city: '',
+    state: '',
+    mode: '',
+    period: 'upcoming',
+    difficulty: '',
+    maxFee: '',
+    minPoints: '',
+    dateFrom: '',
+    dateTo: '',
+    includeUnknown: false,
+    radius: '25',
+    nearby: null as { latitude: number; longitude: number } | null,
+  });
+  // Last in-flight / failed Search (including page turns). Cleared on success so Retry matches the failed request
+  // while the pager keeps paging the last successful list when a Search refresh fails.
+  const pendingSearch = useRef<{
+    query: string;
+    city: string;
+    state: string;
+    mode: string;
+    period: string;
+    difficulty: string;
+    maxFee: string;
+    minPoints: string;
+    dateFrom: string;
+    dateTo: string;
+    includeUnknown: boolean;
+    radius: string;
+    nearby: { latitude: number; longitude: number } | null;
+    page: number;
+  } | null>(null);
+  // My learning: Retry re-issues a failed filter/page attempt (parity with pendingSearch / `/` pendingLearning).
+  const pendingLearning = useRef<{
+    filter: 'all' | 'signed_up' | 'attended';
+    page: number;
+  } | null>(null);
+  const [resultsNearby, setResultsNearby] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -127,16 +202,35 @@ export default function LiveSearch() {
         setSignup(c.signup_enabled);
         setOauth(!!c.oauth_google);
         setDemo(!!c.demo);
+        // Mirror LoginForm: only offer register when signup is enabled.
+        setMode(c.signup_enabled && !c.demo ? 'register' : 'signin');
         if (c.demo) {
           setEmail((current) => current || 'demo@carecredits.local');
           setPassword((current) => current || 'CareCredits-demo-2026');
-          setMode('signin');
         }
       }),
       api('/me')
         .then(setUser)
         .catch(() => {}),
     ]).finally(() => setBooting(false));
+  }, []);
+
+  // AUTH-01: Google callback redirects here with oauth=denied|failed; surface the outcome.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const oauthStatus = params.get('oauth');
+    if (oauthStatus === 'denied') {
+      setError('Google sign-in was cancelled or denied. Try again or use email.');
+    } else if (oauthStatus === 'failed') {
+      setError('Google sign-in failed. Try again or use email.');
+    }
+    if (oauthStatus === 'denied' || oauthStatus === 'failed') {
+      params.delete('oauth');
+      const next = params.toString();
+      const path = window.location.pathname + (next ? '?' + next : '') + window.location.hash;
+      window.history.replaceState({}, '', path);
+    }
   }, []);
 
   async function search(overrides: {
@@ -154,21 +248,44 @@ export default function LiveSearch() {
     radius?: string;
     page?: number;
     nearby?: { latitude: number; longitude: number } | null;
+    /** Pager/Retry: keep the last committed catalogue filters; ignore draft top-bar edits. */
+    pageOnly?: boolean;
   } = {}) {
-    const nextQuery = overrides.query ?? query;
-    const nextCity = overrides.city ?? city;
-    const nextState = overrides.state ?? state;
-    const nextMode = overrides.mode ?? deliveryMode;
-    const nextPeriod = overrides.period ?? period;
-    const nextDifficulty = overrides.difficulty ?? difficulty;
-    const nextMaxFee = overrides.maxFee ?? maxFee;
-    const nextMinPoints = overrides.minPoints ?? minPoints;
-    const nextDateFrom = overrides.dateFrom ?? dateFrom;
-    const nextDateTo = overrides.dateTo ?? dateTo;
-    const nextIncludeUnknown = overrides.includeUnknown ?? includeUnknown;
-    const nextRadius = overrides.radius ?? radius;
+    const base = overrides.pageOnly ? appliedSearch.current : null;
+    const nextQuery = overrides.query ?? (base ? base.query : query);
+    const nextCity = overrides.city ?? (base ? base.city : city);
+    const nextState = overrides.state ?? (base ? base.state : state);
+    const nextMode = overrides.mode ?? (base ? base.mode : deliveryMode);
+    const nextPeriod = overrides.period ?? (base ? base.period : period);
+    const nextDifficulty = overrides.difficulty ?? (base ? base.difficulty : difficulty);
+    const nextMaxFee = overrides.maxFee ?? (base ? base.maxFee : maxFee);
+    const nextMinPoints = overrides.minPoints ?? (base ? base.minPoints : minPoints);
+    const nextDateFrom = overrides.dateFrom ?? (base ? base.dateFrom : dateFrom);
+    const nextDateTo = overrides.dateTo ?? (base ? base.dateTo : dateTo);
+    const nextIncludeUnknown = overrides.includeUnknown ?? (base ? base.includeUnknown : includeUnknown);
+    const nextRadius = overrides.radius ?? (base ? base.radius : radius);
     const nextPage = overrides.page ?? page;
-    const nextNearby = overrides.nearby === undefined ? nearby : overrides.nearby;
+    const nextNearby =
+      overrides.nearby !== undefined ? overrides.nearby : base ? base.nearby : nearby;
+    const requestFilters = {
+      query: nextQuery,
+      city: nextCity,
+      state: nextState,
+      mode: nextMode,
+      period: nextPeriod,
+      difficulty: nextDifficulty,
+      maxFee: nextMaxFee,
+      minPoints: nextMinPoints,
+      dateFrom: nextDateFrom,
+      dateTo: nextDateTo,
+      includeUnknown: nextIncludeUnknown,
+      radius: nextRadius,
+      nearby: nextNearby,
+    };
+    // Track the attempt for Retry. Commit appliedSearch only after success so a failed Search
+    // cannot make the pager page a different filter set than the stale list on screen.
+    pendingSearch.current = { ...requestFilters, page: nextPage };
+    const requestId = ++catalogueRequest.current;
     setLoading(true);
     setError('');
     try {
@@ -193,28 +310,113 @@ export default function LiveSearch() {
         params.set('radius_km', nextRadius);
       }
       const data = await api('/trainings?' + params);
+      if (catalogueRequest.current !== requestId) return;
       setCourses(data.items);
       setTotal(data.total);
       setPage(nextPage);
+      appliedSearch.current = requestFilters;
+      pendingSearch.current = null;
+      setResultsNearby(!!nextNearby);
       setSearchFailed(false);
     } catch (e) {
+      if (catalogueRequest.current !== requestId) return;
       setSearchFailed(true);
       setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (catalogueRequest.current === requestId) setLoading(false);
     }
+  }
+
+  function retrySearch() {
+    const pending = pendingSearch.current;
+    if (pending) {
+      void search({
+        query: pending.query,
+        city: pending.city,
+        state: pending.state,
+        mode: pending.mode,
+        period: pending.period,
+        difficulty: pending.difficulty,
+        maxFee: pending.maxFee,
+        minPoints: pending.minPoints,
+        dateFrom: pending.dateFrom,
+        dateTo: pending.dateTo,
+        includeUnknown: pending.includeUnknown,
+        radius: pending.radius,
+        nearby: pending.nearby,
+        page: pending.page,
+      });
+      return;
+    }
+    void search({ page, pageOnly: true });
+  }
+  /** Commit only the last Search filters (+ overrides). Draft top-bar edits stay unapplied. */
+  function searchCommitted(
+    overrides: {
+      query?: string;
+      city?: string;
+      state?: string;
+      mode?: string;
+      period?: string;
+      difficulty?: string;
+      maxFee?: string;
+      minPoints?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      includeUnknown?: boolean;
+      radius?: string;
+      page?: number;
+      nearby?: { latitude: number; longitude: number } | null;
+    } = {},
+  ) {
+    const base = appliedSearch.current;
+    const next = {
+      query: overrides.query ?? base.query,
+      city: overrides.city ?? base.city,
+      state: overrides.state ?? base.state,
+      mode: overrides.mode ?? base.mode,
+      period: overrides.period ?? base.period,
+      difficulty: overrides.difficulty ?? base.difficulty,
+      maxFee: overrides.maxFee ?? base.maxFee,
+      minPoints: overrides.minPoints ?? base.minPoints,
+      dateFrom: overrides.dateFrom ?? base.dateFrom,
+      dateTo: overrides.dateTo ?? base.dateTo,
+      includeUnknown: overrides.includeUnknown ?? base.includeUnknown,
+      radius: overrides.radius ?? base.radius,
+      nearby: overrides.nearby !== undefined ? overrides.nearby : base.nearby,
+      page: overrides.page ?? 1,
+    };
+    // Keep draft controls aligned with what we are committing so pager/Retry stay honest.
+    setQuery(next.query);
+    setCity(next.city);
+    setState(next.state);
+    setDeliveryMode(next.mode);
+    setPeriod(next.period);
+    setDifficulty(next.difficulty);
+    setMaxFee(next.maxFee);
+    setMinPoints(next.minPoints);
+    setDateFrom(next.dateFrom);
+    setDateTo(next.dateTo);
+    setIncludeUnknown(next.includeUnknown);
+    setRadius(next.radius);
+    setNearby(next.nearby);
+    return search(next);
   }
 
   async function loadLearning(
     filter: 'all' | 'signed_up' | 'attended' = learningFilter,
     nextPage = filter === learningFilter ? learningPage : 1,
   ) {
+    const requestId = ++learningRequest.current;
+    // Track the attempt for Retry. Commit filter/page only after success (UI-01 honesty).
+    pendingLearning.current = { filter, page: nextPage };
     setLearningBusy(true);
     try {
       const params = new URLSearchParams({ page: String(nextPage), page_size: '12' });
       if (filter === 'signed_up') params.set('signup_status', 'signed_up');
       if (filter === 'attended') params.set('attendance_status', 'attended');
       const data = await api('/me/trainings?' + params);
+      if (learningRequest.current !== requestId) return;
       const total = data.total || 0;
       const pageCount = Math.max(1, Math.ceil(total / 12));
       if (nextPage > pageCount) {
@@ -226,25 +428,43 @@ export default function LiveSearch() {
       setLearningFilter(filter);
       setLearningPage(nextPage);
       setLearningFailed(false);
+      pendingLearning.current = null;
     } catch (e) {
+      if (learningRequest.current !== requestId) return;
       setLearningFailed(true);
       setError((e as Error).message);
     } finally {
-      setLearningBusy(false);
+      if (learningRequest.current === requestId) setLearningBusy(false);
     }
   }
 
+  function retryLearning() {
+    const pending = pendingLearning.current;
+    if (pending) {
+      void loadLearning(pending.filter, pending.page);
+      return;
+    }
+    void loadLearning(learningFilter, learningPage);
+  }
+
   async function loadWorkspace(nextCity = city, nextState = state) {
+    const workspaceId = ++workspaceRequest.current;
     setLoading(true);
     setSuggestionsBusy(true);
     setLearningBusy(true);
     setProgressBusy(true);
     setAuditBusy(true);
-    await search({ city: nextCity, state: nextState, page: 1 });
+    setDigestPreferenceBusy(true);
+    const progressId = ++progressRequest.current;
+    const progressYear = year;
+    // FIND-01: workspace reload/Retry must reuse committed Search filters — draft top-bar
+    // mode/period/etc. must not silently rewrite results (city/state overrides still apply).
+    await searchCommitted({ city: nextCity, state: nextState, page: 1 });
+    if (workspaceRequest.current !== workspaceId) return;
     setSuggestionsBusy(true);
     try {
       const [progressRes, digestRes, suggestionsRes, auditRes] = await Promise.all([
-        api('/me/progress?year=' + year)
+        api('/me/progress?year=' + progressYear)
           .then((d) => ({ ok: true as const, d }))
           .catch((e) => ({ ok: false as const, e })),
         api('/me/digest')
@@ -257,8 +477,21 @@ export default function LiveSearch() {
           .then((d) => ({ ok: true as const, d }))
           .catch((e) => ({ ok: false as const, e })),
       ]);
-      if (progressRes.ok) setProgress(progressRes.d);
-      else setError((progressRes.e as Error).message);
+      if (workspaceRequest.current !== workspaceId) return;
+      if (progressRequest.current === progressId) {
+        if (progressRes.ok && progressRes.d?.year === progressYear) {
+          setProgress(progressRes.d);
+          setProgressFailed(false);
+        } else if (progressRes.ok) {
+          // Wrong-year payload must not stick Overview/Learning on endless … without Retry.
+          setProgress(null);
+          setProgressFailed(true);
+        } else {
+          setProgress(null);
+          setProgressFailed(true);
+          setError((progressRes.e as Error).message);
+        }
+      }
       if (digestRes.ok) {
         setDigestOptIn(!!digestRes.d.opted_in);
         setDigestFailed(false);
@@ -267,6 +500,11 @@ export default function LiveSearch() {
       }
       if (suggestionsRes.ok) {
         setSuggestions(suggestionsRes.d.items || []);
+        setSuggestionsCity(
+          typeof suggestionsRes.d.city === 'string' && suggestionsRes.d.city.trim()
+            ? suggestionsRes.d.city.trim()
+            : null,
+        );
         setSuggestionsFailed(false);
       } else {
         setSuggestionsFailed(true);
@@ -279,11 +517,14 @@ export default function LiveSearch() {
       }
       await loadLearning(learningFilter);
     } catch (e) {
+      if (workspaceRequest.current !== workspaceId) return;
       setError((e as Error).message);
     } finally {
-      setProgressBusy(false);
+      if (workspaceRequest.current !== workspaceId) return;
+      if (progressRequest.current === progressId) setProgressBusy(false);
       setSuggestionsBusy(false);
       setAuditBusy(false);
+      setDigestPreferenceBusy(false);
     }
   }
 
@@ -303,7 +544,7 @@ export default function LiveSearch() {
     setIncludeUnknown(false);
     setRadius('25');
     setNearby(null);
-    setPage(1);
+    // Page commits inside search() only after a successful load (FIND-01 pager honesty).
     search({
       query: '',
       city: nextCity,
@@ -331,7 +572,7 @@ export default function LiveSearch() {
       (position) => {
         const next = { latitude: position.coords.latitude, longitude: position.coords.longitude };
         setNearby(next);
-        setPage(1);
+        // Page commits inside search() only after a successful load.
         search({ nearby: next, page: 1 });
       },
       () => setError('Location was not available. You can still search by city or state.'),
@@ -376,16 +617,19 @@ export default function LiveSearch() {
     if (!state && user.state) setState(user.state);
     setSuggestionsBusy(true);
     setLoading(true);
-    loadWorkspace(nextCity, nextState).catch(() => {});
+    loadWorkspace(nextCity, nextState).catch((e) => {
+      setError((e as Error).message || 'Workspace could not be loaded.');
+    });
   }, [user]);
 
   async function toggleDigest(next: boolean) {
     setError('');
     setDigestBusy(true);
     try {
+      // Omit cadence_days so a stored NTF-01 preference (e.g. 30) is not wiped to 14.
       const d = await api('/me/digest', {
         method: 'PATCH',
-        body: JSON.stringify({ opted_in: next, cadence_days: 14 }),
+        body: JSON.stringify({ opted_in: next }),
       });
       setDigestOptIn(!!d.opted_in);
     } catch (e) {
@@ -437,35 +681,81 @@ export default function LiveSearch() {
   async function saveRecord(event: FormEvent) {
     event.preventDefault();
     if (!selected) return;
-    setSaving(true);
+    const courseId = selected.id;
+    // Capture open generation so await yields cannot overwrite a newer detail modal.
+    const requestId = detailRequest.current;
+    const gen = beginSaving();
     setError('');
+    retryRef.current = null;
     try {
-      await api('/me/trainings/' + selected.id, { method: 'PUT', body: JSON.stringify(edit) });
-      const current = await api('/trainings/' + selected.id);
+      await api('/me/trainings/' + courseId, { method: 'PUT', body: JSON.stringify(edit) });
+      // Persist succeeded — refresh workspace (incl. sequenced progress) even if the modal closed or switched.
+      // Do not naked-setProgress here: an unsequenced year fetch can overwrite a newer year change and stick `…`.
+      await loadWorkspace(appliedSearch.current.city || user?.city || '', appliedSearch.current.state || user?.state || '');
+      if (detailRequest.current !== requestId) return;
+      const current = await api('/trainings/' + courseId);
+      if (detailRequest.current !== requestId) return;
       setSelected(current);
-      setEdit(current.record || emptyRecord);
-      await loadWorkspace(city || user?.city || '');
-      setProgress(await api('/me/progress?year=' + year));
+      setEdit(normalizeRecordEdit(current.record));
+      // REG-01: keep the correction trail honest while the detail modal stays open.
+      await loadHistory(courseId, requestId);
     } catch (e) {
-      setError((e as Error).message);
+      if (detailRequest.current !== requestId) return;
+      const message = (e as Error).message || '';
+      // Stale version 409: reload so Retry does not replay a last-write loser.
+      if (/changed|Reopen|Refresh/i.test(message)) {
+        try {
+          const current = await api('/trainings/' + courseId);
+          if (detailRequest.current !== requestId) return;
+          setSelected(current);
+          setEdit(normalizeRecordEdit(current.record));
+          await loadHistory(courseId, requestId);
+        } catch {
+          /* keep conflict message */
+        }
+        if (detailRequest.current !== requestId) return;
+        fail(e, () => openCourse({ id: courseId } as Course));
+      } else {
+        fail(e, () => saveRecord({ preventDefault() {} } as FormEvent));
+      }
     } finally {
-      setSaving(false);
+      endSaving(gen);
+    }
+  }
+
+  async function loadHistory(courseId: string, requestId?: number) {
+    // Sequence against detailRequest so a slower prior history cannot paint on a newer course.
+    const expected = requestId ?? detailRequest.current;
+    try {
+      const hist = await api('/me/trainings/' + courseId + '/history');
+      if (detailRequest.current !== expected) return;
+      setHistory(hist.items || []);
+      setHistoryFailed(false);
+    } catch {
+      if (detailRequest.current !== expected) return;
+      setHistory([]);
+      setHistoryFailed(true);
     }
   }
 
   async function openCourse(course: Course) {
+    const requestId = ++detailRequest.current;
     setError('');
     setOpening(true);
+    // Drop prior course trail immediately so My learning cannot flash the wrong history.
+    setHistory([]);
+    setHistoryFailed(false);
     try {
       const current = await api('/trainings/' + course.id);
+      if (detailRequest.current !== requestId) return;
       setSelected(current);
-      setEdit({ ...emptyRecord, ...(current.record || {}) });
-      const hist = await api('/me/trainings/' + course.id + '/history').catch(() => ({ items: [] }));
-      setHistory(hist.items || []);
+      setEdit(normalizeRecordEdit(current.record));
+      await loadHistory(current.id, requestId);
     } catch (e) {
+      if (detailRequest.current !== requestId) return;
       setError((e as Error).message);
     } finally {
-      setOpening(false);
+      if (detailRequest.current === requestId) setOpening(false);
     }
   }
 
@@ -496,7 +786,9 @@ export default function LiveSearch() {
             <p>
               {demo
                 ? 'Demo mode: sign in as demo@carecredits.local to review fixtures and personal tracking. Live Tavily/model discovery needs configured credentials.'
-                : 'Register, then search Malaysian CPD courses from the original dashboard.'}
+                : signup
+                  ? 'Register, then search Malaysian CPD courses from the original dashboard.'
+                  : 'Sign in to search Malaysian CPD courses from the original dashboard.'}
             </p>
             {demo && (
               <p className="demo-banner">
@@ -539,23 +831,26 @@ export default function LiveSearch() {
                 Continue with Google
               </a>
             )}
-            <button
-              type="button"
-              className="text-link"
-              onClick={() => {
-                setMode(mode === 'register' ? 'signin' : 'register');
-                setError('');
-              }}
-            >
-              {mode === 'register' ? 'Already have an account? Sign in' : 'New here? Create an account'}
-            </button>
+            {signup && (
+              <button
+                type="button"
+                className="text-link"
+                onClick={() => {
+                  setMode(mode === 'register' ? 'signin' : 'register');
+                  setError('');
+                }}
+              >
+                {mode === 'register' ? 'Already have an account? Sign in' : 'New here? Create an account'}
+              </button>
+            )}
           </form>
         </div>
       </div>
     );
   }
 
-  const progressReady = !progressBusy && !!progress && progress.year === year;
+  // Failed progress must not look like an endless load (`…` forever).
+  const progressReady = !progressBusy && !progressFailed && !!progress && progress.year === year;
   const points = progressReady ? progress.points ?? 0 : '…';
   const attended = progressReady ? progress.attended ?? 0 : '…';
   const signed = progressReady ? progress.signed_up ?? 0 : '…';
@@ -583,8 +878,8 @@ export default function LiveSearch() {
                   setTab(item);
                   setOpen(false);
                   if (item === 'Events' || item === 'Discover') {
-                    setPeriod('upcoming');
-                    void search({ period: 'upcoming', page: 1 });
+                    // Restore upcoming from committed Search filters — do not silently apply draft top-bar edits.
+                    void searchCommitted({ period: 'upcoming', page: 1 });
                   }
                 }}
               >
@@ -613,8 +908,72 @@ export default function LiveSearch() {
               onClick={async () => {
                 await api('/auth/logout', { method: 'POST' });
                 setUser(null);
+                // Reset nav so the next account cannot inherit My Credits / Certificates / Events.
+                setTab('Discover');
+                setOpen(false);
                 setCourses([]);
                 setSelected(null);
+                setRecords([]);
+                setProgress(null);
+                setProgressFailed(false);
+                setSuggestions([]);
+                setSuggestionsCity(null);
+                setAudits([]);
+                setHistory([]);
+                setDigestOptIn(false);
+                setEdit(emptyRecord);
+                setTotal(0);
+                setRecordsTotal(0);
+                setNearby(null);
+                setResultsNearby(false);
+                pendingSearch.current = null;
+                pendingLearning.current = null;
+                appliedSearch.current = {
+                  query: '',
+                  city: '',
+                  state: '',
+                  mode: '',
+                  period: 'upcoming',
+                  difficulty: '',
+                  maxFee: '',
+                  minPoints: '',
+                  dateFrom: '',
+                  dateTo: '',
+                  includeUnknown: false,
+                  radius: '25',
+                  nearby: null,
+                };
+                setQuery('');
+                setCity('');
+                setState('');
+                setDeliveryMode('');
+                setPeriod('upcoming');
+                setDifficulty('');
+                setMaxFee('');
+                setMinPoints('');
+                setDateFrom('');
+                setDateTo('');
+                setIncludeUnknown(false);
+                setRadius('25');
+                setPage(1);
+                setLearningFilter('all');
+                setLearningPage(1);
+                setYear(calendarYearLocal());
+                setError('');
+                setSuggestionsFailed(false);
+                setAuditFailed(false);
+                setDigestFailed(false);
+                setSearchFailed(false);
+                setLearningFailed(false);
+                setHistoryFailed(false);
+                setLoading(true);
+                setSuggestionsBusy(true);
+                setLearningBusy(true);
+                setProgressBusy(true);
+                setAuditBusy(true);
+                setDigestPreferenceBusy(true);
+                // Drop any in-flight Retry so the next account cannot replay a prior cancel/review.
+                retryRef.current = null;
               }}
             >
               <LogOut />
@@ -719,15 +1078,17 @@ export default function LiveSearch() {
                 onChange={(e) => setDateTo(e.target.value)}
                 aria-label="To date"
               />
-              <label className="city-search">
-                <select aria-label="Search radius" value={radius} onChange={(e) => setRadius(e.target.value)}>
-                  {[10, 25, 50, 100].map((km) => (
-                    <option key={km} value={km}>
-                      {km} km
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {nearby ? (
+                <label className="city-search">
+                  <select aria-label="Search radius" value={radius} onChange={(e) => setRadius(e.target.value)}>
+                    {[10, 25, 50, 100].map((km) => (
+                      <option key={km} value={km}>
+                        {km} km
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <label className="city-search check-row">
                 <input
                   type="checkbox"
@@ -770,7 +1131,16 @@ export default function LiveSearch() {
             {error && (
               <p role="alert" className="alert">
                 {error}{' '}
-                <button className="text-link" type="button" onClick={() => loadWorkspace()}>
+                <button
+                  className="text-link"
+                  type="button"
+                  onClick={() => {
+                    const action = retryRef.current;
+                    retryRef.current = null;
+                    if (action) action();
+                    else void loadWorkspace();
+                  }}
+                >
                   Retry
                 </button>
               </p>
@@ -790,16 +1160,27 @@ export default function LiveSearch() {
                   </div>
                   <div className="progress-panel">
                     <div className="progress-copy">
-                      <h2>
-                        {points} <span>self-reported CPD points</span>
-                      </h2>
-                      <p>
-                        <CalendarDays /> {year} record
-                        <br />
-                        <strong>
-                          {attended} attended · {signed} signed up
-                        </strong>
-                      </p>
+                      {progressFailed && !progressBusy ? (
+                        <p className="empty-copy" data-testid="live-progress-failed">
+                          Couldn&apos;t load progress for {year}. Check your connection, then try again.{' '}
+                          <button className="text-link" type="button" onClick={() => loadWorkspace()}>
+                            Retry
+                          </button>
+                        </p>
+                      ) : (
+                        <>
+                          <h2>
+                            {points} <span>self-reported CPD points</span>
+                          </h2>
+                          <p>
+                            <CalendarDays /> {year} record
+                            <br />
+                            <strong>
+                              {attended} attended · {signed} signed up
+                            </strong>
+                          </p>
+                        </>
+                      )}
                       <b className="warning">Self-reported totals are not a regulator credit.</b>
                     </div>
                     <button
@@ -845,30 +1226,42 @@ export default function LiveSearch() {
                     </div>
                   </div>
                   <p className="empty-copy">Your own audit trail. Personal notes and secrets are never shown here.</p>
-                  {auditBusy && !audits.length ? (
+                  {auditBusy ? (
                     <p className="empty-copy" role="status" aria-busy="true" data-testid="live-audit-loading">
                       Loading your activity…
                     </p>
-                  ) : audits.length ? (
-                    <ul className="source-list">
-                      {audits.slice(0, 8).map((item) => (
-                        <li key={item.id}>
-                          {item.action} · {item.entity_id}
-                          {item.at ? ` · ${new Date(item.at * 1000).toLocaleString('en-MY')}` : ''}
-                        </li>
-                      ))}
-                    </ul>
                   ) : (
-                    <p className="empty-copy" data-testid="live-audit-empty">
-                      {auditFailed
-                        ? "Couldn't load your activity. Check your connection, then try again. "
-                        : 'Sign-up, attendance, and profile saves will appear here.'}
-                      {auditFailed ? (
-                        <button className="text-link" type="button" onClick={() => loadWorkspace()}>
-                          Retry
-                        </button>
+                    <>
+                      {auditFailed && audits.length ? (
+                        <p className="empty-copy" data-testid="live-audit-stale">
+                          Couldn&apos;t refresh your activity. Showing the last loaded list.{' '}
+                          <button className="text-link" type="button" onClick={() => loadWorkspace()}>
+                            Retry
+                          </button>
+                        </p>
                       ) : null}
-                    </p>
+                      {audits.length ? (
+                        <ul className="source-list">
+                          {audits.slice(0, 8).map((item) => (
+                            <li key={item.id}>
+                              {item.action} · {item.entity_id}
+                              {item.at ? ` · ${new Date(item.at * 1000).toLocaleString('en-MY')}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="empty-copy" data-testid="live-audit-empty">
+                          {auditFailed
+                            ? "Couldn't load your activity. Check your connection, then try again. "
+                            : 'Sign-up, attendance, and profile saves will appear here.'}
+                          {auditFailed ? (
+                            <button className="text-link" type="button" onClick={() => loadWorkspace()}>
+                              Retry
+                            </button>
+                          ) : null}
+                        </p>
+                      )}
+                    </>
                   )}
                 </section>
               </>
@@ -902,6 +1295,18 @@ export default function LiveSearch() {
                     </p>
                   ) : courses.length ? (
                     <>
+                      {searchFailed ? (
+                        <p className="empty-copy" data-testid="live-search-stale">
+                          Couldn't refresh training. Showing the last loaded list.{' '}
+                          <button
+                            className="text-link"
+                            type="button"
+                            onClick={() => retrySearch()}
+                          >
+                            Retry
+                          </button>
+                        </p>
+                      ) : null}
                       {courses.map((course) => (
                         <button key={course.id} className="event" onClick={() => openCourse(course)}>
                           <DateChip value={course.start_date} />
@@ -911,8 +1316,8 @@ export default function LiveSearch() {
                               {course.demo ? ' · Demo course' : ''}
                             </strong>
                             <small>
-                              {formatDate(course.start_date)} · {course.city || 'Online'}
-                              {distanceLabel(course, !!nearby)}
+                              {formatDate(course.start_date)} · {locationLabel(course)}
+                              {distanceLabel(course, resultsNearby)}
                             </small>
                           </span>
                           <span className="event-points">
@@ -927,7 +1332,7 @@ export default function LiveSearch() {
                             className="text-link"
                             type="button"
                             disabled={page <= 1 || loading}
-                            onClick={() => search({ page: page - 1 })}
+                            onClick={() => search({ page: page - 1, pageOnly: true })}
                           >
                             Previous
                           </button>
@@ -938,13 +1343,13 @@ export default function LiveSearch() {
                             className="text-link"
                             type="button"
                             disabled={page * PAGE_SIZE >= total || loading}
-                            onClick={() => search({ page: page + 1 })}
+                            onClick={() => search({ page: page + 1, pageOnly: true })}
                           >
                             Next
                           </button>
                         </div>
                       )}
-                      {nearby && (
+                      {resultsNearby && (
                         <p className="empty-copy">
                           Approximate straight-line distance when venue coordinates exist; otherwise distance unavailable.
                           Online sessions still appear for Online, Hybrid, or Any mode.
@@ -955,10 +1360,16 @@ export default function LiveSearch() {
                     <p className="empty-copy" data-testid="live-search-empty">
                       {searchFailed
                         ? "Couldn't load training. Check your connection, then try again. "
-                        : 'No matching training. Try a broader topic or clear filters. '}
-                      <button className="text-link" type="button" onClick={() => search()}>
-                        Retry
-                      </button>
+                        : 'No matching training. Try a broader topic or clear filters.'}
+                      {searchFailed ? (
+                        <button
+                          className="text-link"
+                          type="button"
+                          onClick={() => retrySearch()}
+                        >
+                          Retry
+                        </button>
+                      ) : null}
                     </p>
                   )}
                 </section>
@@ -1042,40 +1453,60 @@ export default function LiveSearch() {
                   <p className="empty-copy">
                     Advisory catalogue matches by city and recent learning mode. CareCredits does not decide MMC, MOH, or APC compliance.
                   </p>
-                  {suggestionsBusy && !suggestions.length ? (
+                  {suggestionsBusy ? (
                     <p className="empty-copy" role="status" aria-busy="true" data-testid="live-suggestions-loading">
                       Loading suggestions…
                     </p>
-                  ) : suggestions.length ? (
-                    suggestions.slice(0, 5).map((item) => (
-                      <button
-                        key={item.id}
-                        className="recommendation"
-                        type="button"
-                        onClick={() => openCourse({ id: item.id } as Course)}
-                      >
-                        <DateChip value={item.start_date} />
-                        <div>
-                          <h3>{item.title}</h3>
-                          <p>{item.provider || 'Catalogue listing'}</p>
-                          <small>
-                            {formatDate(item.start_date || null)} · {item.city || 'Online'}
-                            {item.reason ? ` — ${item.reason}` : ''}
-                            {item.points != null ? ` · ${item.points} points` : ''}
-                          </small>
-                        </div>
-                        <ChevronRight />
-                      </button>
-                    ))
                   ) : (
-                    <p className="empty-copy" data-testid="live-suggestions-empty">
-                      {suggestionsFailed
-                        ? "Couldn't load suggestions. Check your connection, then try again. "
-                        : 'No upcoming catalogue suggestions yet. Save a city or browse Discover. '}
-                      <button className="text-link" type="button" onClick={() => loadWorkspace()}>
-                        Retry
-                      </button>
-                    </p>
+                    <>
+                      {suggestionsFailed && suggestions.length ? (
+                        <p className="empty-copy" data-testid="live-suggestions-stale">
+                          Couldn&apos;t refresh suggestions. Showing the last loaded list.{' '}
+                          <button className="text-link" type="button" onClick={() => loadWorkspace()}>
+                            Retry
+                          </button>
+                        </p>
+                      ) : null}
+                      {suggestions.length ? (
+                        suggestions.slice(0, 5).map((item) => (
+                          <button
+                            key={item.id}
+                            className="recommendation"
+                            type="button"
+                            onClick={() => openCourse({ id: item.id } as Course)}
+                          >
+                            <DateChip value={item.start_date} />
+                            <div>
+                              <h3>{item.title}</h3>
+                              <p>{item.provider || 'Catalogue listing'}</p>
+                              <small>
+                                {formatDate(item.start_date || null)} ·{' '}
+                                {locationLabel({
+                                  mode: item.mode || 'online',
+                                  city: item.city || null,
+                                })}
+                                {item.reason ? ` — ${item.reason}` : ''}
+                                {item.points != null ? ` · ${item.points} points` : ''}
+                              </small>
+                            </div>
+                            <ChevronRight />
+                          </button>
+                        ))
+                      ) : (
+                        <p className="empty-copy" data-testid="live-suggestions-empty">
+                          {suggestionsFailed
+                            ? "Couldn't load suggestions. Check your connection, then try again. "
+                            : suggestionsCity
+                              ? 'No upcoming catalogue suggestions match your city and recent learning mode yet. Browse Discover or check back after the next catalogue refresh.'
+                              : 'No upcoming catalogue suggestions yet. Save a city or browse Discover.'}
+                          {suggestionsFailed ? (
+                            <button className="text-link" type="button" onClick={() => loadWorkspace()}>
+                              Retry
+                            </button>
+                          ) : null}
+                        </p>
+                      )}
+                    </>
                   )}
                 </section>
                 <section className="card">
@@ -1085,10 +1516,19 @@ export default function LiveSearch() {
                       <h2>Learning record</h2>
                     </div>
                   </div>
-                  <p className="empty-copy">
-                    {points} self-reported CPD points for {year}. This is the recorded total, not a fill toward a legal
-                    annual target.
-                  </p>
+                  {progressFailed && !progressBusy ? (
+                    <p className="empty-copy" data-testid="live-learning-progress-failed">
+                      Couldn&apos;t load progress for {year}. Check your connection, then try again.{' '}
+                      <button className="text-link" type="button" onClick={() => loadWorkspace()}>
+                        Retry
+                      </button>
+                    </p>
+                  ) : (
+                    <p className="empty-copy">
+                      {points} self-reported CPD points for {year}. This is the recorded total, not a fill toward a legal
+                      annual target.
+                    </p>
+                  )}
                   <label>
                     Year{' '}
                     <select
@@ -1096,19 +1536,31 @@ export default function LiveSearch() {
                       value={year}
                       onChange={async (e) => {
                         const next = Number(e.target.value);
+                        const requestId = ++progressRequest.current;
                         setYear(next);
+                        setProgress(null);
+                        setProgressFailed(false);
                         setProgressBusy(true);
                         try {
-                          setProgress(await api('/me/progress?year=' + next));
+                          const payload = await api('/me/progress?year=' + next);
+                          // Discard stale out-of-order years (parity with Overview progressReady).
+                          if (progressRequest.current === requestId && payload?.year === next) {
+                            setProgress(payload);
+                            setProgressFailed(false);
+                          }
                         } catch (err) {
-                          setError((err as Error).message);
+                          if (progressRequest.current === requestId) {
+                            setProgress(null);
+                            setProgressFailed(true);
+                            setError((err as Error).message);
+                          }
                         } finally {
-                          setProgressBusy(false);
+                          if (progressRequest.current === requestId) setProgressBusy(false);
                         }
                       }}
                     >
                       {[0, 1, 2, 3, 4].map((offset) => {
-                        const value = new Date().getFullYear() - offset;
+                        const value = calendarYearLocal() - offset;
                         return (
                           <option key={value} value={value}>
                             {value}
@@ -1193,14 +1645,16 @@ export default function LiveSearch() {
                           {label}
                         </button>
                       ))}
-                      <button className="text-link" type="button" onClick={() => loadLearning(learningFilter)}>
-                        Retry
-                      </button>
-                      <a className="text-link" href="/api/v1/me/export/csv">
-                        Export CSV
+                      {learningFailed ? (
+                        <button className="text-link" type="button" onClick={retryLearning}>
+                          Retry
+                        </button>
+                      ) : null}
+                      <a className="text-link" href={`/api/v1/me/export/csv?year=${year}`}>
+                        Export CSV · {year}
                       </a>
-                      <a className="text-link" href="/api/v1/me/export/eml">
-                        Email draft
+                      <a className="text-link" href={`/api/v1/me/export/eml?year=${year}`}>
+                        Email draft · {year}
                       </a>
                     </div>
                     {learningBusy ? (
@@ -1209,6 +1663,14 @@ export default function LiveSearch() {
                       </p>
                     ) : records.length ? (
                       <>
+                        {learningFailed ? (
+                          <p className="small-note" data-testid="live-learning-stale">
+                            Couldn&apos;t refresh your records. Showing the last loaded list.{' '}
+                            <button className="text-link" type="button" onClick={retryLearning}>
+                              Retry
+                            </button>
+                          </p>
+                        ) : null}
                         {records.map((course) => (
                           <button key={course.id} className="event" type="button" onClick={() => openCourse(course)}>
                             <DateChip value={course.start_date} />
@@ -1216,12 +1678,12 @@ export default function LiveSearch() {
                               <strong>{course.title}</strong>
                               <small>
                                 {formatDate(course.start_date)} ·{' '}
-                                {course.record?.attendance_status === 'attended'
+                                {course.record?.attendance_status === 'attended' || course.record?.attended
                                   ? 'Attended'
-                                  : course.record?.signup_status === 'signed_up'
-                                    ? 'Signed up'
-                                    : course.record?.signup_status === 'cancelled'
-                                      ? 'Sign-up cancelled'
+                                  : course.record?.signup_status === 'cancelled'
+                                    ? 'Sign-up cancelled'
+                                    : course.record?.signup_status === 'signed_up' || course.record?.signed_up
+                                      ? 'Signed up'
                                       : 'Saved'}
                               </small>
                             </span>
@@ -1253,10 +1715,15 @@ export default function LiveSearch() {
                         )}
                       </>
                     ) : (
-                      <p className="empty-copy">
+                      <p className="empty-copy" data-testid="live-learning-empty">
                         {learningFailed
-                          ? "Couldn't load your records. Check your connection, then use Retry."
+                          ? "Couldn't load your records. Check your connection, then try again. "
                           : 'Your learning story starts here. Open a catalogue course to record sign-up or attendance.'}
+                        {learningFailed ? (
+                          <button className="text-link" type="button" onClick={retryLearning}>
+                            Retry
+                          </button>
+                        ) : null}
                       </p>
                     )}
                   </section>
@@ -1278,6 +1745,10 @@ export default function LiveSearch() {
                         <button className="text-link" type="button" onClick={() => loadWorkspace()}>
                           Retry
                         </button>
+                      </p>
+                    ) : digestPreferenceBusy ? (
+                      <p className="empty-copy" role="status" aria-busy="true" data-testid="live-digest-loading">
+                        Loading digest preference…
                       </p>
                     ) : (
                       <label className="empty-copy">
@@ -1304,21 +1775,47 @@ export default function LiveSearch() {
           error={error}
           saving={saving}
           history={history}
-          onClose={() => setSelected(null)}
+          historyFailed={historyFailed}
+          onClose={() => {
+            // Bump detailRequest so an in-flight history fetch cannot repaint after close.
+            detailRequest.current += 1;
+            setHistory([]);
+            setHistoryFailed(false);
+            setSelected(null);
+          }}
           onEdit={setEdit}
           onSave={saveRecord}
+          onRetryHistory={() => loadHistory(selected.id, detailRequest.current)}
+          onRetryError={() => {
+            const action = retryRef.current;
+            retryRef.current = null;
+            if (action) action();
+            else void loadWorkspace();
+          }}
           canCancel={user?.role === 'operator'}
           onCancel={async () => {
-            setSaving(true);
-            try {
-              await api('/admin/trainings/' + selected.id + '/cancel', { method: 'POST' });
-              await search({ page: 1 });
-              setSelected(null);
-            } catch (e) {
-              setError((e as Error).message);
-            } finally {
-              setSaving(false);
-            }
+            const courseId = selected.id;
+            const requestId = detailRequest.current;
+            const runCancel = async () => {
+              const gen = beginSaving();
+              setError('');
+              retryRef.current = null;
+              try {
+                await api('/admin/trainings/' + courseId + '/cancel', { method: 'POST' });
+                // Cancel persisted — refresh catalogue even if the modal closed or switched.
+                await search({ page: 1, pageOnly: true });
+                if (detailRequest.current !== requestId) return;
+                setSelected(null);
+              } catch (e) {
+                if (detailRequest.current !== requestId) return;
+                fail(e, () => {
+                  void runCancel();
+                });
+              } finally {
+                endSaving(gen);
+              }
+            };
+            await runCancel();
           }}
         />
       )}

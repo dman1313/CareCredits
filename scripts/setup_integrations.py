@@ -38,8 +38,12 @@ def main():
             if not re.fullmatch(pattern,value):
                 raise SystemExit('Unexpected configuration format.')
             values[key]=value
-    if input('Have you verified this model has available weights and a suitable licence? [yes/no]: ').strip().lower()=='yes':
-        values['MODEL_OPEN_WEIGHT_CONFIRMED']='true'
+    confirm = input('Have you verified this model has available weights and a suitable licence? [yes/no]: ').strip().lower()
+    if confirm == 'yes':
+        values['MODEL_OPEN_WEIGHT_CONFIRMED'] = 'true'
+    elif confirm in ('no', 'n'):
+        # Explicit no clears a prior true so demo_readiness cannot stay falsely live-ready.
+        values['MODEL_OPEN_WEIGHT_CONFIRMED'] = 'false'
     # Do not write OPEN-03 sample identity into .env: empty fields stay provisional via env_or_provisional().
     for key in ['SCRAPER_SERVICE_TOKEN','POSTGRES_PASSWORD']:
         if not re.search(r'^'+key+r'=\S+',content,re.M):

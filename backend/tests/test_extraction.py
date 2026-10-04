@@ -37,6 +37,34 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(result[0]['model_id'],'test/open-weight-model')
         self.assertEqual(usage['model_tokens'], 30)
 
+    def test_reported_model_tokens_rejects_bool_nan_inf(self):
+        from scraper.extraction import reported_model_tokens
+
+        self.assertIsNone(reported_model_tokens({'usage': {'total_tokens': True}}))
+        self.assertIsNone(reported_model_tokens({'usage': {'total_tokens': False}}))
+        self.assertIsNone(reported_model_tokens({'usage': {'total_tokens': float('inf')}}))
+        self.assertIsNone(reported_model_tokens({'usage': {'prompt_tokens': True, 'completion_tokens': 2}}))
+        self.assertEqual(reported_model_tokens({'usage': {'total_tokens': 12}}), 12)
+
+    def test_run_job_bool_max_results_skips_tavily(self):
+        """JSON bool max_results must not invent Search size (True→1 / False→0→1)."""
+        from scraper.worker import job_result_limit
+
+        with self.assertRaises(ExtractionError):
+            job_result_limit({'max_results': True})
+        with self.assertRaises(ExtractionError):
+            job_result_limit({'max_results': False})
+        self.assertEqual(job_result_limit({'max_results': 3}), 3)
+        self.assertEqual(job_result_limit({}), 5)
+        with patch('scraper.worker.discover') as search, patch('scraper.worker.firehose_discover') as firehose:
+            for bad in (True, False):
+                result = run_job({'query': 'GP', 'lease_token': 'test', 'max_results': bad}, lambda: None)
+                self.assertEqual(result['status'], 'failed', bad)
+                self.assertIsNone(result['usage']['tavily_credits'])
+                self.assertTrue(any('max_results' in w for w in result['warnings']), result['warnings'])
+        search.assert_not_called()
+        firehose.assert_not_called()
+
     def test_unsupported_facts_are_rejected(self):
         row={**self.row,'points':10,'credit_label':'CPD'}
         with self.client(row) as client:
@@ -154,6 +182,34 @@ class ModelTests(unittest.TestCase):
         self.assertIsNone(rows[0]['points'])
         self.assertIsNone(rows[0]['difficulty'])
         self.assertIsNone(rows[0]['fee'])
+        self.assertIn('Kursus Klinikal Johor', rows[0]['evidence']['title'])
+        self.assertIn('anjuran', rows[0]['evidence']['provider'].lower())
+        self.assertTrue(rows[0]['evidence']['title'] in text)
+        self.assertTrue(rows[0]['evidence']['provider'] in text)
+
+    def test_heuristic_malay_online_atas_talian_skips_points_and_fees(self):
+        from scraper.extraction import heuristic_extract
+        text = (
+            'Bengkel CPD Primer anjuran Kementerian Kesihatan Malaysia. '
+            'Atas talian untuk doktor Malaysia. Tarikh 2026-08-15. '
+            'Mata CPD 3. Yuran RM 150. Intermediate.'
+        )
+        rows = heuristic_extract({
+            'url': 'https://moh.gov.my/bengkel-atas-talian',
+            'title': 'Bengkel CPD Primer',
+            'raw_content': text,
+        })
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual(rows[0]['mode'], 'online')
+        self.assertIsNone(rows[0]['city'])
+        self.assertEqual(rows[0]['start_date'], '2026-08-15')
+        self.assertIsNone(rows[0]['points'])
+        self.assertIsNone(rows[0]['fee'])
+        self.assertIsNone(rows[0]['currency'])
+        self.assertIsNone(rows[0]['difficulty'])
+        self.assertIsNone(rows[0]['credit_label'])
+        self.assertEqual(rows[0]['model_id'], 'heuristic-v1')
+        self.assertIn('atas talian', rows[0]['evidence']['mode'].lower())
 
     def test_heuristic_reads_hybrid_mode_and_stated_prerequisites(self):
         from scraper.extraction import heuristic_extract
@@ -286,11 +342,58 @@ class ModelTests(unittest.TestCase):
 
     def test_empty_search_skips_extract_after_model_is_ready(self):
         with patch('scraper.worker.discover', return_value={'sources': [], 'warnings': []}), patch(
+            'scraper.worker.firehose_configured', return_value=True
+        ), patch(
+            'scraper.worker.firehose_discover', return_value={'sources': [], 'warnings': []}
+        ) as firehose, patch(
+            'scraper.worker.extract_training'
+        ) as model, patch(
+            'scraper.worker.heuristic_extract'
+        ) as heuristic:
+            result = run_job({'query': 'GP', 'lease_token': 'test'}, lambda: None)
+        self.assertEqual(result['status'], 'succeeded')
+        self.assertEqual(result['warnings'], [])
+        self.assertEqual(result['candidates'], [])
+        self.assertEqual(result['sources'], [])
+        firehose.assert_called_once_with('GP', 5)
+        model.assert_not_called()
+        heuristic.assert_not_called()
+
+    def test_empty_search_with_firehose_warning_is_succeeded(self):
+        from scraper.firehose import FirehoseError
+
+        with patch('scraper.worker.discover', return_value={'sources': [], 'warnings': []}), patch(
+            'scraper.worker.firehose_configured', return_value=True
+        ), patch(
+            'scraper.worker.firehose_discover', side_effect=FirehoseError(504, 'Firehose is unavailable or timed out.')
+        ), patch(
             'scraper.worker.extract_training'
         ) as model:
             result = run_job({'query': 'GP', 'lease_token': 'test'}, lambda: None)
         self.assertEqual(result['status'], 'succeeded')
-        self.assertEqual(result['warnings'], [])
+        self.assertEqual(result['candidates'], [])
+        self.assertEqual(result['sources'], [])
+        self.assertTrue(any('Firehose' in warning for warning in result['warnings']))
+        model.assert_not_called()
+
+    def test_blank_source_text_is_partial_not_silent_success(self):
+        sources = [{
+            'url': 'https://example.org/blank',
+            'title': 'Empty page',
+            'snippet': '',
+            'raw_content': '',
+            'extraction_status': 'failed',
+            'verification_status': 'unverified',
+        }]
+        with patch(
+            'scraper.worker.discover',
+            return_value={'sources': sources, 'warnings': [], 'usage': {'tavily_credits': 1}},
+        ), patch('scraper.worker.extract_training') as model:
+            result = run_job({'query': 'GP', 'lease_token': 'test'}, lambda: None)
+        self.assertEqual(result['status'], 'partial')
+        self.assertEqual(result['candidates'], [])
+        self.assertEqual(result['usage']['tavily_credits'], 1)
+        self.assertTrue(any('no extractable text' in warning.lower() for warning in result['warnings']))
         model.assert_not_called()
 
     def test_missing_model_key_or_confirmation_blocks_configuration(self):
@@ -414,6 +517,139 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(result['usage']['tavily_credits'], 2)
         self.assertTrue(any('deadline' in warning.lower() for warning in result['warnings']))
 
+    def test_connect_failure_copies_error_message(self):
+        from types import SimpleNamespace
+
+        class FakeClient:
+            def get(self, path):
+                return SimpleNamespace(
+                    status_code=503,
+                    headers={'content-type': 'application/json'},
+                    json=lambda: {
+                        'error': {
+                            'code': 'unavailable',
+                            'message': 'Catalogue database is unavailable.',
+                            'request_id': 'conn1',
+                        }
+                    },
+                )
+
+        quote = (
+            'Primary Care Update organised by Medical School in Kuala Lumpur, Malaysia. '
+            'Conference 2026-06-12. Online primary care conference.'
+        )
+        candidate = {
+            'title': 'Primary Care Update',
+            'provider': 'Medical School',
+            'mode': 'online',
+            'country': 'MY',
+            'start_date': '2026-06-12',
+            'source_url': 'https://example.org/primary-care',
+            'source_text': quote,
+            'evidence': {key: quote for key in ['title', 'provider', 'mode', 'country', 'start_date']},
+            'retrieved_at': '2026-10-03T03:15:00+00:00',
+        }
+        sources = [{
+            'url': 'https://example.org/primary-care',
+            'title': 'Primary Care Update',
+            'snippet': quote,
+            'raw_content': quote,
+            'extraction_status': 'success',
+            'verification_status': 'unverified',
+            'retrieved_at': '2026-10-03T03:15:00+00:00',
+        }]
+        with patch(
+            'scraper.worker.discover',
+            return_value={'sources': sources, 'warnings': [], 'usage': {'tavily_credits': 1}},
+        ), patch(
+            'scraper.worker.extract_training',
+            return_value=[candidate],
+        ):
+            result = run_job({'query': 'GP', 'lease_token': 'test', 'id': 'job-conn'}, lambda: None, client=FakeClient())
+        self.assertIn('Catalogue database is unavailable.', result['warnings'])
+        self.assertEqual(result['sources'][0]['retrieved_at'], '2026-10-03T03:15:00+00:00')
+        self.assertEqual(len(result['candidates']), 1)
+
+    def test_partial_catalogue_save_keeps_unsaved_candidates(self):
+        from types import SimpleNamespace
+
+        quote = (
+            'Primary Care Update organised by Medical School in Kuala Lumpur, Malaysia. '
+            'Conference 2026-06-12. Online primary care conference.'
+        )
+        first = {
+            'title': 'Primary Care Update',
+            'provider': 'Medical School',
+            'mode': 'online',
+            'country': 'MY',
+            'start_date': '2026-06-12',
+            'source_url': 'https://example.org/primary-care',
+            'source_text': quote,
+            'evidence': {key: quote for key in ['title', 'provider', 'mode', 'country', 'start_date']},
+        }
+        second = {
+            **first,
+            'title': 'Second Care Update',
+            'source_url': 'https://example.org/second-care',
+            'evidence': {key: quote for key in ['title', 'provider', 'mode', 'country', 'start_date']},
+        }
+        sources = [{
+            'url': 'https://example.org/primary-care',
+            'title': 'Primary Care Update',
+            'snippet': quote,
+            'raw_content': quote,
+            'extraction_status': 'success',
+            'verification_status': 'unverified',
+        }]
+        calls = {'save': 0}
+
+        class FakeClient:
+            def get(self, path):
+                return SimpleNamespace(status_code=200, headers={'content-type': 'application/json'}, json=lambda: {})
+
+            def post(self, path, json=None):
+                if path.endswith('/lookup'):
+                    return SimpleNamespace(
+                        status_code=200,
+                        headers={'content-type': 'application/json'},
+                        json=lambda: {'exact': None, 'matches': []},
+                    )
+                if path.endswith('/decide'):
+                    return SimpleNamespace(
+                        status_code=200,
+                        headers={'content-type': 'application/json'},
+                        json=lambda: {
+                            'decision': 'new',
+                            'confidence': 0.9,
+                            'probabilities': {'new': 0.9, 'exists': 0.05, 'uncertain': 0.05},
+                        },
+                    )
+                calls['save'] += 1
+                if calls['save'] == 1:
+                    return SimpleNamespace(
+                        status_code=200,
+                        headers={'content-type': 'application/json'},
+                        json=lambda: {'status': 'pending'},
+                    )
+                return SimpleNamespace(
+                    status_code=503,
+                    headers={'content-type': 'application/json'},
+                    json=lambda: {
+                        'error': {'code': 'unavailable', 'message': 'Catalogue save failed for one candidate.', 'request_id': 's1'}
+                    },
+                )
+
+        with patch('scraper.worker.discover', return_value={'sources': sources, 'warnings': [], 'usage': {'tavily_credits': 1}}), patch(
+            'scraper.worker.extract_training', return_value=[first, second]
+        ), patch('scraper.worker.configuration', return_value='https://example.org/v1'):
+            result = run_job({'query': 'GP', 'lease_token': 'test', 'id': 'job-partial'}, lambda: None, client=FakeClient())
+        self.assertEqual(result['usage']['catalogue_saved'], 1)
+        self.assertEqual(len(result['candidates']), 1)
+        self.assertEqual(result['candidates'][0]['title'], 'Second Care Update')
+        self.assertEqual(result['candidates'][0]['_judgment']['decision'], 'new')
+        self.assertTrue(any('1 of 2 catalogue saves failed' in warning for warning in result['warnings']))
+        self.assertEqual(result['status'], 'partial')
+
 
 class CatalogueWarningTests(unittest.TestCase):
     def test_pipeline_records_error_envelope_messages(self):
@@ -455,8 +691,10 @@ class CatalogueWarningTests(unittest.TestCase):
                     )
                 return fail(path, json)
 
-        saved, warnings = catalogue_pipeline(FakeClient(), 'job-1', [{'title': 'GP CME'}])
+        saved, warnings, unsaved = catalogue_pipeline(FakeClient(), 'job-1', [{'title': 'GP CME'}])
         self.assertEqual(saved, 0)
+        self.assertEqual(len(unsaved), 1)
+        self.assertEqual(unsaved[0].get('_judgment', {}).get('decision'), 'uncertain')
         self.assertIn('Catalogue database is unavailable.', warnings)
         self.assertIn('Exact source_key already exists.', warnings)
         self.assertNotIn('None', warnings)
@@ -470,3 +708,16 @@ class CatalogueWarningTests(unittest.TestCase):
             json=lambda: {'detail': 'Job lease expired.'},
         )
         self.assertEqual(api_message(response, 'fallback'), 'Job lease expired.')
+
+    def test_public_sources_keep_retrieval_time(self):
+        from scraper.worker import public_sources
+
+        items = public_sources([{
+            'url': 'https://example.org/afpm',
+            'title': 'AFPM',
+            'snippet': 'CPD',
+            'extraction_status': 'success',
+            'verification_status': 'unverified',
+            'retrieved_at': '2026-10-03T04:00:00+00:00',
+        }])
+        self.assertEqual(items[0]['retrieved_at'], '2026-10-03T04:00:00+00:00')

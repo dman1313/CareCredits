@@ -49,6 +49,9 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(len(result['sources']), 1)
         self.assertEqual(result['warnings'], [])
         self.assertIsNone(result['usage']['tavily_credits'])
+        # Per-source stamp must match provider retrieval so job-complete can persist scraper ISO.
+        self.assertEqual(result['sources'][0]['retrieved_at'], result['retrieved_at'])
+        self.assertTrue(result['retrieved_at'])
         self.assertNotIn('test-only', json.dumps(result))
 
     def test_discover_records_reported_credits(self):
@@ -59,6 +62,13 @@ class DiscoveryTests(unittest.TestCase):
         with patch.object(d, 'urlopen', side_effect=[io.BytesIO(json.dumps(x).encode()) for x in replies]):
             result = d.discover('cardiology', 5)
         self.assertEqual(result['usage']['tavily_credits'], 3)
+
+    def test_reported_credits_rejects_bool_nan_inf(self):
+        self.assertIsNone(d.reported_credits({'usage': {'credits': True}}))
+        self.assertIsNone(d.reported_credits({'usage': {'credits': False}}))
+        self.assertIsNone(d.reported_credits({'usage': {'credits': float('nan')}}))
+        self.assertIsNone(d.reported_credits({'usage': {'credits': float('inf')}}))
+        self.assertEqual(d.reported_credits({'usage': {'credits': 1.5}}), 1.5)
 
     def test_empty_search_skips_extract(self):
         with patch.object(d, 'tavily_post', return_value={'results': []}) as call:
@@ -184,6 +194,27 @@ class DiscoveryTests(unittest.TestCase):
             self.assertIn('MODEL_OPEN_WEIGHT_CONFIRMED=false', saved)
             self.assertNotIn('MODEL_OPEN_WEIGHT_CONFIRMED=true', saved)
             self.assertIn('MODEL_API_KEY=\n', saved)
+
+    def test_setup_integrations_no_clears_prior_open_weight_confirm(self):
+        sample = (
+            'TAVILY_API_KEY=\nMODEL_API_KEY=\nTYPESAFE_API_KEY=\nMODEL_ID=\n'
+            'MODEL_WEIGHTS_URL=\nMODEL_LICENSE_URL=\nMODEL_PUBLISHER=\nMODEL_HOST=\n'
+            'MODEL_BASE_URL=\nMODEL_MAX_INPUT_CHARS=\nMODEL_MAX_OUTPUT_TOKENS=\n'
+            'MODEL_OPEN_WEIGHT_CONFIRMED=true\n'
+        )
+        answers = iter(['', '', '', '', '', '', '', '', 'no'])
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / '.env.sample').write_text(sample)
+            with patch.object(setup_integrations, '__file__', str(root / 'scripts' / 'setup_integrations.py')), patch.object(
+                setup_integrations.getpass, 'getpass', return_value=''
+            ), patch.object(setup_integrations, 'input', side_effect=lambda prompt: next(answers)), patch(
+                'sys.stdout', new_callable=io.StringIO
+            ):
+                setup_integrations.main()
+            saved = (root / '.env').read_text()
+            self.assertIn('MODEL_OPEN_WEIGHT_CONFIRMED=false', saved)
+            self.assertNotIn('MODEL_OPEN_WEIGHT_CONFIRMED=true', saved)
 
     def test_repo_env_sample_leaves_open03_identity_blank(self):
         sample = (Path(__file__).resolve().parents[2] / '.env.sample').read_text()

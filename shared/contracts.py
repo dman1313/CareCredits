@@ -63,6 +63,14 @@ class Training(BaseModel):
     model_publisher: str | None = Field(default=None, max_length=200)
     model_host: str | None = Field(default=None, max_length=200)
 
+    @field_validator('latitude', 'longitude', 'fee', 'points', mode='before')
+    @classmethod
+    def reject_bool_numbers(cls, value):
+        # JSON true/false must not become 1.0/0.0 fee/points/coords (parity with Jev/usage bool reject).
+        if isinstance(value, bool):
+            raise ValueError('Numeric fields must be numbers, not booleans')
+        return value
+
     @field_validator('source_url', 'registration_url', 'model_weights_url', 'model_license_url')
     @classmethod
     def urls(cls, value):

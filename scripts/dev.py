@@ -19,17 +19,45 @@ if str(_root) not in sys.path:
 from shared.model_defaults import apply_provisional_model  # noqa: E402
 
 
+def reserve_local_ports(*preferreds):
+    """Bind distinct free ports near each preferred value and keep the sockets until released.
+
+    Sequential free_port() bind-and-close races can hand the same port to backend and scraper
+    health when preferred ranges overlap (e.g. both near 8000). Hold sockets until the caller
+    is ready to start child processes.
+    """
+    held = []
+    chosen = []
+    try:
+        for preferred in preferreds:
+            preferred = int(preferred)
+            for port in (preferred, *range(preferred + 1, preferred + 20)):
+                if port in chosen:
+                    continue
+                sock = socket.socket()
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    sock.bind(('127.0.0.1', port))
+                except OSError:
+                    sock.close()
+                    continue
+                held.append(sock)
+                chosen.append(sock.getsockname()[1])
+                break
+            else:
+                raise RuntimeError('No free local port near ' + str(preferred))
+        return chosen, held
+    except Exception:
+        for sock in held:
+            sock.close()
+        raise
+
+
 def free_port(preferred):
-    preferred = int(preferred)
-    for port in (preferred, *range(preferred + 1, preferred + 20)):
-        with socket.socket() as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                sock.bind(('127.0.0.1', port))
-            except OSError:
-                continue
-        return port
-    raise RuntimeError('No free local port near ' + str(preferred))
+    ports, held = reserve_local_ports(preferred)
+    for sock in held:
+        sock.close()
+    return ports[0]
 
 
 def is_live_body(payload):
@@ -90,14 +118,15 @@ BACKEND_OPTIONAL = (
     'SMTP_FROM',
 )
 
-# Keep local Next instances (3000–3030) mutating the API without a wildcard origin.
+# Keep local Next instances (3000–3040) mutating the API without a wildcard origin.
 # Must stay aligned with backend.main.DEFAULT_ALLOWED_ORIGINS and .env.sample.
 LOCAL_DEV_ALLOWED_ORIGINS = (
     'http://localhost:3000,http://127.0.0.1:3000,'
     'http://localhost:3010,http://127.0.0.1:3010,'
     'http://localhost:3020,http://127.0.0.1:3020,'
     'http://localhost:3021,http://127.0.0.1:3021,'
-    'http://localhost:3030,http://127.0.0.1:3030'
+    'http://localhost:3030,http://127.0.0.1:3030,'
+    'http://localhost:3040,http://127.0.0.1:3040'
 )
 
 
@@ -210,9 +239,12 @@ def main():
     root = Path(__file__).resolve().parents[1]
     owner = {k: v for k, v in dotenv_values(root / '.env').items() if v is not None}
     settings = apply_provisional_model(dict(owner))
-    backend_port = free_port(args.backend_port)
-    frontend_port = free_port(args.frontend_port)
-    health_port = free_port(int(settings.get('SCRAPER_HEALTH_PORT') or os.getenv('SCRAPER_HEALTH_PORT') or 8002))
+    health_preferred = int(settings.get('SCRAPER_HEALTH_PORT') or os.getenv('SCRAPER_HEALTH_PORT') or 8002)
+    ports, held_ports = reserve_local_ports(args.backend_port, args.frontend_port, health_preferred)
+    backend_port, frontend_port, health_port = ports
+    # Release held binds so child processes can listen; ports stay distinct from each other.
+    for sock in held_ports:
+        sock.close()
     token = settings.get('SCRAPER_SERVICE_TOKEN') or secrets.token_urlsafe(32)
     (root / '.data').mkdir(exist_ok=True)
     backend, scraper, frontend_env = service_environments(

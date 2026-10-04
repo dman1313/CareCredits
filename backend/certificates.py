@@ -59,6 +59,8 @@ def certificate_json(row: AffiliationCertificate) -> dict:
         'document_hash': row.document_hash,
         'disclaimer_version': row.disclaimer_version,
         'download_path': f'/api/v1/me/certificates/{row.id}',
+        # SDD §10 names this download_url; keep download_path for existing clients.
+        'download_url': f'/api/v1/me/certificates/{row.id}',
     }
 
 
@@ -97,14 +99,16 @@ def _wrap(text: str, width: int = 86) -> list[str]:
 
 def render_pdf(account: Account, row: AffiliationCertificate) -> bytes:
     issued = datetime.fromtimestamp(row.issued_at, TZ).strftime('%d %B %Y, %H:%M %Z')
-    place = f' · {account.city}' if account.city else ''
+    display_name = (account.name or '').strip() or 'Doctor'
+    city = (account.city or '').strip()
+    place = f' · {city}' if city else ''
     lines = [
         ('/F1 22 Tf', 'CareCredits'),
         ('/F1 11 Tf', 'Malaysia GP CPD tracking · affiliation record'),
         ('/F1 16 Tf', 'Affiliation certificate'),
         (
             '/F1 11 Tf',
-            f'This certifies that {account.name} ({account.email}) is affiliated with CareCredits '
+            f'This certifies that {display_name} ({account.email}) is affiliated with CareCredits '
             f'for the calendar year {row.year}{place}.',
         ),
         ('/F1 10 Tf', 'Self-reported CPD points recorded in CareCredits'),
@@ -127,12 +131,20 @@ def render_pdf(account: Account, row: AffiliationCertificate) -> bytes:
             commands.append(f'({_pdf_escape(part)}) Tj')
     commands.append('ET')
     content = '\n'.join(commands).encode('latin-1', 'replace')
+    title = _pdf_escape(f'CareCredits affiliation certificate {row.year}')
+    author = _pdf_escape(display_name)
+    subject = _pdf_escape('CareCredits affiliation record — not a regulator certificate')
+    info = (
+        f'<< /Title ({title}) /Author ({author}) /Subject ({subject}) '
+        f'/Creator (CareCredits) /Producer (CareCredits CERT-01) >>'
+    ).encode('latin-1', 'replace')
     objects = [
         b'<< /Type /Catalog /Pages 2 0 R >>',
         b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
         b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
         b'<< /Length %d >>\nstream\n' % len(content) + content + b'\nendstream',
         b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        info,
     ]
     parts = [b'%PDF-1.4\n']
     offsets = [0]
@@ -144,7 +156,7 @@ def render_pdf(account: Account, row: AffiliationCertificate) -> bytes:
     for offset in offsets[1:]:
         xref.append(f'{offset:010d} 00000 n \n'.encode())
     trailer = (
-        b'trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n'
+        b'trailer\n<< /Size %d /Root 1 0 R /Info 6 0 R >>\nstartxref\n%d\n%%%%EOF\n'
         % (len(objects) + 1, xref_at)
     )
     return b''.join(parts + xref + [trailer])
@@ -152,9 +164,9 @@ def render_pdf(account: Account, row: AffiliationCertificate) -> bytes:
 
 def render_html(account: Account, row: AffiliationCertificate) -> str:
     issued = datetime.fromtimestamp(row.issued_at, TZ).strftime('%d %B %Y, %H:%M %Z')
-    name = html.escape(account.name)
+    name = html.escape((account.name or '').strip() or 'Doctor')
     email = html.escape(account.email)
-    city = html.escape(account.city or '')
+    city = html.escape((account.city or '').strip())
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>

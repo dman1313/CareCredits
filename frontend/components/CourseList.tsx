@@ -50,7 +50,7 @@ export function CourseCard({
         <div className="course-tags">
           {c.demo && <span className="tag">Demo</span>}
           <span>{c.difficulty || 'Level not listed'}</span>
-          {c.record?.attended ? (
+          {c.record?.attendance_status === 'attended' || c.record?.attended ? (
             <span className="record-status">
               <Check size={13} /> Attended
             </span>

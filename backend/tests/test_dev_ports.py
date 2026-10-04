@@ -14,6 +14,7 @@ from scripts.dev import (
     free_port,
     is_live_body,
     probe_live,
+    reserve_local_ports,
     service_environments,
     wait_for_live,
 )
@@ -31,6 +32,19 @@ class DevPortTests(unittest.TestCase):
             self.assertGreaterEqual(chosen, preferred)
         finally:
             occupied.close()
+
+    def test_reserve_local_ports_keeps_backend_and_health_distinct(self):
+        # Overlapping preferred ranges used to bind-and-close independently and could collide.
+        ports, held = reserve_local_ports(18050, 18050, 18050)
+        try:
+            self.assertEqual(len(ports), 3)
+            self.assertEqual(len(set(ports)), 3)
+            for port in ports:
+                self.assertGreaterEqual(port, 18050)
+                self.assertLess(port, 18070)
+        finally:
+            for sock in held:
+                sock.close()
 
     def test_service_environments_point_backend_at_scraper_health_without_model_secret(self):
         root = Path(tempfile.mkdtemp())
@@ -78,6 +92,7 @@ class DevPortTests(unittest.TestCase):
         self.assertNotIn('MODEL_API_KEY', frontend)
         self.assertIn('http://localhost:3000', backend['ALLOWED_ORIGINS'])
         self.assertIn('http://127.0.0.1:3030', backend['ALLOWED_ORIGINS'])
+        self.assertIn('http://127.0.0.1:3040', backend['ALLOWED_ORIGINS'])
         filled = apply_provisional_model({'MODEL_ID': '', 'TAVILY_API_KEY': 'keep'})
         self.assertEqual(filled['MODEL_ID'], 'Qwen/Qwen3-30B-A3B-Instruct-2507')
         self.assertEqual(filled['TAVILY_API_KEY'], 'keep')

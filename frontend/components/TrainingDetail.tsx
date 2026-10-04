@@ -20,9 +20,12 @@ export function TrainingDetail({
   error,
   saving,
   history = [],
+  historyFailed = false,
   onClose,
   onEdit,
   onSave,
+  onRetryHistory,
+  onRetryError,
   canCancel = false,
   onCancel,
 }: {
@@ -31,34 +34,80 @@ export function TrainingDetail({
   error: string;
   saving: boolean;
   history?: RecordHistoryItem[];
+  historyFailed?: boolean;
   onClose: () => void;
   onEdit: (next: RecordData) => void;
   onSave: (event: FormEvent) => void;
+  onRetryHistory?: () => void;
+  /** When set, modal errors expose Retry (e.g. re-run cancel / save). */
+  onRetryError?: () => void;
   canCancel?: boolean;
   onCancel?: () => void;
 }) {
   const attendable = !course.start_date || course.start_date <= todayLocal();
+  // Prefer status, but honour legacy bool drift (same as CourseList / `/live` badges).
+  // Do not use `status || fallback`: `not_recorded` is truthy and would hide a drifted attended/signed_up bool.
+  const isAttended = edit.attendance_status === 'attended' || edit.attended;
+  const signupValue: RecordData['signup_status'] =
+    edit.signup_status === 'cancelled'
+      ? 'cancelled'
+      : edit.signup_status === 'signed_up' || edit.signed_up
+        ? 'signed_up'
+        : 'not_recorded';
+  const attendanceValue: NonNullable<RecordData['attendance_status']> = isAttended
+    ? 'attended'
+    : 'not_recorded';
   const dialogRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
   const sourceHref = publicWebUrl(course.source_url);
   const registrationHref = publicWebUrl(course.registration_url);
   useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+  useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    dialogRef.current?.focus();
+    const priorOverflow = document.body.style.overflow;
+    const priorHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    document.body.classList.add('modal-open');
+    // Focus close once on open. Keep onClose in a ref so parent re-renders (edit keystrokes)
+    // do not tear down the Tab trap mid-dialog.
+    closeRef.current?.focus();
+    const focusables = () => {
+      if (!dialogRef.current) return [] as HTMLElement[];
+      return Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]),a[href],input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true');
+    };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab' || !dialogRef.current) return;
-      const items = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>('button:not(:disabled),a,input,textarea,select'),
-      );
+      const items = focusables();
+      if (!items.length) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
       const first = items[0];
       const last = items[items.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      const active = document.activeElement as HTMLElement | null;
+      const inside = active ? dialogRef.current.contains(active) : false;
+      if (!inside) {
+        event.preventDefault();
+        (event.shiftKey ? last : first)?.focus();
+        return;
+      }
+      if (event.shiftKey && active === first) {
         event.preventDefault();
         last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && active === last) {
         event.preventDefault();
         first?.focus();
       }
@@ -66,9 +115,12 @@ export function TrainingDetail({
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = priorOverflow;
+      document.documentElement.style.overflow = priorHtmlOverflow;
+      document.body.classList.remove('modal-open');
       previous?.focus();
     };
-  }, [onClose]);
+  }, []);
   return (
     <div className="modal-shade" onClick={onClose}>
       <section
@@ -77,10 +129,16 @@ export function TrainingDetail({
         role="dialog"
         aria-modal="true"
         aria-labelledby="training-title"
+        aria-describedby="training-disclaimer"
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
-        <button autoFocus className="modal-close icon-btn" aria-label="Close training details" onClick={onClose}>
+        <button
+          ref={closeRef}
+          className="modal-close icon-btn"
+          aria-label="Close training details"
+          onClick={onClose}
+        >
           <X />
         </button>
         <span className="pill">
@@ -157,7 +215,7 @@ export function TrainingDetail({
           ) : null}
           {course.publication_status === 'cancelled' ? <span className="small-note">Session cancelled; personal records are kept.</span> : null}
         </div>
-        <p className="small-note">
+        <p className="small-note" id="training-disclaimer">
           Confirm details and CPD eligibility with the provider. Opening a link does not register you.
           Attendance you record here is self-reported and is not MMC, MOH, or APC proof.
         </p>
@@ -167,12 +225,21 @@ export function TrainingDetail({
           {error && (
             <p className="alert error" role="alert">
               {error}
+              {onRetryError ? (
+                <>
+                  {' '}
+                  <button className="text-btn" type="button" disabled={saving} onClick={onRetryError}>
+                    Retry
+                  </button>
+                </>
+              ) : null}
             </p>
           )}
           <label>
             Provider sign-up
             <select
-              value={edit.signup_status || (edit.signed_up ? 'signed_up' : 'not_recorded')}
+              aria-label="Provider sign-up status"
+              value={signupValue}
               onChange={(e) =>
                 onEdit({
                   ...edit,
@@ -183,15 +250,17 @@ export function TrainingDetail({
             >
               <option value="not_recorded">Not recorded</option>
               <option value="signed_up">Signed up with the provider</option>
-              <option value="cancelled">Cancelled sign-up</option>
+              {(signupValue === 'signed_up' || signupValue === 'cancelled') && (
+                <option value="cancelled">Cancelled sign-up</option>
+              )}
             </select>
           </label>
           <label>
             Attendance
             <select
               aria-label="Attendance status"
-              value={edit.attendance_status || (edit.attended ? 'attended' : 'not_recorded')}
-              disabled={!attendable && !edit.attended}
+              value={attendanceValue}
+              disabled={!attendable && !isAttended}
               onChange={(e) => {
                 const attendance_status = e.target.value as RecordData['attendance_status'];
                 const attended = attendance_status === 'attended';
@@ -207,11 +276,11 @@ export function TrainingDetail({
               <option value="not_recorded">Not recorded</option>
               <option value="attended">Attended</option>
             </select>
-            {!attendable && !edit.attended && (
+            {!attendable && !isAttended && (
               <small> Attendance can be recorded after the session date ({formatDate(course.start_date)}).</small>
             )}
           </label>
-          {(edit.attendance_status === 'attended' || edit.attended) && (
+          {isAttended && (
             <>
               <div className="form-grid">
                 <label>
@@ -276,22 +345,38 @@ export function TrainingDetail({
           <button className="primary" disabled={saving}>
             {saving ? 'Saving…' : 'Save my record'} <Check size={16} />
           </button>
-          {history.length > 0 && (
+          {historyFailed ? (
+            <p className="small-note" data-testid="history-failed">
+              Couldn&apos;t load correction history. Check your connection, then try again.
+              {onRetryHistory ? (
+                <>
+                  {' '}
+                  <button className="text-btn" type="button" onClick={onRetryHistory}>
+                    Retry
+                  </button>
+                </>
+              ) : null}
+            </p>
+          ) : history.length > 0 ? (
             <div className="small-note">
               <p>Correction history. Cancelling sign-up does not erase attendance.</p>
               <ol className="source-list">
                 {history.map((item, index) => (
                   <li key={`${item.at}-${index}`}>
                     {item.at ? new Date(item.at * 1000).toLocaleString('en-MY') : 'Earlier'}
-                    {item.signup_status ? ` · sign-up ${item.signup_status.replace('_', ' ')}` : ''}
-                    {item.attended != null ? ` · ${item.attended ? 'attended' : 'not attended'}` : ''}
+                    {item.signup_status ? ` · sign-up ${item.signup_status.replaceAll('_', ' ')}` : ''}
+                    {item.attendance_status === 'attended' || item.attended
+                      ? ' · attended'
+                      : item.attendance_status != null || item.attended != null
+                        ? ' · not attended'
+                        : ''}
                     {item.attended_on ? ` · ${item.attended_on}` : ''}
                     {item.points != null ? ` · ${item.points} ${item.credit_label || ''}`.trim() : ''}
                   </li>
                 ))}
               </ol>
             </div>
-          )}
+          ) : null}
         </form>
       </section>
     </div>

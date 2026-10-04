@@ -7,12 +7,14 @@ from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
 from scripts.demo_readiness import (
+    FRONTEND_PORTS,
     classify_backend,
     classify_frontend,
     classify_scraper,
     format_check,
     local_stack,
     present,
+    redact_url,
 )
 
 
@@ -95,6 +97,11 @@ class DemoReadinessStackTests(unittest.TestCase):
         self.assertNotIn('TAVILY', dumped)
         self.assertNotIn('MODEL_API_KEY', dumped)
 
+    def test_frontend_probe_ports_include_isolated_next_shells(self):
+        self.assertIn(3040, FRONTEND_PORTS)
+        self.assertIn(3030, FRONTEND_PORTS)
+        self.assertIn(3021, FRONTEND_PORTS)
+
     def test_import_does_not_load_owner_env(self):
         source = Path(__file__).resolve().parents[2] / 'scripts' / 'demo_readiness.py'
         text = source.read_text(encoding='utf-8')
@@ -113,6 +120,25 @@ class DemoReadinessStackTests(unittest.TestCase):
             self.assertEqual(format_check('MODEL_API_KEY', False), '  NO  MODEL_API_KEY')
         with patch.dict(os.environ, {'MODEL_ID': 'Qwen/owner-chosen'}, clear=False):
             self.assertEqual(format_check('MODEL_ID', True), '  OK  MODEL_ID')
+
+    def test_cli_reports_offline_fixture_path_without_paid_calls(self):
+        root = Path(__file__).resolve().parents[2]
+        self.assertTrue((root / 'backend' / 'seed_demo.py').is_file())
+        self.assertTrue((root / 'frontend' / 'app' / 'live' / 'page.tsx').is_file())
+        source = (root / 'scripts' / 'demo_readiness.py').read_text(encoding='utf-8')
+        self.assertIn('fixture seed module', source)
+        self.assertIn('/live demo shell', source)
+        self.assertIn('Offline fixture path', source)
+        self.assertIn('without spending credits', source)
+        self.assertNotIn('tavily.client', source.lower())
+        self.assertNotIn('requests.post', source)
+
+    def test_cli_redacts_backend_url_userinfo(self):
+        self.assertEqual(redact_url('http://127.0.0.1:8000'), 'http://127.0.0.1:8000')
+        self.assertEqual(redact_url('http://user:s3cret@127.0.0.1:8000/internal'), 'http://127.0.0.1:8000/internal')
+        self.assertNotIn('s3cret', redact_url('http://user:s3cret@backend:8000'))
+        source = Path(__file__).resolve().parents[2] / 'scripts' / 'demo_readiness.py'
+        self.assertIn('redact_url(backend_url)', source.read_text(encoding='utf-8'))
 
 
 if __name__ == '__main__':

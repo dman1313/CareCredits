@@ -11,12 +11,26 @@ from scraper.health import start as start_health
 from shared.contracts import public_web_url
 
 
+def job_result_limit(job):
+    """Bound Search size 1–5. Reject JSON booleans so True/False cannot invent spend size 1/0→1."""
+    raw = job.get('max_results', 5)
+    if isinstance(raw, bool):
+        raise ExtractionError('Job max_results must be an integer from 1 to 5.')
+    try:
+        return max(1, min(int(raw if raw is not None and raw != '' else 5), 5))
+    except (TypeError, ValueError):
+        raise ExtractionError('Job max_results must be an integer from 1 to 5.')
+
+
 def merge_sources(primary, extra, limit=5):
-    seen = {item.get('url') for item in primary if item.get('url')}
-    merged = list(primary)[:limit]
-    for item in extra:
+    # Skip non-dict rows (parity with public_sources) so junk Firehose/Tavily entries cannot crash fill.
+    merged = [item for item in (primary or []) if isinstance(item, dict)][:limit]
+    seen = {item.get('url') for item in merged if item.get('url')}
+    for item in extra or []:
         if len(merged) >= limit:
             break
+        if not isinstance(item, dict):
+            continue
         url = item.get('url')
         if not url or url in seen:
             continue
@@ -25,15 +39,33 @@ def merge_sources(primary, extra, limit=5):
     return merged
 
 
+def stamp_retrieved_at(sources, retrieved_at):
+    """Copy provider-level retrieval ISO onto sources that omit it."""
+    if not retrieved_at:
+        return sources
+    stamp = str(retrieved_at)[:80]
+    for source in sources or []:
+        if isinstance(source, dict) and not source.get('retrieved_at'):
+            source['retrieved_at'] = stamp
+    return sources
+
+
 def public_sources(sources):
     items = []
-    for source in sources[:5]:
+    for source in sources or []:
+        if not isinstance(source, dict):
+            continue
+        if len(items) >= 5:
+            break
+        safe = public_web_url(source.get('url'))
+        retrieved = source.get('retrieved_at')
         items.append({
-            'url': (public_web_url(source.get('url')) or '')[:2000],
+            'url': safe[:2000] if safe else None,
             'title': str(source.get('title') or 'Untitled source')[:300],
             'snippet': str(source.get('snippet') or '')[:2000],
             'extraction_status': str(source.get('extraction_status') or 'failed')[:40],
             'verification_status': str(source.get('verification_status') or 'unverified')[:40],
+            'retrieved_at': str(retrieved)[:80] if retrieved else None,
         })
     return items
 
@@ -59,14 +91,31 @@ def api_message(response, fallback):
     return fallback
 
 
+def _with_judgment(training, judgment):
+    """Attach Jev judgment for job-complete fallback without mutating the original payload."""
+    if isinstance(training, dict):
+        payload = dict(training)
+    else:
+        payload = dict(training)
+    if judgment:
+        payload['_judgment'] = judgment
+    return payload
+
+
 def catalogue_pipeline(client, job_id, candidates):
-    """Lookup → Jev decide → save new/exists/uncertain via backend connect APIs."""
+    """Lookup → Jev decide → save new/exists/uncertain via backend connect APIs.
+
+    Returns (saved_count, warnings, unsaved_payloads). Unsaved rows keep `_judgment`
+    so job-complete can still hold uncertain / exists refresh evidence.
+    """
     warnings = []
     saved = 0
+    unsaved = []
     for training in candidates:
         lookup = client.post('/internal/v1/catalogue/lookup', json={'candidate': training})
         if lookup.status_code >= 400:
             warnings.append(api_message(lookup, 'Catalogue lookup failed for one candidate.'))
+            unsaved.append(_with_judgment(training, None))
             continue
         data = lookup.json()
         if data.get('exact'):
@@ -98,9 +147,10 @@ def catalogue_pipeline(client, job_id, candidates):
         )
         if save.status_code >= 400:
             warnings.append(api_message(save, 'Catalogue save failed.'))
+            unsaved.append(_with_judgment(training, judgment))
             continue
         saved += 1
-    return saved, warnings
+    return saved, warnings, unsaved
 
 
 def keep_lease(heartbeat, interval=30):
@@ -119,8 +169,11 @@ def keep_lease(heartbeat, interval=30):
 
 
 def run_job(job, heartbeat, client=None):
-    warnings, candidates, sources = [], [], []
+    # Material warnings drive partial/failed. Soft Firehose fill warnings stay on the job but do not
+    # alone mark a successful Tavily extract as partial (matches empty-search soft-warn honesty).
+    warnings, soft_warnings, candidates, sources = [], [], [], []
     tavily_credits = None
+    model_usage = {}
     try:
         configuration()
     except ExtractionError as exc:
@@ -133,35 +186,51 @@ def run_job(job, heartbeat, client=None):
             'usage': {'tavily_credits': None, 'model_tokens': None, 'catalogue_saved': 0},
         }
     try:
-        limit = max(1, min(int(job.get('max_results') or 5), 5))
+        try:
+            limit = job_result_limit(job)
+        except ExtractionError as exc:
+            return {
+                'lease_token': job['lease_token'],
+                'candidates': [],
+                'sources': [],
+                'warnings': [str(exc) + ' Tavily Search was not called.'],
+                'status': 'failed',
+                'usage': {'tavily_credits': None, 'model_tokens': None, 'catalogue_saved': 0},
+            }
         result = discover(job['query'], limit)
         warnings.extend(result['warnings'])
-        sources = result['sources']
+        sources = stamp_retrieved_at(result['sources'], result.get('retrieved_at'))
         tavily_credits = (result.get('usage') or {}).get('tavily_credits')
         if firehose_configured() and len(sources) < limit:
             try:
                 extra = firehose_discover(job['query'], limit - len(sources))
-                warnings.extend(extra.get('warnings') or [])
-                sources = merge_sources(sources, extra.get('sources') or [], limit)
+                soft_warnings.extend(extra.get('warnings') or [])
+                filled = stamp_retrieved_at(extra.get('sources') or [], extra.get('retrieved_at'))
+                sources = merge_sources(sources, filled, limit)
             except FirehoseError as exc:
-                warnings.append(str(exc))
+                soft_warnings.append(str(exc))
         if not sources:
+            # Empty Search (+ optional Firehose fill) is succeeded even when Firehose only warned.
+            # Soft provider warnings without sources are not a partial extract.
             return {
                 'lease_token': job['lease_token'],
                 'candidates': [],
                 'sources': public_sources(sources),
-                'warnings': warnings,
-                'status': 'partial' if warnings else 'succeeded',
+                'warnings': soft_warnings + warnings,
+                'status': 'succeeded',
                 'usage': {'tavily_credits': tavily_credits, 'model_tokens': None, 'catalogue_saved': 0},
             }
         held = []
-        model_usage = {}
         try:
             for source in sources:
+                if not isinstance(source, dict):
+                    continue
                 heartbeat()
                 raw = (source.get('raw_content') or '').strip()
                 snippet = (source.get('snippet') or '').strip()
                 if not raw and not snippet:
+                    title = str(source.get('title') or 'Untitled source')[:80]
+                    warnings.append('Source had no extractable text (' + title + ').')
                     continue
                 snippet_only = (not raw) or str(source.get('extraction_status') or '') == 'failed'
                 hold_for_review = snippet_only
@@ -187,27 +256,43 @@ def run_job(job, heartbeat, client=None):
         except ExtractionError as exc:
             warnings.append(str(exc))
         saved = 0
+        unsaved = []
         if client is not None and candidates:
             try:
                 connect = client.get('/internal/v1/catalogue/connect')
                 if connect.status_code == 200:
-                    saved, save_warnings = catalogue_pipeline(client, job['id'], candidates)
+                    saved, save_warnings, unsaved = catalogue_pipeline(client, job['id'], candidates)
                     warnings.extend(save_warnings)
                 else:
-                    warnings.append('Catalogue connect unavailable; candidates were not saved through the API.')
+                    warnings.append(
+                        api_message(connect, 'Catalogue connect unavailable; candidates were not saved through the API.')
+                    )
+                    unsaved = list(candidates)
             except httpx.HTTPError:
                 warnings.append('Catalogue connect failed; candidates were not saved through the API.')
-        # Snippet-only rows stay on the job for operator review. Connect/save owns full-extract rows.
+                unsaved = list(candidates)
+        elif candidates:
+            # No connect client: keep extract rows on the job for operator review.
+            unsaved = list(candidates)
+        # Snippet-only rows stay on the job for operator review. Unsaved full-extract rows keep
+        # their Jev `_judgment` so complete can hold uncertain / exists refresh evidence.
         complete_candidates = list(held)
-        if not saved:
-            complete_candidates.extend(candidates)
-        if candidates and not saved:
-            warnings.append('Falling back to job-complete candidate insert without Jev decide/save.')
+        if unsaved:
+            complete_candidates.extend(unsaved)
+            if saved:
+                warnings.append(
+                    str(len(unsaved))
+                    + ' of '
+                    + str(len(candidates))
+                    + ' catalogue saves failed; unsaved kept on job.'
+                )
+            elif candidates:
+                warnings.append('Falling back to job-complete candidate insert without Jev decide/save.')
         return {
             'lease_token': job['lease_token'],
             'candidates': complete_candidates,
             'sources': public_sources(sources),
-            'warnings': warnings,
+            'warnings': soft_warnings + warnings,
             'status': 'partial' if warnings else 'succeeded',
             'usage': {
                 'tavily_credits': tavily_credits,
@@ -218,14 +303,20 @@ def run_job(job, heartbeat, client=None):
     except (ProviderError, ExtractionError) as exc:
         return {
             'lease_token': job['lease_token'], 'candidates': [], 'sources': public_sources(sources),
-            'warnings': [str(exc)], 'status': 'failed',
-            'usage': {'tavily_credits': tavily_credits, 'model_tokens': None, 'catalogue_saved': 0},
+            'warnings': soft_warnings + [str(exc)], 'status': 'failed',
+            # Keep any reported Tavily/model usage from the attempt; never invent spend.
+            'usage': {
+                'tavily_credits': tavily_credits,
+                'model_tokens': model_usage.get('model_tokens'),
+                'catalogue_saved': 0,
+            },
         }
 
 
 def main():
     base = os.getenv('BACKEND_INTERNAL_URL', 'http://127.0.0.1:8000').rstrip('/')
-    token = os.getenv('SCRAPER_SERVICE_TOKEN', '')
+    # Strip so compose/.env padding matches backend security.worker() expected token.
+    token = (os.getenv('SCRAPER_SERVICE_TOKEN') or '').strip()
     if not token:
         raise SystemExit('Set SCRAPER_SERVICE_TOKEN before starting the scraper.')
     start_health()
@@ -236,6 +327,13 @@ def main():
                 response = client.post('/internal/v1/jobs/claim')
                 response.raise_for_status()
                 if response.status_code == 204:
+                    reason = (response.headers.get('x-care-claim-reason') or 'empty').strip().lower()
+                    if reason == 'not_ready':
+                        print('Claim idle (not_ready): paid scrape not ready; waiting.', flush=True)
+                    elif reason == 'lost_lease':
+                        print('Claim idle (lost_lease): queued job lost the lease race; waiting.', flush=True)
+                    else:
+                        print('Claim idle (empty): no queued jobs; waiting.', flush=True)
                     time.sleep(3)
                     continue
                 job = response.json()

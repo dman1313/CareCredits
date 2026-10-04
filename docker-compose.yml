@@ -22,11 +22,12 @@ services:
       APP_ENV: ${APP_ENV:-development}
       DEMO_MODE: ${DEMO_MODE:-false}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-false}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:3010,http://127.0.0.1:3010,http://localhost:3020,http://127.0.0.1:3020,http://localhost:3021,http://127.0.0.1:3021,http://localhost:3030,http://127.0.0.1:3030}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:3010,http://127.0.0.1:3010,http://localhost:3020,http://127.0.0.1:3020,http://localhost:3021,http://127.0.0.1:3021,http://localhost:3030,http://127.0.0.1:3030,http://localhost:3040,http://127.0.0.1:3040}
       SCRAPER_SERVICE_TOKEN: ${SCRAPER_SERVICE_TOKEN:?Run scripts/setup_integrations.py}
       TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
       JEV_CONFIDENCE_FLOOR: ${JEV_CONFIDENCE_FLOOR:-0.7}
       CATALOGUE_AUTO_PUBLISH_NEW: ${CATALOGUE_AUTO_PUBLISH_NEW:-false}
+      AGGREGATE_CREDIT_LABELS: ${AGGREGATE_CREDIT_LABELS:-CPD}
       MODEL_ID: ${MODEL_ID:-}
       MODEL_PUBLISHER: ${MODEL_PUBLISHER:-}
       MODEL_HOST: ${MODEL_HOST:-}
@@ -70,7 +71,7 @@ services:
       dockerfile: scraper/Dockerfile
     environment:
       BACKEND_INTERNAL_URL: http://backend:8000
-      SCRAPER_SERVICE_TOKEN: ${SCRAPER_SERVICE_TOKEN}
+      SCRAPER_SERVICE_TOKEN: ${SCRAPER_SERVICE_TOKEN:?Run scripts/setup_integrations.py}
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       MODEL_BASE_URL: ${MODEL_BASE_URL:-https://api.tokenfactory.nebius.com/v1}
       MODEL_API_KEY: ${MODEL_API_KEY:-}

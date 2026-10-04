@@ -59,9 +59,12 @@ def operator(user=Depends(current_user)):
 
 
 def worker(request: Request):
-    expected = os.getenv('SCRAPER_SERVICE_TOKEN', '')
-    provided = request.headers.get('Authorization', '').removeprefix('Bearer ')
+    # Fail closed on blank/whitespace tokens; require Bearer (case-insensitive) + strip both sides
+    # so .env newlines / accidental padding cannot mint a match or look "configured".
+    expected = (os.getenv('SCRAPER_SERVICE_TOKEN') or '').strip()
     if not expected:
         raise HTTPException(503, 'Scraper service is not configured.')
-    if not secrets.compare_digest(provided.encode(), expected.encode()):
+    auth = (request.headers.get('Authorization') or '').strip()
+    provided = auth[7:].strip() if auth.lower().startswith('bearer ') else ''
+    if not provided or not secrets.compare_digest(provided.encode(), expected.encode()):
         raise HTTPException(403, 'Service authorization required.')

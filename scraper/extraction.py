@@ -50,13 +50,20 @@ def reported_model_tokens(payload):
         completion = usage.get('completion_tokens')
         if prompt is None and completion is None:
             return None
+        # Reject bools: int(True)==1 invents tokens; OverflowError on inf must not kill the worker.
+        if isinstance(prompt, bool) or isinstance(completion, bool):
+            return None
         try:
             raw = int(prompt or 0) + int(completion or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
+    if isinstance(raw, bool):
+        return None
     try:
+        if isinstance(raw, float) and (raw != raw or raw in (float('inf'), float('-inf'))):
+            return None
         tokens = int(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if tokens < 0:
         return None

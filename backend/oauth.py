@@ -28,12 +28,17 @@ def configured() -> bool:
     return bool((os.getenv('GOOGLE_CLIENT_ID') or '').strip() and (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip())
 
 
+def public_frontend_base() -> str:
+    """Next BFF origin for OAuth redirects. Strip padding like GOOGLE_REDIRECT_URI / digest."""
+    return (os.getenv('PUBLIC_FRONTEND_BASE') or '').strip().rstrip('/') or 'http://127.0.0.1:3000'
+
+
 def redirect_uri() -> str:
     explicit = (os.getenv('GOOGLE_REDIRECT_URI') or '').strip()
     if explicit:
         return explicit
-    base = (os.getenv('PUBLIC_API_BASE') or 'http://127.0.0.1:8000').rstrip('/')
-    return base + '/api/v1/auth/oauth/google/callback'
+    # Default through the Next BFF so oauth_state / care_session share the UI origin.
+    return public_frontend_base() + '/api/v1/auth/oauth/google/callback'
 
 
 def authorize_url(state: str) -> str:
@@ -50,6 +55,8 @@ def authorize_url(state: str) -> str:
 
 
 def exchange_code(code: str, client: httpx.Client | None = None) -> dict:
+    if not configured():
+        raise OAuthError('Google sign-in is not configured.', 503)
     owns = client is None
     client = client or httpx.Client(timeout=20.0)
     try:
@@ -99,6 +106,9 @@ def upsert_account(db, identity: dict, allow_create: bool) -> Account:
     if not account:
         account = db.query(Account).filter_by(email=identity['email']).first()
     if account:
+        # Same verified email must not mint a session for a differently linked Google subject.
+        if subject and account.identity_subject and account.identity_subject != subject:
+            raise OAuthError('Google account does not match the linked identity for this email.', 401)
         if subject and not account.identity_subject:
             account.identity_issuer = issuer
             account.identity_subject = subject
@@ -117,7 +127,10 @@ def upsert_account(db, identity: dict, allow_create: bool) -> Account:
     return account
 
 
-def issue_session(db, account: Account) -> str:
+def issue_session(db, account: Account, prior_token: str | None = None) -> str:
+    # Rotate away any presented cookie so login cannot keep a pre-auth / prior-account session id.
+    if prior_token:
+        db.query(LoginSession).filter_by(token_hash=digest(prior_token)).delete()
     token = secrets.token_urlsafe(32)
     db.add(LoginSession(token_hash=digest(token), account_id=account.id, expires_at=time.time() + 28800))
     db.commit()

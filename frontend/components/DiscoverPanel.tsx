@@ -35,14 +35,18 @@ export function DiscoverPanel({
   total,
   loading,
   failed = false,
+  resultsNearby = false,
   learning,
   recordsTotal,
+  year,
   onFilters,
   onLocate,
   onDiscover,
   onOpen,
   onClearFilters,
   onLearningFilters,
+  onPage,
+  onLearningPage,
   onRetry,
 }: {
   tab: 'Discover training' | 'My learning';
@@ -52,17 +56,25 @@ export function DiscoverPanel({
   total: number;
   loading: boolean;
   failed?: boolean;
+  /** GEO-02: true only when the currently listed courses were fetched with Near me (not draft location). */
+  resultsNearby?: boolean;
   learning?: LearningFilters;
   recordsTotal?: number;
+  year?: number;
   onFilters: (patch: Partial<DiscoverFilters>) => void;
   onLocate: () => void;
   onDiscover: () => void;
   onOpen: (course: Course) => void;
   onClearFilters?: () => void;
   onLearningFilters?: (patch: Partial<LearningFilters>) => void;
+  /** FIND-01: commit Discover page only after a successful catalogue load (parity with /live / Ingestion). */
+  onPage?: (page: number) => void;
+  /** FIND-01: commit My learning page only after a successful records load. */
+  onLearningPage?: (page: number) => void;
   onRetry?: () => void;
 }) {
   const list = tab === 'My learning' ? records : courses;
+  const exportYear = typeof year === 'number' ? `?year=${year}` : '';
   const {
     q,
     city,
@@ -94,11 +106,11 @@ export function DiscoverPanel({
         </div>
         {tab === 'My learning' && (
           <div className="button-row">
-            <a className="secondary" href="/api/v1/me/export/csv">
-              <ArrowDownToLine size={16} /> Spreadsheet
+            <a className="secondary" href={`/api/v1/me/export/csv${exportYear}`}>
+              <ArrowDownToLine size={16} /> Spreadsheet{typeof year === 'number' ? ` · ${year}` : ''}
             </a>
-            <a className="secondary" href="/api/v1/me/export/eml">
-              <FileText size={16} /> Email draft
+            <a className="secondary" href={`/api/v1/me/export/eml${exportYear}`}>
+              <FileText size={16} /> Email draft{typeof year === 'number' ? ` · ${year}` : ''}
             </a>
           </div>
         )}
@@ -281,12 +293,30 @@ export function DiscoverPanel({
         </span>
         <span>Source-linked · Details may change</span>
       </div>
+      {failed && list.length ? (
+        <p className="small-note" data-testid={tab === 'My learning' ? 'learning-stale' : 'discover-stale'}>
+          {tab === 'My learning'
+            ? "Couldn't refresh your records. Showing the last loaded list."
+            : "Couldn't refresh training. Showing the last loaded list."}{' '}
+          {onRetry ? (
+            <button className="text-btn" type="button" onClick={onRetry}>
+              Retry
+            </button>
+          ) : null}
+        </p>
+      ) : null}
       {loading ? (
         <Loading text={tab === 'My learning' ? 'Loading your records…' : 'Finding your training…'} />
       ) : list.length ? (
         <div className="course-grid">
           {list.map((c) => (
-            <CourseCard key={c.id} course={c} nearby={!!location} onOpen={() => onOpen(c)} />
+            <CourseCard
+              key={c.id}
+              course={c}
+              // GEO-02: My learning never has distance_km; do not inherit Discover Near-me labels.
+              nearby={tab !== 'My learning' && resultsNearby}
+              onOpen={() => onOpen(c)}
+            />
           ))}
         </div>
       ) : (
@@ -312,24 +342,36 @@ export function DiscoverPanel({
         />
       )}
       {tab === 'Discover training' && total > 9 && (
-        <div className="pagination">
-          <button className="secondary" disabled={page === 1} onClick={() => onFilters({ page: page - 1 })}>
+        <div className="pagination" data-testid="discover-pager">
+          <button
+            className="secondary"
+            disabled={loading || page === 1}
+            onClick={() => (onPage ? onPage(page - 1) : onFilters({ page: page - 1 }))}
+          >
             <ChevronLeft size={16} /> Previous
           </button>
           <span>
             Page {page} of {Math.ceil(total / 9)}
           </span>
-          <button className="secondary" disabled={page * 9 >= total} onClick={() => onFilters({ page: page + 1 })}>
+          <button
+            className="secondary"
+            disabled={loading || page * 9 >= total}
+            onClick={() => (onPage ? onPage(page + 1) : onFilters({ page: page + 1 }))}
+          >
             Next <ChevronRight size={16} />
           </button>
         </div>
       )}
       {tab === 'My learning' && onLearningFilters && learning && (recordsTotal ?? 0) > 9 && (
-        <div className="pagination">
+        <div className="pagination" data-testid="learning-pager">
           <button
             className="secondary"
-            disabled={learning.page === 1}
-            onClick={() => onLearningFilters({ page: learning.page - 1 })}
+            disabled={loading || learning.page === 1}
+            onClick={() =>
+              onLearningPage
+                ? onLearningPage(learning.page - 1)
+                : onLearningFilters({ page: learning.page - 1 })
+            }
           >
             <ChevronLeft size={16} /> Previous
           </button>
@@ -338,8 +380,12 @@ export function DiscoverPanel({
           </span>
           <button
             className="secondary"
-            disabled={learning.page * 9 >= (recordsTotal || 0)}
-            onClick={() => onLearningFilters({ page: learning.page + 1 })}
+            disabled={loading || learning.page * 9 >= (recordsTotal || 0)}
+            onClick={() =>
+              onLearningPage
+                ? onLearningPage(learning.page + 1)
+                : onLearningFilters({ page: learning.page + 1 })
+            }
           >
             Next <ChevronRight size={16} />
           </button>

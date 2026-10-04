@@ -29,7 +29,7 @@ def load_owner_env() -> None:
     load_dotenv(root / '.env')
 
 
-FRONTEND_PORTS = (3030, 3021, 3020, 3010, 3000)
+FRONTEND_PORTS = (3040, 3030, 3021, 3020, 3010, 3000)
 BACKEND_PORTS = (8022, 8021, 8020, 8010, 8000)
 SCRAPER_PORTS = (8002, 8012, 18002)
 
@@ -188,6 +188,24 @@ def format_stack_row(row: dict) -> str:
     return f"  {row['state'].upper():16} {row['kind']:8} :{row['port']}{detail}"
 
 
+def redact_url(url: str) -> str:
+    """CLI-safe URL: never print userinfo that could carry a secret."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    try:
+        parts = urlsplit((url or '').strip())
+        if not parts.scheme or not parts.netloc:
+            return '(set)' if (url or '').strip() else '(default)'
+        host = parts.hostname or ''
+        if parts.port:
+            netloc = f'{host}:{parts.port}'
+        else:
+            netloc = host
+        return urlunsplit((parts.scheme, netloc, parts.path or '', '', ''))
+    except Exception:
+        return '(set)'
+
+
 def main() -> int:
     load_owner_env()
     checks = readiness_checks()
@@ -196,7 +214,7 @@ def main() -> int:
     print('CareCredits DEMO-01 readiness (no secrets printed, no paid API calls):')
     for label, ok in checks:
         print(format_check(label, ok))
-    print(f'  OK  BACKEND_INTERNAL_URL (effective: {backend_url})')
+    print(f'  OK  BACKEND_INTERNAL_URL (effective: {redact_url(backend_url)})')
 
     fixture = root / 'backend' / 'seed_demo.py'
     live_ui = root / 'frontend' / 'app' / 'live' / 'page.tsx'
