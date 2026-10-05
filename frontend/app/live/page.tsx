@@ -40,12 +40,8 @@ const nav = [
   [Compass, 'Discover'],
   [CalendarDays, 'Events'],
   [FileText, 'Certificates'],
-<<<<<<< HEAD
-  [ShieldCheck, 'APC Status'],
-  [Settings, 'Settings'],
-=======
   [ShieldCheck, 'About credits'],
->>>>>>> origin/feat/gp-portal
+  [Settings, 'Settings'],
 ] as const;
 
 function Mark() {
