@@ -1,5 +1,5 @@
 import time
-from typing import Optional
+from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from models.course import Course
@@ -49,6 +49,28 @@ class CourseRepository:
 
         return course
 
+    def create_from_raw_data(self, source_key: str, raw_data: dict) -> Course:
+        course = Course(
+            source_key=source_key,
+            title=(raw_data.get("title") or "")[:200],
+            provider=(raw_data.get("provider") or "")[:200],
+            description=(raw_data.get("description") or "")[:3000],
+            start_date=raw_data.get("start_date"),
+            city=raw_data.get("city"),
+            state=raw_data.get("state"),
+            country=raw_data.get("country", "MY"),
+            mode=raw_data.get("mode", "online"),
+            fee=raw_data.get("fee"),
+            points=raw_data.get("points"),
+            credit_label=raw_data.get("credit_label"),
+            difficulty=raw_data.get("difficulty"),
+            raw_source_data=raw_data,
+            updated_at=time.time(),
+        )
+        self.db.add(course)
+        self.db.flush()
+        return course
+
     def save(self, course: Course) -> Course:
         self.db.add(course)
         self.db.flush()
@@ -59,3 +81,11 @@ class CourseRepository:
 
     def get_by_source_key(self, source_key: str) -> Optional[Course]:
         return self.db.query(Course).filter(Course.source_key == source_key).first()
+
+    def get_upcoming_events(self, from_date: str, source_keys: Optional[List[str]] = None):
+        query = self.db.query(Course).filter(Course.start_date >= from_date)
+    
+        if source_keys:
+            query = query.filter(Course.source_key.in_(source_keys))
+        
+        return query.order_by(Course.start_date).limit(5000).all()

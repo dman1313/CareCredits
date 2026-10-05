@@ -63,9 +63,9 @@ export function OverviewPanel({
 }) {
   // Failed progress must not look like an endless load (`…` forever).
   const progressBusy = loading || (!progressFailed && (!progress || progress.year !== year));
-  const points = progressBusy || progressFailed ? '…' : progress.points ?? 0;
-  const attended = progressBusy || progressFailed ? '…' : progress.attended ?? 0;
-  const signed = progressBusy || progressFailed ? '…' : progress.signed_up ?? 0;
+  const points = progressBusy || progressFailed ? '…' : progress?.points ?? 0;
+  const attended = progressBusy || progressFailed ? '…' : progress?.attended ?? 0;
+  const signed = progressBusy || progressFailed ? '…' : progress?.signed_up ?? 0;
   return (
     <>
       <div className="page-title">
@@ -154,11 +154,11 @@ export function OverviewPanel({
                   {progress.excluded} attended record(s) excluded
                   {progress.excluded_reasons?.length
                     ? ': ' +
-                      progress.excluded_reasons
-                        .map((item) =>
-                          item.reason === 'unknown_points' ? 'unknown points' : item.credit_label || 'other credit type',
-                        )
-                        .join(', ')
+                    progress.excluded_reasons
+                      .map((item) =>
+                        item.reason === 'unknown_points' ? 'unknown points' : item.credit_label || 'other credit type',
+                      )
+                      .join(', ')
                     : ' (unknown or other credit types)'}
                   .
                 </small>

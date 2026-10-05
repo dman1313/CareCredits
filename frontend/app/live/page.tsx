@@ -102,9 +102,9 @@ export default function LiveSearch() {
   const [searchFailed, setSearchFailed] = useState(false);
   const [learningFailed, setLearningFailed] = useState(false);
   const [digestOptIn, setDigestOptIn] = useState(false);
-  const [suggestions, setSuggestions] = useState<
-    { id: string; title: string; provider?: string; start_date?: string | null; city?: string | null; reason?: string; points?: number | null }[]
-  >([]);
+ const [suggestions, setSuggestions] = useState<
+  { id: string; title: string; provider?: string; start_date?: string | null; city?: string | null; reason?: string; points?: number | null; mode?: string }[]
+>([]); 
   const [suggestionsCity, setSuggestionsCity] = useState<string | null>(null);
   const [suggestionsBusy, setSuggestionsBusy] = useState(true);
   const [suggestionsFailed, setSuggestionsFailed] = useState(false);
