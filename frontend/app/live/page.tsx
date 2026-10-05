@@ -30,6 +30,7 @@ const nav = [
   [CalendarDays, 'Events'],
   [FileText, 'Certificates'],
   [ShieldCheck, 'APC Status'],
+  [Settings, 'Settings'],
 ] as const;
 
 const workspace = [

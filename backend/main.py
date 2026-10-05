@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import and_, or_, update, text
 from sqlalchemy.exc import IntegrityError
@@ -20,11 +20,13 @@ from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import Session
 
 from database import Base, engine, get_db, SessionLocal
-from portal_models import (
+from models import (
     Account, LoginSession, Course, Record, RecordHistory, Job, Candidate, Audit, SchemaVersion,
     DigestPreference, AffiliationCertificate,
-    SCHEMA_VERSION, FILTER_FIELDS, fill_course,
+    fill_course,
 )
+from models.course import FILTER_FIELDS 
+SCHEMA_VERSION = 5 
 from security import current_user, operator, worker, password_hash, password_matches, digest, throttle
 from shared.contracts import Training, validate_evidence
 from catalogue import (
