@@ -1,9 +1,39 @@
 'use client';
 
 import { ArrowRight, BookOpen, CalendarDays, Check, GraduationCap, Loader2, MapPin } from 'lucide-react';
-import { Course, feeLabel, formatDate, modeName } from '@/lib/portal';
+import { Course, distanceLabel, feeLabel, formatDate, locationLabel, modeName } from '@/lib/portal';
 
-export function CourseCard({ course: c, onOpen }: { course: Course; onOpen: () => void }) {
+export function DateChip({ value, className = 'event-date' }: { value?: string | null; className?: string }) {
+  if (!value) {
+    return (
+      <span className={className}>
+        <strong>—</strong>
+        <small>TBC</small>
+      </span>
+    );
+  }
+  const date = new Date(value + 'T00:00:00+08:00');
+  return (
+    <span className={className}>
+      <strong>
+        {date.toLocaleDateString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', day: 'numeric' })}
+      </strong>
+      <small>
+        {date.toLocaleDateString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', month: 'short' })}
+      </small>
+    </span>
+  );
+}
+
+export function CourseCard({
+  course: c,
+  onOpen,
+  nearby = false,
+}: {
+  course: Course;
+  onOpen: () => void;
+  nearby?: boolean;
+}) {
   return (
     <article className="course-card">
       <div className={'course-cover ' + (c.mode === 'online' ? 'peach' : c.difficulty === 'beginner' ? 'blue' : 'green')}>
@@ -11,9 +41,7 @@ export function CourseCard({ course: c, onOpen }: { course: Course; onOpen: () =
           <GraduationCap size={15} />
           {modeName(c.mode)}
         </span>
-        <span className="cover-art" aria-hidden="true">
-          {c.mode === 'online' ? '◉' : '✳'}
-        </span>
+        <DateChip value={c.start_date} className="course-date" />
         <span className="point-badge">
           {c.points !== null ? `${c.points} ${c.credit_label || 'credits'}` : 'Points not listed'}
         </span>
@@ -22,7 +50,7 @@ export function CourseCard({ course: c, onOpen }: { course: Course; onOpen: () =
         <div className="course-tags">
           {c.demo && <span className="tag">Demo</span>}
           <span>{c.difficulty || 'Level not listed'}</span>
-          {c.record?.attended ? (
+          {c.record?.attendance_status === 'attended' || c.record?.attended ? (
             <span className="record-status">
               <Check size={13} /> Attended
             </span>
@@ -45,8 +73,8 @@ export function CourseCard({ course: c, onOpen }: { course: Course; onOpen: () =
           </span>
           <span>
             <MapPin size={15} />
-            {c.city || 'Online'}
-            {c.distance_km != null ? ` · ~${c.distance_km} km` : ''}
+            {locationLabel(c)}
+            {distanceLabel(c, nearby)}
           </span>
         </div>
         <div className="card-bottom">
@@ -60,26 +88,36 @@ export function CourseCard({ course: c, onOpen }: { course: Course; onOpen: () =
   );
 }
 
-export function Empty({ title, text, action }: { title: string; text: string; action?: () => void }) {
+export function Empty({
+  title,
+  text,
+  action,
+  actionLabel = 'Explore training',
+}: {
+  title: string;
+  text: string;
+  action?: () => void;
+  actionLabel?: string;
+}) {
   return (
     <div className="empty-state">
-      <BookOpen size={30} />
+      <BookOpen size={30} aria-hidden="true" />
       <h3>{title}</h3>
       <p>{text}</p>
       {action && (
         <button className="secondary" onClick={action}>
-          Explore training <ArrowRight size={16} />
+          {actionLabel} <ArrowRight size={16} />
         </button>
       )}
     </div>
   );
 }
 
-export function Loading() {
+export function Loading({ text = 'Finding your training…' }: { text?: string }) {
   return (
     <div className="empty-state" role="status">
       <Loader2 className="spin" />
-      <p>Finding your training…</p>
+      <p>{text}</p>
     </div>
   );
 }

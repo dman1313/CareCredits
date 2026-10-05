@@ -73,7 +73,7 @@ export function LoginForm({
         </div>
         <small>A little learning can make a lasting difference.</small>
       </section>
-      <section className="login-form">
+      <section className="login-form" id="main-content">
         <div>
           <span className="round-icon">
             <GraduationCap />
@@ -117,7 +117,7 @@ export function LoginForm({
                 {error}
               </p>
             )}
-            <button className="primary full" disabled={busy}>
+            <button className="primary full" disabled={busy} aria-busy={busy}>
               {busy ? 'Please wait…' : register ? 'Create account' : 'Sign in'} <ArrowRight size={17} />
             </button>
             {oauth && (

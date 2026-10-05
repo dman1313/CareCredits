@@ -4,12 +4,13 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { BookOpen, ExternalLink, Printer } from 'lucide-react';
 import { Brand } from '@/components/Brand';
+import { api, publicWebUrl } from '@/lib/portal';
 
 type PublicData = {
   name: string;
   bio: string;
   evidence_status: string;
-  items: { title: string; provider: string; attended_on: string; source_url: string; demo: boolean }[];
+  items: { title: string; provider: string; attended_on: string; source_url: string | null; demo: boolean }[];
 };
 
 export default function PublicProfile() {
@@ -17,18 +18,18 @@ export default function PublicProfile() {
   const [data, setData] = useState<PublicData | null>(null);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetch('/api/v1/public/' + encodeURIComponent(slug), { cache: 'no-store' })
-      .then(async (r) => {
-        if (!r.ok) throw new Error('This training profile is private or unavailable.');
-        return r.json();
-      })
+  function load() {
+    setError('');
+    setData(null);
+    api('/public/' + encodeURIComponent(slug))
       .then(setData)
-      .catch((e) => setError(e.message));
-  }, [slug]);
+      .catch((e) => setError((e as Error).message || 'This training profile is private or unavailable.'));
+  }
+
+  useEffect(load, [slug]);
 
   return (
-    <main className="public-page">
+    <main id="main-content" className="public-page">
       <a href="/">
         <Brand />
       </a>
@@ -36,6 +37,9 @@ export default function PublicProfile() {
         <div className="empty-state">
           <h1>Private by choice.</h1>
           <p>{error}</p>
+          <button className="text-btn" type="button" onClick={load}>
+            Retry
+          </button>
         </div>
       ) : !data ? (
         <p className="empty-state">Loading training profile…</p>
@@ -52,7 +56,9 @@ export default function PublicProfile() {
             <span>{data.items.length} courses</span>
           </div>
           {data.items.length ? (
-            data.items.map((c, i) => (
+            data.items.map((c, i) => {
+              const sourceHref = publicWebUrl(c.source_url);
+              return (
               <article className="public-course" key={i}>
                 <span className="round-icon">
                   <BookOpen />
@@ -64,11 +70,16 @@ export default function PublicProfile() {
                     {c.provider} · Completed {c.attended_on}
                   </p>
                 </div>
-                <a className="text-btn" href={c.source_url} target="_blank" rel="noreferrer">
-                  Source <ExternalLink size={14} />
-                </a>
+                {sourceHref ? (
+                  <a className="text-btn" href={sourceHref} target="_blank" rel="noreferrer">
+                    Source <ExternalLink size={14} />
+                  </a>
+                ) : (
+                  <span className="muted">Source not available</span>
+                )}
               </article>
-            ))
+              );
+            })
           ) : (
             <p className="empty-state">No training has been selected for this public profile.</p>
           )}

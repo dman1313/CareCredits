@@ -9,11 +9,13 @@ export function ProfilePanel({
   saving,
   onUser,
   onSave,
+  onLocateError,
 }: {
   user: User;
   saving: boolean;
   onUser: (next: User) => void;
   onSave: (event: FormEvent) => void;
+  onLocateError?: (message: string) => void;
 }) {
   return (
     <>
@@ -35,6 +37,56 @@ export function ProfilePanel({
             City
             <input value={user.city} onChange={(e) => onUser({ ...user, city: e.target.value })} />
           </label>
+          <label>
+            State
+            <input
+              value={user.state || ''}
+              placeholder="Optional, e.g. Selangor"
+              onChange={(e) => onUser({ ...user, state: e.target.value })}
+            />
+          </label>
+          <p className="small-note">
+            City and state are enough for nearby search. Exact coordinates stay optional and are stored only after you
+            consent.
+          </p>
+          <div className="button-row">
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => {
+                if (!navigator.geolocation) {
+                  onLocateError?.('Location is unavailable. Choose your city instead.');
+                  return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                  (position) =>
+                    onUser({
+                      ...user,
+                      latitude: position.coords.latitude,
+                      longitude: position.coords.longitude,
+                    }),
+                  () => onLocateError?.('Location was not available. You can still search by city.'),
+                  { timeout: 10000 },
+                );
+              }}
+            >
+              Use my location
+            </button>
+            {(user.latitude != null || user.longitude != null) && (
+              <button
+                className="text-btn"
+                type="button"
+                onClick={() => onUser({ ...user, latitude: null, longitude: null })}
+              >
+                Clear coordinates
+              </button>
+            )}
+          </div>
+          {user.latitude != null && user.longitude != null && (
+            <p className="small-note">
+              Approximate coordinates saved with consent. They are not sent to Tavily or shown on your public page.
+            </p>
+          )}
           <label>
             Short introduction
             <textarea

@@ -15,11 +15,28 @@ class JevError(Exception):
         super().__init__(detail)
 
 
-def confidence_floor() -> float:
+def unit_interval(value: Any, default: float = 0.0) -> float:
+    """Clamp a probability/confidence into [0, 1]; invalid/NaN/inf → default for NaN, clamp for inf.
+
+    Reject bools: float(True)==1.0 / float(False)==0.0 would invent floor-passing confidence.
+    """
+    if isinstance(value, bool):
+        return default
     try:
-        return float(os.getenv('JEV_CONFIDENCE_FLOOR', '0.7'))
-    except ValueError:
-        return 0.7
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number != number:  # NaN
+        return default
+    return max(0.0, min(1.0, number))
+
+
+# Back-compat for callers that imported the private name.
+_unit_interval = unit_interval
+
+
+def confidence_floor() -> float:
+    return unit_interval(os.getenv('JEV_CONFIDENCE_FLOOR', '0.7'), 0.7)
 
 
 def keyfile_path() -> Path:
@@ -123,25 +140,36 @@ def decide_existence(candidate: dict[str, Any], matches: list[dict[str, Any]], c
         answer = response.choices['existence']
         choice = answer.choice
         probabilities = dict(answer.probabilities or {})
-        confidence = float(answer.confidence if answer.confidence is not None else probabilities.get(choice, 0) or 0)
+        raw_confidence = answer.confidence if answer.confidence is not None else probabilities.get(choice, 0)
+        confidence = _unit_interval(raw_confidence, 0.0)
         if choice not in ('exists', 'new', 'uncertain'):
             raise JevError('TypeSafe returned an invalid existence judgment.', 502)
         floor = confidence_floor()
         decision = choice if confidence >= floor or choice == 'uncertain' else 'uncertain'
-        matched = matches[0].get('id') if decision == 'exists' else None
-        picked = getattr(getattr(response, 'choices', {}).get('matched'), 'choice', None)
-        if decision == 'exists' and picked and picked != 'none':
-            matched = picked
+        warning = None if decision == choice else 'Jev confidence below floor; treating as uncertain.'
+        matched = None
+        if decision == 'exists':
+            match_ids = {str(item.get('id')) for item in matches if item.get('id')}
+            picked = getattr(getattr(response, 'choices', {}).get('matched'), 'choice', None)
+            if len(matches) == 1:
+                matched = matches[0].get('id')
+            elif picked and str(picked) != 'none' and str(picked) in match_ids:
+                matched = picked
+            else:
+                # Multi-match exists without a valid pick must not default to matches[0].
+                decision = 'uncertain'
+                matched = None
+                warning = 'Jev exists without a valid match id; treating as uncertain.'
         return {
             'decision': decision,
             'confidence': confidence,
             'probabilities': {
-                'exists': float(probabilities.get('exists', 0) or 0),
-                'new': float(probabilities.get('new', 0) or 0),
-                'uncertain': float(probabilities.get('uncertain', 0) or 0),
+                'exists': _unit_interval(probabilities.get('exists', 0), 0.0),
+                'new': _unit_interval(probabilities.get('new', 0), 0.0),
+                'uncertain': _unit_interval(probabilities.get('uncertain', 0), 0.0),
             },
             'matched_session_id': matched,
-            'warning': None if decision == choice else 'Jev confidence below floor; treating as uncertain.',
+            'warning': warning,
         }
     except JevError:
         raise

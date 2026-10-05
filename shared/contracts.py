@@ -22,12 +22,24 @@ def web_url(value):
         raise ValueError('A public web URL is required') from None
 
 
+def public_web_url(value):
+    if not value:
+        return None
+    try:
+        return web_url(value)
+    except ValueError:
+        return None
+
+
 class Training(BaseModel):
     model_config = ConfigDict(extra='forbid', protected_namespaces=())
     title: str = Field(min_length=3, max_length=200)
     provider: str = Field(min_length=2, max_length=200)
     description: str = Field(max_length=3000, default='')
     start_date: date | None = None
+    end_date: date | None = None
+    timezone: str | None = Field(default=None, max_length=80)
+    venue: str | None = Field(default=None, max_length=200)
     city: str | None = Field(default=None, max_length=100)
     state: str | None = Field(default=None, max_length=100)
     country: Literal['MY'] = 'MY'
@@ -48,6 +60,16 @@ class Training(BaseModel):
     retrieved_at: str | None = None
     model_weights_url: str | None = None
     model_license_url: str | None = None
+    model_publisher: str | None = Field(default=None, max_length=200)
+    model_host: str | None = Field(default=None, max_length=200)
+
+    @field_validator('latitude', 'longitude', 'fee', 'points', mode='before')
+    @classmethod
+    def reject_bool_numbers(cls, value):
+        # JSON true/false must not become 1.0/0.0 fee/points/coords (parity with Jev/usage bool reject).
+        if isinstance(value, bool):
+            raise ValueError('Numeric fields must be numbers, not booleans')
+        return value
 
     @field_validator('source_url', 'registration_url', 'model_weights_url', 'model_license_url')
     @classmethod
@@ -64,6 +86,8 @@ class Training(BaseModel):
             raise ValueError('In-person sessions need a city')
         if self.points is not None and not self.credit_label:
             raise ValueError('Known points need their original credit label')
+        if self.end_date and self.start_date and self.end_date < self.start_date:
+            raise ValueError('End date cannot be before start date')
         if len(self.evidence) > 30 or any(len(v) > 2000 for v in self.evidence.values()):
             raise ValueError('Evidence is too large')
         return self
@@ -71,7 +95,7 @@ class Training(BaseModel):
 
 def validate_evidence(training):
     required = ['title', 'provider', 'country', 'mode']
-    required += [key for key in ('start_date', 'city', 'state', 'fee', 'currency', 'points', 'credit_label', 'difficulty', 'prerequisites', 'registration_url') if getattr(training, key) is not None]
+    required += [key for key in ('start_date', 'end_date', 'timezone', 'venue', 'city', 'state', 'fee', 'currency', 'points', 'credit_label', 'difficulty', 'prerequisites', 'registration_url') if getattr(training, key) is not None]
     for field in required:
         quote = training.evidence.get(field, '')
         if not quote.strip() or quote not in training.source_text:

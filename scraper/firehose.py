@@ -101,9 +101,15 @@ def ensure_tap(key: str) -> str:
         if token:
             return token
     except FirehoseError as exc:
-        if exc.status_code != 422 or not taps:
+        if exc.status_code != 422:
             raise
-    return _tap_token(taps[0])
+    # Re-list after create miss/422; only the CareCredits CPD tap is acceptable (never taps[0]).
+    listed = firehose_request("GET", "/v1/taps", key)
+    taps = [tap for tap in _tap_list(listed) if isinstance(tap, dict) and _tap_token(tap)]
+    for tap in taps:
+        if (tap.get("name") or "") == TAP_NAME:
+            return _tap_token(tap)
+    raise FirehoseError(502, "Firehose CareCredits CPD tap was not available.")
 
 
 def ensure_rules(tap_token: str) -> None:
@@ -171,16 +177,18 @@ def sources_from_events(events, query, max_results=5):
             continue
         title = str(document.get("title") or "Untitled source")[:300]
         text = _document_text(document)
-        snippet = text[:2000]
-        if query and not _relevant(query, title, snippet):
+        # Parity with Tavily: whitespace-only pages are extraction failures, not success.
+        ok = bool(text.strip())
+        snippet = text[:2000] if ok else ""
+        if query and not _relevant(query, title, snippet or text[:2000]):
             continue
         seen.add(url)
         sources.append({
             "url": url,
             "title": title,
             "snippet": snippet,
-            "raw_content": text or None,
-            "extraction_status": "success" if text else "failed",
+            "raw_content": text if ok else None,
+            "extraction_status": "success" if ok else "failed",
             "verification_status": "unverified",
         })
         if len(sources) >= max_results:
@@ -193,7 +201,7 @@ def collect_matches(tap_token: str, query: str, max_results=5) -> list[dict]:
         "GET",
         "/v1/stream",
         tap_token,
-        query={"timeout": 8, "since": "24h", "limit": max(1, min(max_results, 20))},
+        query={"timeout": 8, "since": "24h", "limit": max(1, min(max_results, 5))},
         timeout=15,
     )
     events = parse_sse(body.get("sse") or "")
@@ -208,10 +216,14 @@ def discover(query: str, max_results=5) -> dict:
     token = ensure_tap(key)
     ensure_rules(token)
     sources = collect_matches(token, query, max_results)
+    retrieved_at = datetime.now(timezone.utc).isoformat()
+    # Stamp each source so job-complete can persist scraper ISO after Firehose fill.
+    for item in sources:
+        item.setdefault("retrieved_at", retrieved_at)
     return {
         "provider": "firehose",
         "query": query,
-        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "retrieved_at": retrieved_at,
         "sources": sources,
         "warnings": [],
     }
