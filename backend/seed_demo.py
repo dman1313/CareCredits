@@ -252,7 +252,7 @@ def seed(db):
         .count()
     )
     if reviewable == 0:
-        from catalogue import exact_course, source_key as course_source_key
+        from backend.archive.catalogue import exact_course, source_key as course_source_key
 
         queue_payload = _candidate_payload(
             'Offline review queue (demo)',

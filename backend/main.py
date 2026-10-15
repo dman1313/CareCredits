@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import Session
 
-from database import Base, engine, get_db, SessionLocal
+from backend.database.database import Base, engine, get_db, SessionLocal
 from models import (
     Account, LoginSession, Course, Record, RecordHistory, Audit, SchemaVersion,
     DigestPreference, AffiliationCertificate, SCHEMA_VERSION, FILTER_FIELDS,

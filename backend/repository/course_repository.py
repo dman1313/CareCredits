@@ -1,77 +1,54 @@
 import time
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 
 from models.course import Course
-from shared.contracts import Training
-
-FILTER_FIELDS = (
-    'title', 'provider', 'description', 'start_date', 'city', 'state',
-    'country', 'mode', 'latitude', 'longitude', 'fee', 'currency',
-    'points', 'credit_label', 'difficulty',
-)
-
 
 class CourseRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def hydrate(self, training: Training, demo: Optional[bool] = None) -> Course:
-        payload = training.model_dump(mode='json')
+    def _build_course(self, data: Dict[str, Any], demo: Optional[bool] = None) -> Course:
+        """
+        Centralized course construction logic.
+        Handles type coercion, sanitization, and defaults for ALL course creation paths.
+        """
+        start_date = data.get("start_date")
+        if hasattr(start_date, "isoformat"):
+            start_date = start_date.isoformat()
 
-        start = payload.get('start_date')
-        if hasattr(start, 'isoformat'):
-            payload['start_date'] = start.isoformat()
-
-        course = Course(
-            source_key=payload.get('source_key'),
-            title=(payload.get('title') or '')[:200],
-            provider=(payload.get('provider') or '')[:200],
-            description=(payload.get('description') or '')[:3000],
-            start_date=payload.get('start_date'),
-            city=payload.get('city'),
-            state=payload.get('state'),
-            country=payload.get('country') or 'MY',
-            mode=payload.get('mode') or 'online',
-            latitude=payload.get('latitude'),
-            longitude=payload.get('longitude'),
-            fee=payload.get('fee'),
-            currency=payload.get('currency'),
-            points=payload.get('points'),
-            credit_label=payload.get('credit_label'),
-            difficulty=payload.get('difficulty'),
-            raw_source_data=payload,
+        return Course(
+            source_key=data.get("source_key"),
+            title=(data.get("title") or "")[:200],
+            provider=(data.get("provider") or "")[:200],
+            description=(data.get("description") or "")[:3000],
+            start_date=start_date,
+            city=data.get("city"),
+            state=data.get("state"),
+            country=data.get("country", "MY"),
+            mode=data.get("mode", "online"),
+            latitude=data.get("latitude"),
+            longitude=data.get("longitude"),
+            fee=data.get("fee"),
+            currency=data.get("currency"),
+            points=data.get("points"),
+            credit_label=data.get("credit_label"),
+            difficulty=data.get("difficulty"),
+            raw_source_data=data,
             updated_at=time.time(),
+            demo=demo if demo is not None else False,
         )
-
-        if demo is not None:
-            course.demo = demo
-
-        return course
 
     def create_from_raw_data(self, source_key: str, raw_data: dict) -> Course:
-        course = Course(
-            source_key=source_key,
-            title=(raw_data.get("title") or "")[:200],
-            provider=(raw_data.get("provider") or "")[:200],
-            description=(raw_data.get("description") or "")[:3000],
-            start_date=raw_data.get("start_date"),
-            city=raw_data.get("city"),
-            state=raw_data.get("state"),
-            country=raw_data.get("country", "MY"),
-            mode=raw_data.get("mode", "online"),
-            fee=raw_data.get("fee"),
-            points=raw_data.get("points"),
-            credit_label=raw_data.get("credit_label"),
-            difficulty=raw_data.get("difficulty"),
-            raw_source_data=raw_data,
-            updated_at=time.time(),
-        )
+        """Create and persist a Course directly from unvalidated scraper/candidate data."""
+        data = {**raw_data, "source_key": source_key}
+        course = self._build_course(data)
         self.db.add(course)
         self.db.flush()
         return course
 
     def save(self, course: Course) -> Course:
+        """Persist an existing Course instance."""
         self.db.add(course)
         self.db.flush()
         return course
@@ -82,10 +59,10 @@ class CourseRepository:
     def get_by_source_key(self, source_key: str) -> Optional[Course]:
         return self.db.query(Course).filter(Course.source_key == source_key).first()
 
-    def get_upcoming_events(self, from_date: str, source_keys: Optional[List[str]] = None):
+    def get_events_from_date(
+        self, from_date: str, source_keys: Optional[List[str]] = None
+    ) -> List[Course]:
         query = self.db.query(Course).filter(Course.start_date >= from_date)
-    
         if source_keys:
             query = query.filter(Course.source_key.in_(source_keys))
-        
         return query.order_by(Course.start_date).limit(5000).all()

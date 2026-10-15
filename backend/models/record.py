@@ -1,7 +1,7 @@
 import time
 import uuid
 from sqlalchemy import Column, String, Boolean, Float, JSON, ForeignKey, UniqueConstraint, Integer
-from database import Base
+from backend.database.database import Base
 
 
 def uid() -> str:

@@ -1,6 +1,6 @@
 import uuid
 from sqlalchemy import Column, Float, String, Boolean
-from database import Base
+from backend.database.database import Base
 from sqlalchemy.orm import relationship
 
 def uid():

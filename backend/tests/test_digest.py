@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from main import app, today
-from database import Base, get_db
+from backend.database.database import Base, get_db
 from portal_models import Account, Course, fill_course
 from security import password_hash
 

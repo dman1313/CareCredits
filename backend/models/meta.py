@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer
-from database import Base
+from backend.database.database import Base
 
 class SchemaVersion(Base):
     __tablename__ = 'portal_schema_version'

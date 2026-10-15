@@ -2,7 +2,7 @@ import time
 import uuid
 from sqlalchemy import Column, String, Float, JSON, ForeignKey
 from sqlalchemy.orm import relationship
-from database import Base
+from backend.database.database import Base
 
 
 def uid() -> str:

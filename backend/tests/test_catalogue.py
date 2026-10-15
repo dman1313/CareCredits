@@ -26,8 +26,8 @@ DB_PATH = Path(FOLDER.name) / 'catalogue-test.db'
 os.environ['DATABASE_URL'] = 'sqlite:///' + str(DB_PATH)
 
 from main import app, source_key
-from database import Base, get_db, engine
-from catalogue import course_public
+from backend.database.database import Base, get_db, engine
+from backend.archive.catalogue import course_public
 from portal_models import Account, Candidate, Course, FieldEvidence, Job, fill_course
 from security import password_hash
 from shared.contracts import Training

@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from main import app, today, migrate_schema
-from database import Base, get_db
+from backend.database.database import Base, get_db
 from portal_models import Account, Audit, Course, Record, Job, Candidate, FieldEvidence, LoginSession, SchemaVersion, SourceDocument, Throttle, fill_course, purge_expired_source_text
 from security import digest, password_hash
 
