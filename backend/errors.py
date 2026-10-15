@@ -8,7 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
-from observe import failure_line
+from backend.archive.observe import failure_line
 
 
 CODES = {

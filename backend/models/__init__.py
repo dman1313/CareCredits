@@ -1,4 +1,4 @@
-from backend.database.database import Base
+from database.database import Base
 
 from .account import Account,  DigestPreference
 from .course import Course, Candidate

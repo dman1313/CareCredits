@@ -245,7 +245,7 @@ class PortalTests(unittest.TestCase):
         import io
         import logging
 
-        from observe import setup
+        from backend.archive.observe import setup
 
         setup()
         buffer = io.StringIO()

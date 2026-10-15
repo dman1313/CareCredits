@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from backend.database.database import get_db
-from backend.database.course_repository import CourseRepository
+from repository.course_repository import CourseRepository
 from models.ingestion import IngestionBatch, Candidate
 import time
 from typing import List, Optional
