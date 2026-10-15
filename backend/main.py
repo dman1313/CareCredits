@@ -132,7 +132,7 @@ async def request_boundary(request: Request, call_next):
 
 # === Register All Routers ===
 app.include_router(ingestion_router)
-app.include_router(auth_router)       # Includes /api/v1/auth/config
+app.include_router(auth_router)       
 app.include_router(me_router)
 app.include_router(admin_router)
 
