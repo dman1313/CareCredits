@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.database.database import get_db
+from backend.repository.audit_repository import AuditRepository
 from security import operator, throttle
 from shared.model_defaults import env_or_provisional, using_provisional
 from shared.contracts import public_web_url
@@ -32,7 +33,7 @@ def auto_approve_candidates(user=Depends(operator), db: Session = Depends(get_db
 @router.post("/ingestion/manual-approve")
 def manual_approve_candidates(
     candidate_ids: List[str],
-    user=Depends(operator),
+    _operator=Depends(operator),
     db: Session = Depends(get_db),
 ):
     service = IngestionService(db)
@@ -54,13 +55,6 @@ def admin_audit(
 
 
 # === Infrastructure Endpoints ===
-@router.post("/digests/run")
-def admin_run_digests(user=Depends(operator), db: Session = Depends(get_db)):
-    from digest import run_due_digests
-    throttle(db, "digests:" + user.id, 20, 300)
-    return run_due_digests(db)
-
-
 @router.get("/services")
 def services(user=Depends(operator), db: Session = Depends(get_db)):
     database = "ready"

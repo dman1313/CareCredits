@@ -34,6 +34,26 @@ class RecordRepository:
             )
             .all()
         )
+    
+    def get_all_records_for_year(self, account_id: str, year: int) -> List:
+        from datetime import datetime, timezone
+        start_ts = datetime(year, 1, 1, tzinfo=timezone.utc).timestamp()
+        end_ts = datetime(year + 1, 1, 1, tzinfo=timezone.utc).timestamp()
+        
+        return (
+            self.db.query(Record)
+            .filter(
+                Record.account_id == account_id,
+                (
+                    (Record.attended == True) | 
+                    (Record.signup_status == 'signed_up') | 
+                    (Record.signed_up == True)
+                ),
+                ((Record.attended_on >= start_ts) & (Record.attended_on < end_ts)) |
+                ((Record.attended_on.is_(None)) & (Record.updated_at >= start_ts) & (Record.updated_at < end_ts))
+            )
+            .all()
+    )
 
     def save(self, record: Record) -> Record:
         """Persist new or updated record."""
