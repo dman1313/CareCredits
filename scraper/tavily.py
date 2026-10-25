@@ -1,12 +1,11 @@
 """Bounded Tavily discovery. Returned sources are not verified CPD events."""
-import ipaddress
 import json
 import os
-import secrets
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
+
+from shared.contracts import canonical_web_url, week_key_for_date
 
 
 
@@ -62,24 +61,15 @@ def reported_credits(payload):
 
 
 def source_url(value):
-    """Reject local/literal IP and non-web links; remove fragments for deduplication."""
+    """Reject local/literal IP and non-web links; canonicalize for deduplication.
+
+    Canonicalization strips the fragment AND tracking params (``utm_*``, ``fbclid``, ...) and
+    lowercases scheme+host so links differing only by campaign noise collapse to one URL before a
+    Tavily ``/extract`` call, saving credits on repeated resources across weekly topics.
+    """
     if not isinstance(value, str):
         return None
-    try:
-        parts = urlsplit(value)
-        host = parts.hostname or ""
-        if (parts.scheme not in ("https", "http") or "." not in host
-                or host.endswith((".localhost", ".local", ".internal"))
-                or parts.username or parts.password or parts.port not in (None, 80, 443)):
-            return None
-        try:
-            ipaddress.ip_address(host)
-            return None
-        except ValueError:
-            pass
-        return urlunsplit((parts.scheme, parts.netloc.lower(), parts.path, parts.query, ""))
-    except ValueError:
-        return None
+    return canonical_web_url(value)
 
 
 def discover(query, max_results=5):
@@ -124,12 +114,16 @@ def discover(query, max_results=5):
             warnings.append(error.detail + " Search snippets are retained; extraction is incomplete.")
     known = [value for value in credits if value is not None]
     retrieved_at = datetime.now(timezone.utc).isoformat()
-    # Stamp each source so job-complete can persist scraper ISO (not only complete-time).
+    week_key = week_key_for_date(None)
+    # Stamp each source so job-complete can persist scraper ISO (not only complete-time), and the
+    # active scrape week_key so the week-key-first store can bucket without re-deriving it.
     for item in sources.values():
         item.setdefault("retrieved_at", retrieved_at)
+        item.setdefault("week_key", week_key)
     return {
         "provider": "tavily", "query": query,
         "retrieved_at": retrieved_at,
+        "week_key": week_key,
         "sources": list(sources.values()), "warnings": warnings,
         "usage": {"tavily_credits": sum(known) if known else None},
     }
