@@ -1,6 +1,7 @@
 """Firehose management-key adapter. Uses fhm_ keys only inside the scraper."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -9,6 +10,21 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from scraper.tavily import source_url
+from shared.contracts import week_key_for_date
+
+
+# Cache the resolved tap token per (management-key, week_key) so repeated weekly discover() calls
+# do not re-issue GET /v1/taps + GET /v1/rules round-trips before every stream pull.
+_TAP_CACHE: dict[tuple[str, str], str] = {}
+
+
+def _cache_key(key: str, week_key: str) -> tuple[str, str]:
+    return (hashlib.sha256((key or '').encode('utf-8')).hexdigest(), week_key)
+
+
+def reset_tap_cache() -> None:
+    """Clear the per-week tap-token cache (used by tests and on key rotation)."""
+    _TAP_CACHE.clear()
 
 
 BASE = "https://api.firehose.com"
@@ -208,22 +224,30 @@ def collect_matches(tap_token: str, query: str, max_results=5) -> list[dict]:
     return sources_from_events(events, query, max_results)
 
 
-def discover(query: str, max_results=5) -> dict:
+def discover(query: str, max_results=5, week_key: str | None = None) -> dict:
     """Pull recent Firehose matches for the CareCredits CPD tap."""
     key = management_key()
     if not configured():
         raise FirehoseError(503, "Firehose is not configured. Add FIREHOSE_MGMT_KEY from firehose.com/management-keys.")
-    token = ensure_tap(key)
-    ensure_rules(token)
+    week_key = week_key or week_key_for_date(None)
+    cache_key = _cache_key(key, week_key)
+    token = _TAP_CACHE.get(cache_key)
+    if not token:
+        token = ensure_tap(key)
+        ensure_rules(token)
+        _TAP_CACHE[cache_key] = token
     sources = collect_matches(token, query, max_results)
     retrieved_at = datetime.now(timezone.utc).isoformat()
-    # Stamp each source so job-complete can persist scraper ISO after Firehose fill.
+    # Stamp each source so job-complete can persist scraper ISO after Firehose fill, plus the active
+    # scrape week_key for the week-key-first store.
     for item in sources:
         item.setdefault("retrieved_at", retrieved_at)
+        item.setdefault("week_key", week_key)
     return {
         "provider": "firehose",
         "query": query,
         "retrieved_at": retrieved_at,
+        "week_key": week_key,
         "sources": sources,
         "warnings": [],
     }

@@ -4,12 +4,43 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 import httpx
-from shared.contracts import Training, validate_evidence, web_url
+from shared.contracts import (
+    Training,
+    validate_evidence,
+    web_url,
+    week_key_for_date,
+)
 from shared.model_defaults import env_or_provisional
 
 
 class ExtractionError(Exception):
     pass
+
+
+# Zero-width / BiDi / BOM characters a page can hide inside otherwise clean text. Scrapling-style
+# sanitization strips them before any LLM prompt so hidden prompt-injection payloads cannot ride in.
+_HIDDEN_CHARS_RE = re.compile('[\u200b\u200c\u200d\u200e\u200f\u2060\ufeff\u00ad\u202a-\u202e]')
+_CONTROL_CHARS_RE = re.compile('[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+
+# Boilerplate lines (nav, cookie, social, legal) pruned from the LLM window — but only when the
+# page is longer than the model's input cap, and never from a line that carries event signal.
+_BOILERPLATE_MARKERS = (
+    'skip to content', 'skip to main', 'cookie', 'privacy policy', 'terms of',
+    'all rights reserved', 'subscribe to our newsletter', 'follow us', 'share this',
+    'sign in', 'log in', 'sign up', 'create account', 'back to top', 'main menu',
+    'navigation', 'breadcrumb', 'search the site', 'add to calendar', 'copyright ',
+    'facebook', 'twitter', 'instagram', 'linkedin', 'whatsapp', 'youtube', 'tiktok',
+)
+_EVENT_SIGNAL_RE = re.compile(
+    r'(cpd|cme|mata|yuran|fee|rm\s?\d|myr|point|venue|tempat|prerequisite|prasyarat|'
+    r'register|daftar|conference|course|kursus|webinar|workshop|bengkel|symposium|'
+    r'congress|seminar|persidangan|training|latihan|20\d{2})',
+    re.I,
+)
+_REGISTER_URL_RE = re.compile(
+    r'(?:regist\w*|daftar\w*|enrol\w*|sign\s*up|rsvp|book\w*)[^\n]{0,60}?(https?://[^\s<>"\'\)\]]+)',
+    re.I,
+)
 
 
 MY_CITIES = (
@@ -38,6 +69,116 @@ MONTHS = {
     'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
     'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12,
 }
+
+
+def sanitize_hidden_chars(text: str) -> str:
+    """Strip zero-width / control / BiDi characters while preserving newlines and tabs.
+
+    The returned text keeps every visible character verbatim so a quote taken from it is still an
+    exact substring of the original visible page content for ``validate_evidence``.
+    """
+    if not text:
+        return ''
+    cleaned = _HIDDEN_CHARS_RE.sub('', text)
+    cleaned = _CONTROL_CHARS_RE.sub('', cleaned)
+    return cleaned
+
+
+def clean_source_text(raw: str, max_chars: int = 12000) -> str:
+    """Crawl4AI-style ``fit_markdown`` pruning for the LLM input window.
+
+    Always sanitizes hidden characters. Boilerplate lines are pruned ONLY when the page exceeds
+    ``max_chars`` (so short pages are untouched), and any line carrying event signal is always
+    kept. Pruned lines are dropped whole, so every retained line is a verbatim substring of the
+    sanitized page — the full page is still stored on ``Training.source_text`` for evidence checks.
+    """
+    sanitized = sanitize_hidden_chars(raw or '')
+    if len(sanitized) <= max_chars:
+        return sanitized[:max_chars]
+    kept: list[str] = []
+    for line in sanitized.splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if _EVENT_SIGNAL_RE.search(stripped):
+            kept.append(line)
+            continue
+        if not stripped:
+            kept.append(line)
+            continue
+        if any(marker in lowered for marker in _BOILERPLATE_MARKERS):
+            continue
+        kept.append(line)
+    pruned = '\n'.join(kept).strip('\n')
+    # If pruning emptied the text (all boilerplate), fall back to a head slice of the sanitized page.
+    if not pruned.strip():
+        return sanitized[:max_chars]
+    return pruned[:max_chars]
+
+
+def _repair_json_fragment(fragment: str) -> str:
+    # Firecrawl-style repair: drop trailing commas before a closing } or ] from sloppy open-weight output.
+    return re.sub(r',(\s*[}\]])', r'\1', fragment)
+
+
+def _parse_llm_trainings(raw: str) -> list:
+    """Isolate and parse ``{"trainings": [...]}`` from an open-weight model response.
+
+    Strips markdown code fences, locates the outermost JSON object/array, repairs trailing commas,
+    and returns the ``trainings`` list. Raises ``ValueError`` when no usable JSON is present so the
+    caller can convert it into an ``ExtractionError``.
+    """
+    text = (raw or '').strip()
+    if text.startswith('```'):
+        # Drop the opening fence line (``` or ```json) and any trailing fence.
+        text = text.split('\n', 1)[1] if '\n' in text else ''
+        if text.rstrip().endswith('```'):
+            text = text.rstrip()[:-3]
+        text = text.strip()
+    candidates = []
+    start = text.find('{')
+    if start >= 0:
+        candidates.append(text[start:text.rfind('}') + 1])
+    array_start = text.find('[')
+    if array_start >= 0:
+        candidates.append(text[array_start:text.rfind(']') + 1])
+    candidates.append(text)
+    for fragment in candidates:
+        if not fragment:
+            continue
+        for attempt in (fragment, _repair_json_fragment(fragment)):
+            try:
+                parsed = json.loads(attempt)
+            except ValueError:
+                continue
+            if isinstance(parsed, dict) and 'trainings' in parsed:
+                rows = parsed['trainings']
+                return rows if isinstance(rows, list) else [rows]
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict):
+                return [parsed]
+    raise ValueError('No parseable training JSON in model output')
+
+
+def group_candidates_by_week(candidates: list) -> dict:
+    """Bucket candidate dicts into ``{week_key: [...]}`` keyed at the week key first.
+
+    Weeks are returned in sorted order and each week's rows are sorted by ``start_date`` then
+    ``source_key`` for deterministic, week-key-first output.
+    """
+    grouped: dict[str, list] = {}
+    for candidate in candidates or []:
+        if not isinstance(candidate, dict):
+            continue
+        week_key = candidate.get('week_key') or week_key_for_date(candidate.get('start_date'))
+        grouped.setdefault(week_key, []).append(candidate)
+    ordered: dict[str, list] = {}
+    for week_key in sorted(grouped):
+        ordered[week_key] = sorted(
+            grouped[week_key],
+            key=lambda row: (str(row.get('start_date') or ''), str(row.get('source_key') or '')),
+        )
+    return ordered
 
 
 def reported_model_tokens(payload):
@@ -242,6 +383,23 @@ def _explicit_prerequisites(text: str) -> tuple[str | None, str | None]:
     return value[:2000], stated.group(0)
 
 
+def _explicit_registration_url(text: str) -> tuple[str | None, str | None]:
+    """Return a verbatim registration URL only when a public link follows a register/daftar cue."""
+    match = _REGISTER_URL_RE.search(text)
+    if not match:
+        return None, None
+    raw = match.group(1).rstrip('.,;:)]}>\'"')
+    if not raw:
+        return None, None
+    try:
+        web_url(raw)
+    except ValueError:
+        return None, None
+    if raw not in text:
+        return None, None
+    return raw, raw
+
+
 def _find_city(text: str) -> tuple[str | None, str | None]:
     lowered = text.lower()
     cities = sorted(MY_CITIES, key=len, reverse=True)
@@ -379,6 +537,8 @@ def heuristic_extract(source) -> list[dict]:
     if not country_quote:
         country_quote = city_quote or provider_quote
     prerequisites, prereq_quote = _explicit_prerequisites(content)
+    registration_url, registration_quote = _explicit_registration_url(content)
+    scrape_week = week_key_for_date(None)
 
     rows = []
     for session_title, (start_date, date_quote) in pairs:
@@ -403,6 +563,8 @@ def heuristic_extract(source) -> list[dict]:
             evidence['city'] = city_quote
         if prerequisites and prereq_quote:
             evidence['prerequisites'] = prereq_quote
+        if registration_url and registration_quote:
+            evidence['registration_url'] = registration_quote
         row = {
             'title': title_quote[:200],
             'provider': provider[:200],
@@ -421,7 +583,7 @@ def heuristic_extract(source) -> list[dict]:
             'credit_label': None,
             'difficulty': None,
             'prerequisites': prerequisites,
-            'registration_url': None,
+            'registration_url': registration_url,
             'source_url': url,
             'source_text': content,
             'evidence': evidence,
@@ -429,6 +591,7 @@ def heuristic_extract(source) -> list[dict]:
             'retrieved_at': datetime.now(timezone.utc).isoformat(),
             'model_weights_url': None,
             'model_license_url': None,
+            'scrape_week_key': scrape_week,
         }
         try:
             rows.append(validate_evidence(Training(**row)).model_dump(mode='json'))
@@ -440,10 +603,14 @@ def heuristic_extract(source) -> list[dict]:
 def extract_training(source, client=None, usage=None):
     base = configuration()
     max_in, max_out = model_caps()
-    # Fixed cap protects cost/context; no arbitrary source instructions are executed.
-    content = (source.get('raw_content') or '')[:max_in]
+    # Fixed cap protects cost/context; no arbitrary source instructions are executed. The LLM sees
+    # a boilerplate-pruned, hidden-char-sanitized window, while the fuller page is kept on
+    # source_text so verbatim evidence from anywhere on the page still validates.
+    raw_content = source.get('raw_content') or ''
+    content = clean_source_text(raw_content, max_in)
     if not content:
         return []
+    source_text_full = (sanitize_hidden_chars(raw_content) or content)[:50000]
     fields = {
         'title': 'string', 'provider': 'string', 'description': 'string',
         'start_date': 'YYYY-MM-DD or null', 'end_date': 'YYYY-MM-DD or null',
@@ -465,34 +632,49 @@ def extract_training(source, client=None, usage=None):
     own = client is None
     client = client or httpx.Client(timeout=45, follow_redirects=False)
     try:
-        response = client.post(base + '/chat/completions', json=payload, headers={'Authorization': 'Bearer ' + os.environ['MODEL_API_KEY']})
-        response.raise_for_status()
-        data = response.json()
-        raw = data['choices'][0]['message']['content'].strip()
-        if raw.startswith('```') and raw.endswith('```'):
-            raw = raw.split('\n', 1)[1].rsplit('```', 1)[0]
-        rows = json.loads(raw)['trainings']
-        if not isinstance(rows, list) or len(rows) > 4:
-            raise ValueError('Invalid candidate batch')
+        try:
+            response = client.post(base + '/chat/completions', json=payload, headers={'Authorization': 'Bearer ' + os.environ['MODEL_API_KEY']})
+            response.raise_for_status()
+            data = response.json()
+            raw = data['choices'][0]['message']['content'].strip()
+            rows = _parse_llm_trainings(raw)
+            if not isinstance(rows, list) or len(rows) > 4:
+                raise ValueError('Invalid candidate batch')
+        except (httpx.HTTPError, ValueError, KeyError, TypeError, IndexError, AttributeError):
+            raise ExtractionError('Model request failed or its output lacked valid source-backed training data.') from None
         tokens = reported_model_tokens(data)
         if usage is not None and tokens is not None:
             usage['model_tokens'] = (usage.get('model_tokens') or 0) + tokens
+        scrape_week = week_key_for_date(None)
+        single = len(rows) <= 1
         result = []
+        # Per-item resilience (Firecrawl pattern): on a multi-session page one malformed session must
+        # not discard the valid ones. A single-row page keeps the strict all-or-nothing contract.
         for row in rows:
+            if not isinstance(row, dict):
+                if single:
+                    raise ExtractionError('Model request failed or its output lacked valid source-backed training data.') from None
+                continue
             row.update(
                 source_url=source['url'],
-                source_text=content,
+                source_text=source_text_full,
                 retrieved_at=datetime.now(timezone.utc).isoformat(),
                 model_id=env_or_provisional('MODEL_ID'),
                 model_weights_url=env_or_provisional('MODEL_WEIGHTS_URL'),
                 model_license_url=env_or_provisional('MODEL_LICENSE_URL'),
                 model_publisher=env_or_provisional('MODEL_PUBLISHER') or None,
                 model_host=env_or_provisional('MODEL_HOST') or None,
+                scrape_week_key=scrape_week,
             )
-            result.append(validate_evidence(Training(**row)).model_dump(mode='json'))
+            try:
+                result.append(validate_evidence(Training(**row)).model_dump(mode='json'))
+            except (ValueError, TypeError):
+                if single:
+                    raise ExtractionError('Model request failed or its output lacked valid source-backed training data.') from None
+                continue
+        if not result:
+            raise ExtractionError('Model request failed or its output lacked valid source-backed training data.') from None
         return result
-    except (httpx.HTTPError, ValueError, KeyError, TypeError, IndexError, AttributeError):
-        raise ExtractionError('Model request failed or its output lacked valid source-backed training data.') from None
     finally:
         if own:
             client.close()
