@@ -6,6 +6,7 @@ import threading
 import uuid
 
 from shared.model_defaults import env_or_provisional
+from shared.contracts import week_key_for_date, week_window
 
 
 DEFAULT_BACKEND_INTERNAL_URL = 'http://127.0.0.1:8000'
@@ -27,6 +28,8 @@ def ready():
         ]
         if os.getenv('MODEL_OPEN_WEIGHT_CONFIRMED') != 'true':
             missing_model.append('MODEL_OPEN_WEIGHT_CONFIRMED')
+    week_key = week_key_for_date(None)
+    window_start, window_end = week_window(week_key)
     return {
         'status': 'ready' if not missing else 'not_ready',
         'missing': missing,
@@ -35,6 +38,10 @@ def ready():
         'model_configured': model_configured,
         'model_ready': model_configured and not missing_model,
         'missing_model': missing_model,
+        # Week-key-first partition diagnostics (Asia/Kuala_Lumpur).
+        'week_key': week_key,
+        'week_window': {'start': window_start, 'end': window_end},
+        'weekly_batch_mode': (os.getenv('SCRAPER_WEEKLY_BATCH') or '').strip().lower() == 'true',
     }
 
 

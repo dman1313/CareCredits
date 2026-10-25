@@ -1,4 +1,5 @@
 """Run with python -m scraper.worker; communicates with backend over scoped HTTP."""
+import json
 import os
 from pathlib import Path
 import threading
@@ -6,9 +7,16 @@ import time
 import httpx
 from scraper.tavily import discover, ProviderError
 from scraper.firehose import discover as firehose_discover, configured as firehose_configured, FirehoseError
-from scraper.extraction import configuration, extract_training, heuristic_extract, ExtractionError
+from scraper.extraction import (
+    configuration,
+    extract_training,
+    heuristic_extract,
+    group_candidates_by_week,
+    ExtractionError,
+)
 from scraper.health import start as start_health
-from shared.contracts import public_web_url
+from scraper.week_store import WeekPartitionStore, is_near_duplicate
+from shared.contracts import public_web_url, week_key_for_date, week_window
 
 
 def job_result_limit(job):
@@ -174,6 +182,8 @@ def run_job(job, heartbeat, client=None):
     warnings, soft_warnings, candidates, sources = [], [], [], []
     tavily_credits = None
     model_usage = {}
+    # Always index the run at the week_key first (job-supplied window or the current KL scrape week).
+    scrape_week = job.get('week_key') or week_key_for_date(None)
     try:
         configuration()
     except ExtractionError as exc:
@@ -184,6 +194,8 @@ def run_job(job, heartbeat, client=None):
             'warnings': [str(exc) + ' Tavily Search was not called until the open-weight model is ready.'],
             'status': 'failed',
             'usage': {'tavily_credits': None, 'model_tokens': None, 'catalogue_saved': 0},
+            'week_key': scrape_week,
+            'candidates_by_week': {},
         }
     try:
         try:
@@ -196,6 +208,8 @@ def run_job(job, heartbeat, client=None):
                 'warnings': [str(exc) + ' Tavily Search was not called.'],
                 'status': 'failed',
                 'usage': {'tavily_credits': None, 'model_tokens': None, 'catalogue_saved': 0},
+                'week_key': scrape_week,
+                'candidates_by_week': {},
             }
         result = discover(job['query'], limit)
         warnings.extend(result['warnings'])
@@ -219,6 +233,8 @@ def run_job(job, heartbeat, client=None):
                 'warnings': soft_warnings + warnings,
                 'status': 'succeeded',
                 'usage': {'tavily_credits': tavily_credits, 'model_tokens': None, 'catalogue_saved': 0},
+                'week_key': scrape_week,
+                'candidates_by_week': {},
             }
         held = []
         try:
@@ -299,6 +315,9 @@ def run_job(job, heartbeat, client=None):
                 'model_tokens': model_usage.get('model_tokens'),
                 'catalogue_saved': saved,
             },
+            # Week-key-first enrichment: the scrape week plus candidates bucketed by event week.
+            'week_key': scrape_week,
+            'candidates_by_week': group_candidates_by_week(complete_candidates),
         }
     except (ProviderError, ExtractionError) as exc:
         return {
@@ -310,7 +329,179 @@ def run_job(job, heartbeat, client=None):
                 'model_tokens': model_usage.get('model_tokens'),
                 'catalogue_saved': 0,
             },
+            'week_key': scrape_week,
+            'candidates_by_week': {},
         }
+
+
+def load_scrape_topics(path=None):
+    """Read config/scrape_topics.json; only dict rows with a non-empty query are returned."""
+    if path is None:
+        path = Path(__file__).resolve().parents[1] / 'config' / 'scrape_topics.json'
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [topic for topic in data if isinstance(topic, dict) and str(topic.get('query') or '').strip()]
+
+
+def fetch_existing_events(client, window_start):
+    """Load catalogue fingerprints for week-key-first dedupe (empty list on any failure)."""
+    if client is None:
+        return []
+    try:
+        response = client.get('/internal/v1/ingestion/catalogue/existing-events', params={'from_date': window_start})
+    except httpx.HTTPError:
+        return []
+    if getattr(response, 'status_code', 500) != 200:
+        return []
+    try:
+        data = response.json()
+    except (ValueError, TypeError):
+        return []
+    return [row for row in data if isinstance(row, dict)] if isinstance(data, list) else []
+
+
+def push_week_batch(client, payload):
+    """POST a week-partitioned batch to /internal/v1/ingestion/batches/push.
+
+    Returns (response_json_or_None, warning_or_None). Never raises so a transient push failure
+    keeps the candidates safe in the week store for the next run.
+    """
+    try:
+        response = client.post('/internal/v1/ingestion/batches/push', json=payload)
+    except httpx.HTTPError:
+        return None, 'Ingestion batch push failed; candidates kept in the week store.'
+    if getattr(response, 'status_code', 500) >= 400:
+        return None, api_message(response, 'Ingestion batch push failed.')
+    try:
+        return response.json(), None
+    except (ValueError, TypeError):
+        return {}, None
+
+
+def run_weekly_batch(topics=None, client=None, week_key=None, store=None, operator_id='scraper-worker', heartbeat=None):
+    """Week-key-first batch pipeline against the refactored ingestion API.
+
+    Always starts at ``week_key`` first, syncs known catalogue fingerprints from
+    ``/internal/v1/ingestion/catalogue/existing-events``, iterates topics (skipping ones already
+    completed this week), extracts + validates candidates, filters near-duplicates, and pushes new
+    week-partitioned events to ``/internal/v1/ingestion/batches/push`` with ``week_key`` and
+    ``source_key`` on every event. Tavily is never called until the open-weight model is ready.
+    """
+    week_key = week_key or week_key_for_date(None)
+    window_start, window_end = week_window(week_key)
+    store = store if store is not None else WeekPartitionStore()
+    topics = topics if topics is not None else load_scrape_topics()
+    result = {
+        'week_key': week_key,
+        'window_start': window_start,
+        'window_end': window_end,
+        'weeks': {},
+        'candidates_by_week': {},
+        'warnings': [],
+        'pushed': 0,
+        'accepted': 0,
+        'rejected': 0,
+        'usage': {'tavily_credits': None, 'model_tokens': 0, 'batches_pushed': 0},
+        'status': 'succeeded',
+    }
+    try:
+        configuration()
+    except ExtractionError as exc:
+        result['status'] = 'not_ready'
+        result['warnings'].append(str(exc) + ' Tavily Search was not called until the open-weight model is ready.')
+        result['weeks'] = {week_key: store.week(week_key)}
+        return result
+
+    existing_events = fetch_existing_events(client, window_start)
+    model_usage = {}
+    new_events = []
+    tavily_credits = []
+    for topic in topics:
+        query = str(topic.get('query') or '').strip()
+        if not query or store.topic_seen(week_key, query):
+            continue
+        try:
+            limit = job_result_limit(topic)
+        except ExtractionError as exc:
+            result['warnings'].append(str(exc))
+            continue
+        try:
+            discovered = discover(query, limit)
+        except ProviderError as exc:
+            result['warnings'].append(str(exc))
+            store.mark_topic_seen(week_key, query, status='failed', topic_id=topic.get('topic_id'))
+            continue
+        sources = [item for item in (discovered.get('sources') or []) if isinstance(item, dict)]
+        credits = (discovered.get('usage') or {}).get('tavily_credits')
+        if credits is not None:
+            tavily_credits.append(credits)
+        if firehose_configured() and len(sources) < limit:
+            try:
+                extra = firehose_discover(query, limit - len(sources), week_key=week_key)
+                sources = merge_sources(sources, extra.get('sources') or [], limit)
+            except FirehoseError as exc:
+                result['warnings'].append(str(exc))
+        topic_urls = []
+        for source in sources:
+            url = source.get('url')
+            if not url or store.url_seen(week_key, url):
+                continue
+            store.put_source(week_key, source)
+            topic_urls.append(url)
+            raw = (source.get('raw_content') or '').strip()
+            if not raw:
+                continue
+            try:
+                page_candidates = extract_training(source, usage=model_usage)
+            except ExtractionError as exc:
+                result['warnings'].append(str(exc))
+                page_candidates = []
+            for candidate in page_candidates:
+                duplicate = is_near_duplicate(candidate, existing_events)
+                if duplicate:
+                    store.record_usage(week_key, rejected=1)
+                    continue
+                store.put_candidate(week_key, candidate)
+                # Guard against re-adding the same identity later in the same run.
+                existing_events.append(candidate)
+                new_events.append(candidate)
+            if heartbeat:
+                heartbeat()
+        store.mark_topic_seen(week_key, query, status='succeeded', source_urls=topic_urls, topic_id=topic.get('topic_id'))
+
+    model_tokens = model_usage.get('model_tokens')
+    result['usage']['tavily_credits'] = sum(tavily_credits) if tavily_credits else None
+    result['usage']['model_tokens'] = model_tokens or 0
+    store.record_usage(
+        week_key,
+        tavily_credits=sum(tavily_credits) if tavily_credits else None,
+        model_tokens=model_tokens,
+    )
+
+    payload = store.export_batch_payload(week_key, operator_id)
+    if client is not None and payload['events']:
+        data, warning = push_week_batch(client, payload)
+        if warning:
+            result['warnings'].append(warning)
+        if data is not None:
+            result['pushed'] += 1
+            result['usage']['batches_pushed'] += 1
+            accepted = int(data.get('accepted') or 0) if isinstance(data, dict) else 0
+            rejected = int(data.get('rejected') or 0) if isinstance(data, dict) else 0
+            result['accepted'] += accepted
+            result['rejected'] += rejected
+            store.record_usage(week_key, batches_pushed=1, accepted=accepted, rejected=rejected)
+
+    result['candidates_by_week'] = group_candidates_by_week(new_events)
+    result['weeks'] = {week_key: store.week(week_key)}
+    if result['warnings'] and result['status'] == 'succeeded':
+        result['status'] = 'partial'
+    store.persist()
+    return result
 
 
 def main():
@@ -320,11 +511,22 @@ def main():
     if not token:
         raise SystemExit('Set SCRAPER_SERVICE_TOKEN before starting the scraper.')
     start_health()
+    store = WeekPartitionStore()
+    weekly_mode = (os.getenv('SCRAPER_WEEKLY_BATCH') or '').strip().lower() == 'true'
     with httpx.Client(base_url=base, headers={'Authorization': 'Bearer ' + token}, timeout=20) as client:
         while True:
             Path('/tmp/carecredits-worker').touch()
+            if weekly_mode:
+                run_weekly_mode(client, store)
+                continue
             try:
                 response = client.post('/internal/v1/jobs/claim')
+                # Auto-negotiate: the refactored main backend removed /internal/v1/jobs/* and exposes
+                # /internal/v1/ingestion/* instead. On 404 switch to the week-key-first batch loop.
+                if response.status_code == 404:
+                    print('Legacy /jobs/claim is gone (404); switching to week-key-first batch mode.', flush=True)
+                    weekly_mode = True
+                    continue
                 response.raise_for_status()
                 if response.status_code == 204:
                     reason = (response.headers.get('x-care-claim-reason') or 'empty').strip().lower()
@@ -357,6 +559,21 @@ def main():
             except (httpx.HTTPError, ValueError):
                 print('Backend request unavailable; job lease will determine recovery.', flush=True)
                 time.sleep(5)
+
+
+def run_weekly_mode(client, store, sleep_seconds=900):
+    """One week-key-first batch cycle for the refactored ingestion backend, then idle."""
+    week_key = week_key_for_date(None)
+    try:
+        outcome = run_weekly_batch(client=client, week_key=week_key, store=store)
+        print(
+            'Weekly batch ' + week_key + ': ' + outcome['status']
+            + ' pushed=' + str(outcome['pushed']) + ' accepted=' + str(outcome['accepted']),
+            flush=True,
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        print('Weekly batch unavailable: ' + str(exc)[:120], flush=True)
+    time.sleep(sleep_seconds)
 
 
 if __name__ == '__main__':
