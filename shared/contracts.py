@@ -178,6 +178,9 @@ class Training(BaseModel):
     week_key: str | None = Field(default=None, pattern=WEEK_KEY_PATTERN)
     scrape_week_key: str | None = Field(default=None, pattern=WEEK_KEY_PATTERN)
     source_key: str | None = Field(default=None, min_length=16, max_length=200)
+    # Firecrawl SourceTracker provenance: every URL in the week that contributed fields to a
+    # merged record. Seeded with [source_url] below so a single-page record still carries its origin.
+    supporting_sources: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator('latitude', 'longitude', 'fee', 'points', mode='before')
     @classmethod
@@ -191,6 +194,12 @@ class Training(BaseModel):
     @classmethod
     def urls(cls, value):
         return web_url(value)
+
+    @field_validator('supporting_sources')
+    @classmethod
+    def validate_supporting_sources(cls, value):
+        # Each contributing source must survive the same SSRF/IP-literal gate as source_url.
+        return [web_url(item) for item in value]
 
     @model_validator(mode='after')
     def constraints(self):
@@ -216,7 +225,41 @@ class Training(BaseModel):
                 self.week_key = self.scrape_week_key or week_key_for_date(None)
         if self.source_key is None:
             self.source_key = compute_source_key(self.source_url, self.title, self.start_date)
+        if not self.supporting_sources:
+            self.supporting_sources = [self.source_url]
         return self
+
+
+# Firecrawl `unifyItemValues`: open-weight models often emit string placeholders instead of JSON
+# null for unknown fields. These literals must become real None before Pydantic validation so an
+# unknown currency ("N/A") never fails the strict `^[A-Z]{3}$` pattern.
+_NULL_STRING_LITERALS = frozenset({'null', 'none', 'n/a', 'na', 'nil', 'unknown', 'not stated', 'not listed', '-', ''})
+_UNIFIABLE_NULL_FIELDS = (
+    'start_date', 'end_date', 'timezone', 'venue', 'city', 'state', 'fee', 'currency',
+    'points', 'credit_label', 'difficulty', 'prerequisites', 'registration_url',
+)
+
+
+def unify_null_values(data):
+    """Normalize LLM string-null placeholders to real ``None`` on optional fields.
+
+    Converts ``"null"``/``"none"``/``"n/a"``/``"nil"``/``"unknown"``/``"-"``/``""`` (case-insensitive,
+    stripped) to ``None`` for every nullable ``Training`` field, and drops the matching ``evidence``
+    key so ``validate_evidence`` does not demand a quote for a field that is now unknown.
+    """
+    if not isinstance(data, dict):
+        return data
+    result = dict(data)
+    evidence = dict(result.get('evidence') or {}) if isinstance(result.get('evidence'), dict) else result.get('evidence')
+    for field in _UNIFIABLE_NULL_FIELDS:
+        value = result.get(field)
+        if isinstance(value, str) and value.strip().lower() in _NULL_STRING_LITERALS:
+            result[field] = None
+            if isinstance(evidence, dict):
+                evidence.pop(field, None)
+    if isinstance(evidence, dict):
+        result['evidence'] = evidence
+    return result
 
 
 def validate_evidence(training):
