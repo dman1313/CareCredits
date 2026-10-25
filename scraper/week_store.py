@@ -138,7 +138,7 @@ def merge_candidate_records(existing: dict[str, Any], incoming: dict[str, Any]) 
     merged = dict(existing)
     evidence = dict(existing.get('evidence') or {})
     incoming_evidence = incoming.get('evidence') or {}
-    new_excerpts: list[str] = []
+    filled: list[str] = []
 
     if not (merged.get('description') or '').strip() and (incoming.get('description') or '').strip():
         merged['description'] = incoming['description']
@@ -149,16 +149,34 @@ def merge_candidate_records(existing: dict[str, Any], incoming: dict[str, Any]) 
             excerpt = incoming_evidence.get(field)
             if excerpt:
                 evidence[field] = excerpt
-                new_excerpts.append(excerpt)
-    merged['evidence'] = evidence
+                filled.append(field)
 
+    # Append only the small new excerpts (not the whole incoming page) so they survive the 50k cap,
+    # trimming the existing tail if needed to make room for them.
     source_text = existing.get('source_text') or ''
-    incoming_text = incoming.get('source_text') or ''
-    for excerpt in new_excerpts:
-        if excerpt not in source_text and incoming_text and incoming_text not in source_text:
-            source_text = (source_text + '\n' + incoming_text)[:_MAX_SOURCE_TEXT]
+    additions = list(dict.fromkeys(
+        evidence[field] for field in filled if evidence.get(field) and evidence[field] not in source_text
+    ))
+    if additions:
+        joined = '\n'.join(additions)
+        budget = _MAX_SOURCE_TEXT - len(joined) - 1
+        if budget <= 0:
+            source_text = joined[:_MAX_SOURCE_TEXT]
+        else:
+            source_text = source_text[:budget].rstrip('\n') + '\n' + joined
     merged['source_text'] = source_text[:_MAX_SOURCE_TEXT]
 
+    # Reconcile: never keep a filled field whose evidence excerpt is not actually backed by the final
+    # source_text (e.g. when the cap truncated it), so a merged row is never pushed with an orphaned
+    # verbatim quote. Reverting a just-filled field to its prior value (None) keeps the row consistent.
+    normalized_text = ' '.join(merged['source_text'].split())
+    for field in filled:
+        excerpt = evidence.get(field)
+        if excerpt and excerpt not in merged['source_text'] and ' '.join(excerpt.split()) not in normalized_text:
+            merged[field] = existing.get(field)
+            evidence.pop(field, None)
+
+    merged['evidence'] = evidence
     merged['supporting_sources'] = _merge_supporting_sources(existing, incoming)
     return merged
 

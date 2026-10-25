@@ -305,25 +305,28 @@ def salvage_truncated_trainings(text: str) -> list:
 
 
 # -- Firecrawl promptInjectionGuard.ts -------------------------------------
+# Specific instruction-hijack phrases only. Generic phrases that legitimately appear in event copy
+# (e.g. "respond with", "you are now registered") are intentionally excluded to avoid false hits.
 _INJECTION_PATTERNS = (
     'ignore previous instructions', 'ignore all previous instructions', 'ignore all prior instructions',
-    'ignore the above', 'disregard previous', 'disregard all previous', 'disregard the schema',
-    'system prompt:', 'you are now', 'new instructions:', 'override the system', 'as an ai language model',
-    'return only {"trainings"', 'respond with', 'do not follow the schema',
+    'disregard previous instructions', 'disregard all previous instructions', 'disregard the schema',
+    'ignore the system prompt', 'override the system prompt', 'return only {"trainings"',
+    'do not follow the schema',
 )
 
 
 def detect_prompt_injection(text: str) -> str | None:
-    """Return the first prompt-injection marker found in ``text``, else ``None`` (Firecrawl guard)."""
+    """Return the first prompt-injection marker found in ``text``, else ``None`` (Firecrawl guard).
+
+    Detection is advisory telemetry only: the real defense is the randomized ``<untrusted_page_content_…>``
+    fence in the prompt. The LLM window is never line-stripped, so legitimate fee/date/points copy is
+    never removed just because a line resembles an instruction.
+    """
     lowered = (text or '').lower()
     for marker in _INJECTION_PATTERNS:
         if marker in lowered:
             return marker
     return None
-
-
-def _strip_injection_lines(text: str) -> str:
-    return '\n'.join(line for line in (text or '').splitlines() if not detect_prompt_injection(line))
 
 
 # -- Firecrawl url-processor-f0 / reranker-f0 ------------------------------
@@ -388,15 +391,21 @@ def rerank_sources(sources: list, query: str = '') -> list:
 
 
 def should_extract_source(source: dict) -> bool:
-    """Firecrawl `checkShouldExtract` pre-LLM gate: does this page plausibly hold a CPD event?"""
+    """Firecrawl `checkShouldExtract` pre-LLM gate: does this page plausibly hold a CPD event?
+
+    Deliberately permissive — it only filters pages with no event signal at all (dates, event words,
+    fees/points/venue), so the LLM is not spent on cafe menus or error pages. It does NOT require a
+    Malaysia marker: Malaysia relevance is enforced downstream by the extraction prompt and the
+    ``country='MY'`` contract, so a Penang / Johor Bahru page (or one whose cue is only in the title
+    or URL) is never dropped here for lacking a specific marker word. Title and URL are also scanned.
+    """
     if not isinstance(source, dict):
         return False
-    text = (source.get('raw_content') or source.get('snippet') or '')
-    if not text.strip():
+    body = (source.get('raw_content') or source.get('snippet') or '')
+    if not body.strip():
         return False
-    if not _malaysia_relevant(text):
-        return False
-    return bool(EVENT_WORDS.search(text) or DATE_RE.search(text) or _EVENT_SIGNAL_RE.search(text))
+    combined = body + ' ' + str(source.get('title') or '') + ' ' + str(source.get('url') or '')
+    return bool(EVENT_WORDS.search(combined) or DATE_RE.search(combined) or _EVENT_SIGNAL_RE.search(combined))
 
 
 def _parse_llm_trainings(raw: str) -> list:
@@ -917,13 +926,9 @@ def extract_training(source, client=None, usage=None):
     if not content:
         return []
     source_text_full = (sanitize_hidden_chars(raw_content) or content)[:50000]
-    # Firecrawl prompt-injection guard: drop obvious instruction-hijack lines from the LLM window
-    # (the full page is still retained on source_text), then wrap the untrusted text in a per-call
-    # randomized XML fence the system prompt declares off-limits.
-    if detect_prompt_injection(content):
-        stripped = _strip_injection_lines(content)
-        if stripped.strip():
-            content = stripped
+    # Firecrawl prompt-injection guard: wrap the untrusted text in a per-call randomized XML fence the
+    # system prompt declares off-limits. We do NOT strip lines from the window — the fence neutralizes
+    # injected instructions without risking the loss of legitimate fee/date/points copy.
     fence_tag = 'untrusted_page_content_' + secrets.token_hex(6)
     fenced_content = '<' + fence_tag + '>\n' + content + '\n</' + fence_tag + '>'
     fields = {

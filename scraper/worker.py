@@ -17,7 +17,7 @@ from scraper.extraction import (
     ExtractionError,
 )
 from scraper.health import start as start_health
-from scraper.week_store import WeekPartitionStore, is_near_duplicate, MERGE_FILL_FIELDS
+from scraper.week_store import WeekPartitionStore, is_near_duplicate
 from shared.contracts import public_web_url, week_key_for_date, week_window
 
 
@@ -384,20 +384,6 @@ def push_week_batch(client, payload):
         return {}, None
 
 
-def _brings_new_fields(candidate, matched):
-    """True when ``candidate`` carries a non-null enrichment field the catalogue row lacks.
-
-    A near-duplicate of an existing catalogue row is only dropped when it adds nothing; if it brings
-    a new fee / points / venue / registration link, it is kept so the backend can enrich the row.
-    """
-    if not isinstance(matched, dict):
-        return True
-    for field in MERGE_FILL_FIELDS:
-        if candidate.get(field) is not None and matched.get(field) in (None, ''):
-            return True
-    return False
-
-
 def run_weekly_batch(topics=None, client=None, week_key=None, store=None, operator_id='scraper-worker', heartbeat=None):
     """Week-key-first batch pipeline against the refactored ingestion API.
 
@@ -500,10 +486,11 @@ def run_weekly_batch(topics=None, client=None, week_key=None, store=None, operat
                 continue
             store.record_url_trace(week_key, url, status='extracted', used_in_completion=True)
             for candidate in page_candidates:
-                # Drop only when the match is a pre-existing catalogue row that gains no new field;
-                # otherwise put_candidate merges null fields + supporting_sources within the week.
-                catalogue_match = is_near_duplicate(candidate, existing_events)
-                if catalogue_match and not _brings_new_fields(candidate, catalogue_match.get('matched')):
+                # Skip events already in the catalogue. The ingestion endpoint only dedupes on exact
+                # source_key and never enriches an existing row, so pushing a near-duplicate scraped
+                # from a different URL (different source_key) would insert the same event twice. The
+                # null-filling enrichment only applies WITHIN this week's run, via put_candidate below.
+                if is_near_duplicate(candidate, existing_events):
                     store.record_usage(week_key, rejected=1)
                     store.record_url_trace(week_key, url, status='extracted', reason='catalogue_duplicate', used_in_completion=False)
                     continue
