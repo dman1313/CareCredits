@@ -12,10 +12,12 @@ from scraper.extraction import (
     extract_training,
     heuristic_extract,
     group_candidates_by_week,
+    rerank_sources,
+    should_extract_source,
     ExtractionError,
 )
 from scraper.health import start as start_health
-from scraper.week_store import WeekPartitionStore, is_near_duplicate
+from scraper.week_store import WeekPartitionStore, is_near_duplicate, MERGE_FILL_FIELDS
 from shared.contracts import public_web_url, week_key_for_date, week_window
 
 
@@ -382,6 +384,20 @@ def push_week_batch(client, payload):
         return {}, None
 
 
+def _brings_new_fields(candidate, matched):
+    """True when ``candidate`` carries a non-null enrichment field the catalogue row lacks.
+
+    A near-duplicate of an existing catalogue row is only dropped when it adds nothing; if it brings
+    a new fee / points / venue / registration link, it is kept so the backend can enrich the row.
+    """
+    if not isinstance(matched, dict):
+        return True
+    for field in MERGE_FILL_FIELDS:
+        if candidate.get(field) is not None and matched.get(field) in (None, ''):
+            return True
+    return False
+
+
 def run_weekly_batch(topics=None, client=None, week_key=None, store=None, operator_id='scraper-worker', heartbeat=None):
     """Week-key-first batch pipeline against the refactored ingestion API.
 
@@ -418,7 +434,6 @@ def run_weekly_batch(topics=None, client=None, week_key=None, store=None, operat
 
     existing_events = fetch_existing_events(client, window_start)
     model_usage = {}
-    new_events = []
     tavily_credits = []
     for topic in topics:
         query = str(topic.get('query') or '').strip()
@@ -445,30 +460,54 @@ def run_weekly_batch(topics=None, client=None, week_key=None, store=None, operat
                 sources = merge_sources(sources, extra.get('sources') or [], limit)
             except FirehoseError as exc:
                 result['warnings'].append(str(exc))
+        # Firecrawl reranker: score + sort sources so the highest-value Malaysian CPD pages are
+        # processed first when the budget is tight.
+        sources = rerank_sources(sources, query)
         topic_urls = []
         for source in sources:
             url = source.get('url')
             if not url or store.url_seen(week_key, url):
                 continue
+            store.record_url_trace(
+                week_key, url, status='reranked',
+                relevance_score=source.get('relevance_score'), reason=source.get('rerank_reason'),
+            )
+            # Firecrawl negative cache: skip URLs that produced no events recently within this week.
+            if store.get_negative(week_key, url):
+                store.record_url_trace(week_key, url, status='skipped', reason='negative_cache')
+                continue
             store.put_source(week_key, source)
             topic_urls.append(url)
             raw = (source.get('raw_content') or '').strip()
             if not raw:
+                store.record_url_trace(week_key, url, status='skipped', reason='no_content')
+                continue
+            # Firecrawl checkShouldExtract pre-LLM gate: don't spend the model on non-event pages.
+            if not should_extract_source(source):
+                store.set_negative(week_key, url, reason='no_event_signal')
+                store.record_url_trace(week_key, url, status='skipped', reason='no_event_signal')
                 continue
             try:
                 page_candidates = extract_training(source, usage=model_usage)
             except ExtractionError as exc:
                 result['warnings'].append(str(exc))
                 page_candidates = []
+            if not page_candidates:
+                store.set_negative(week_key, url, reason='no_events')
+                store.record_url_trace(week_key, url, status='extracted', reason='no_events', used_in_completion=False)
+                if heartbeat:
+                    heartbeat()
+                continue
+            store.record_url_trace(week_key, url, status='extracted', used_in_completion=True)
             for candidate in page_candidates:
-                duplicate = is_near_duplicate(candidate, existing_events)
-                if duplicate:
+                # Drop only when the match is a pre-existing catalogue row that gains no new field;
+                # otherwise put_candidate merges null fields + supporting_sources within the week.
+                catalogue_match = is_near_duplicate(candidate, existing_events)
+                if catalogue_match and not _brings_new_fields(candidate, catalogue_match.get('matched')):
                     store.record_usage(week_key, rejected=1)
+                    store.record_url_trace(week_key, url, status='extracted', reason='catalogue_duplicate', used_in_completion=False)
                     continue
                 store.put_candidate(week_key, candidate)
-                # Guard against re-adding the same identity later in the same run.
-                existing_events.append(candidate)
-                new_events.append(candidate)
             if heartbeat:
                 heartbeat()
         store.mark_topic_seen(week_key, query, status='succeeded', source_urls=topic_urls, topic_id=topic.get('topic_id'))
@@ -496,7 +535,8 @@ def run_weekly_batch(topics=None, client=None, week_key=None, store=None, operat
             result['rejected'] += rejected
             store.record_usage(week_key, batches_pushed=1, accepted=accepted, rejected=rejected)
 
-    result['candidates_by_week'] = group_candidates_by_week(new_events)
+    # Merged, week-key-first candidates come straight from the store (Firecrawl SourceTracker output).
+    result['candidates_by_week'] = store.candidates_by_week(week_key)
     result['weeks'] = {week_key: store.week(week_key)}
     if result['warnings'] and result['status'] == 'succeeded':
         result['status'] = 'partial'
