@@ -1,5 +1,10 @@
 # CareCredits
 
+The deployed dashboard and its serverless backend are available in
+[`deployments/web`](deployments/web). See the [integration and deployment handover](deployments/README.md)
+for provenance, validation and the planned Vercel source switch. The existing root
+application below remains intact while the two implementations are reconciled.
+
 A hackathon application being developed to help Malaysian doctors discover CPD trainings and track sign-ups, attendance and learning progress. The confirmed design uses **three application services: a Python backend, a JavaScript-based frontend, and a separate Python scraper**, with PostgreSQL owned by the backend.
 
 The project requires **real Tavily Search and Extract API usage** and **open-weight models for application AI**. Official hackathon rules still need to be linked and checked. The portal, owned catalogue, operator review, and engagement features exist on this branch. Live Tavily + open-weight DEMO-01 still needs owner model keys.
