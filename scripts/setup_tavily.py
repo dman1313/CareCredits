@@ -25,7 +25,8 @@ def main():
     # Restrict permissions before writing, including when updating an existing file.
     fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as output:
-        os.fchmod(output.fileno(), 0o600)
+        if hasattr(os, 'fchmod'):
+            os.fchmod(output.fileno(), 0o600)
         output.write(content)
     print("Saved credentials in the ignored root .env. Restart the backend to load them.")
 

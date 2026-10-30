@@ -1,70 +1,58 @@
-.aider*
-# Aider specific
-.aider*
-.aider.chat.history.md
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# Dependencies (Node & Python)
-node_modules/
-.pnpm-store/
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/.vinext/
+/out/
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+next-env.d.ts
+/dist/
+/.wrangler/
+# Checkout-local execution profile and tool state; never publish them.
+/.sites-runtime/
+/.agents/
+/.codex/
+/.venv/
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.venv/
-
-# Build Outputs
-build/
-dist/
-.next/
-out/
 *.tsbuildinfo
-
-# IDE & OS
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-
-# Logs & Temp
-*.log
-logs/
-*.tmp
-*.temp
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Testing & Coverage
-.pytest_cache/
-.coverage
-.coverage.*
-.tox/
-.mypy_cache/
-
-# Environment Variables (Belangrijk!)
-.env
-.env.local
-.env.*.local
-
-# Database (PostgreSQL local files)
-data/
-pg_log/
-pg_tmp/
-*.sql
-*.backup
-*.dump
-
-# TypeScript/JS generated maps (optioneel, vaak wel handig om te ignoren)
-*.js.map
-*.d.ts
-
-# Local portal databases and runtime artifacts
-.data/
 *.db
-*.db-journal
-*.db-wal
-*.db-shm
+/.data/
+/frontend/
+!.env.sample
+/outputs/
+/work/
+/skills-lock.json
+
+# Removed staging snapshot (local build artifacts may remain).
+/deployments/

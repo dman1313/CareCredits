@@ -1,7 +1,7 @@
 import io
 import logging
 import unittest
-from backend.archive.observe import failure_line, job_line, request_line, setup
+from observe import failure_line, job_line, request_line, setup
 
 
 class ObserveTests(unittest.TestCase):

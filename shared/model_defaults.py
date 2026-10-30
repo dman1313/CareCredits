@@ -1,10 +1,10 @@
 """SDD OPEN-03 provisional DEMO-01 model identity. Never includes API keys or confirmation."""
 
 PROVISIONAL_MODEL = {
-    'MODEL_ID': 'Qwen/Qwen3-30B-A3B-Instruct-2507',
-    'MODEL_WEIGHTS_URL': 'https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507',
-    'MODEL_LICENSE_URL': 'https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507/blob/main/LICENSE',
-    'MODEL_PUBLISHER': 'Qwen',
+    'MODEL_ID': 'nvidia/nemotron-3-super-120b-a12b',
+    'MODEL_WEIGHTS_URL': 'https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16',
+    'MODEL_LICENSE_URL': 'https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16/blob/main/LICENSE',
+    'MODEL_PUBLISHER': 'NVIDIA',
     'MODEL_HOST': 'Nebius Token Factory',
     'MODEL_BASE_URL': 'https://api.tokenfactory.nebius.com/v1',
     'MODEL_MAX_INPUT_CHARS': '12000',

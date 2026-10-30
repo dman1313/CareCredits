@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 import os
 
 # Use an environment variable for the database URL, falling back to SQLite for local dev
@@ -8,6 +9,8 @@ SQLALCHEMY_DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "sqlite:///./carecredit.db"
 )
+if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
+    SQLALCHEMY_DATABASE_URL = "postgresql://" + SQLALCHEMY_DATABASE_URL[len("postgres://"):]
 
 # SQLite requires this argument when used with async/multi-threaded contexts
 connect_args = (
@@ -18,7 +21,9 @@ connect_args = (
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    connect_args=connect_args
+    connect_args=connect_args,
+    pool_pre_ping=True,
+    **({'poolclass': NullPool} if os.getenv('SERVERLESS_MODE') == 'true' else {})
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

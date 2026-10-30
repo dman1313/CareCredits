@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
-from backend.database.database import get_db
+from database import get_db
 from portal_models import Account, LoginSession, Throttle
 
 

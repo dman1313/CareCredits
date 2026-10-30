@@ -177,7 +177,7 @@ class OAuthTests(unittest.TestCase):
         """AUTH-01: configured Google callback uses the same login-ip budget as password login."""
         import time
 
-        from backend.database.database import Base, SessionLocal, engine
+        from database import Base, SessionLocal, engine
         from portal_models import Throttle
         from security import digest
 
@@ -210,7 +210,7 @@ class OAuthTests(unittest.TestCase):
         self.assertIn(oauth_values[0], ('', '""'))
 
     def test_callback_success_rotates_presented_session(self):
-        from backend.database.database import Base, SessionLocal, engine
+        from database import Base, SessionLocal, engine
         from oauth import issue_session
         from portal_models import Account, LoginSession
         from security import digest, password_hash
@@ -261,7 +261,7 @@ class OAuthTests(unittest.TestCase):
             self.assertIsNotNone(db.get(LoginSession, digest(nxt)))
 
     def test_upsert_stores_google_subject(self):
-        from backend.database.database import Base, SessionLocal, engine
+        from database import Base, SessionLocal, engine
         from oauth import upsert_account
         from portal_models import Account
         from security import password_hash
@@ -280,7 +280,7 @@ class OAuthTests(unittest.TestCase):
             self.assertEqual(again.id, stored.id)
 
     def test_upsert_rejects_subject_mismatch_on_same_email(self):
-        from backend.database.database import Base, SessionLocal, engine
+        from database import Base, SessionLocal, engine
         from oauth import upsert_account, OAuthError
         from portal_models import Account
         from security import password_hash

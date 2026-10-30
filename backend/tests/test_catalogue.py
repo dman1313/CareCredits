@@ -26,12 +26,12 @@ DB_PATH = Path(FOLDER.name) / 'catalogue-test.db'
 os.environ['DATABASE_URL'] = 'sqlite:///' + str(DB_PATH)
 
 from main import app, source_key
-from backend.database.database import Base, get_db, engine
-from backend.archive.catalogue import course_public
+from database import Base, get_db, engine
+from catalogue import course_public
 from portal_models import Account, Candidate, Course, FieldEvidence, Job, fill_course
 from security import password_hash
 from shared.contracts import Training
-from backend.archive.schedule import daily_request_key, enqueue_daily, load_topics
+from schedule import daily_request_key, enqueue_daily, load_topics
 
 
 QUOTE = (
@@ -465,7 +465,7 @@ class CatalogueApiTests(unittest.TestCase):
         self.assertEqual(save.json()['status'], 'held')
 
     def test_load_topics_clamps_and_skips_invalid_max_results(self):
-        import backend.archive.schedule as schedule_mod
+        import schedule as schedule_mod
 
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'topics.json'
@@ -529,7 +529,7 @@ class CatalogueApiTests(unittest.TestCase):
         self.assertEqual(listed.json()['error']['code'], 'unavailable')
 
     def test_daily_scrape_enqueue(self):
-        from backend.archive.schedule import local_today
+        from schedule import local_today
         topics = load_topics()
         self.assertTrue(topics)
         self.assertGreaterEqual(len(topics), 11)

@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from backend.archive.jev import api_key, decide_existence, JevError
+from jev import api_key, decide_existence, JevError
 
 
 CANDIDATE = {
@@ -83,7 +83,7 @@ class JevTests(unittest.TestCase):
         self.assertIn('floor', result['warning'])
 
     def test_confidence_floor_clamps_out_of_range(self):
-        from backend.archive.jev import confidence_floor, unit_interval
+        from jev import confidence_floor, unit_interval
 
         with patch.dict(os.environ, {'JEV_CONFIDENCE_FLOOR': '2.5'}):
             self.assertEqual(confidence_floor(), 1.0)
