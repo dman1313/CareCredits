@@ -176,7 +176,7 @@ def keep_lease(heartbeat, interval=30):
     return stop
 
 
-def run_job(job, heartbeat, client=None):
+def run_job(job, heartbeat, client=None, *, review_only=False):
     # Material warnings drive partial/failed. Soft Firehose fill warnings stay on the job but do not
     # alone mark a successful Tavily extract as partial (matches empty-search soft-warn honesty).
     warnings, soft_warnings, candidates, sources = [], [], [], []
@@ -273,7 +273,7 @@ def run_job(job, heartbeat, client=None):
             warnings.append(str(exc))
         saved = 0
         unsaved = []
-        if client is not None and candidates:
+        if client is not None and candidates and not review_only:
             try:
                 connect = client.get('/internal/v1/catalogue/connect')
                 if connect.status_code == 200:
@@ -302,11 +302,12 @@ def run_job(job, heartbeat, client=None):
                     + str(len(candidates))
                     + ' catalogue saves failed; unsaved kept on job.'
                 )
-            elif candidates:
+            elif candidates and not review_only:
                 warnings.append('Falling back to job-complete candidate insert without Jev decide/save.')
         return {
             'lease_token': job['lease_token'],
             'candidates': complete_candidates,
+            'extractions': model_usage.get('extractions', []),
             'sources': public_sources(sources),
             'warnings': soft_warnings + warnings,
             'status': 'partial' if warnings else 'succeeded',
@@ -323,6 +324,7 @@ def run_job(job, heartbeat, client=None):
         return {
             'lease_token': job['lease_token'], 'candidates': [], 'sources': public_sources(sources),
             'warnings': soft_warnings + [str(exc)], 'status': 'failed',
+            'extractions': model_usage.get('extractions', []),
             # Keep any reported Tavily/model usage from the attempt; never invent spend.
             'usage': {
                 'tavily_credits': tavily_credits,
@@ -515,7 +517,7 @@ def main():
     weekly_mode = (os.getenv('SCRAPER_WEEKLY_BATCH') or '').strip().lower() == 'true'
     with httpx.Client(base_url=base, headers={'Authorization': 'Bearer ' + token}, timeout=20) as client:
         while True:
-            Path('/tmp/carecredits-worker').touch()
+            Path(__import__('tempfile').gettempdir(), 'carecredits-worker').touch()
             if weekly_mode:
                 run_weekly_mode(client, store)
                 continue

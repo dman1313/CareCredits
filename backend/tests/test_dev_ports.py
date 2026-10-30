@@ -150,4 +150,3 @@ class DevPortTests(unittest.TestCase):
             server.server_close()
         self.assertEqual(ready, ['scraper'])
         self.assertEqual(missing, ['missing'])
-

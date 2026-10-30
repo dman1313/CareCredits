@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from main import app, today, migrate_schema
-from backend.database.database import Base, get_db
+from database import Base, get_db
 from portal_models import Account, Audit, Course, Record, Job, Candidate, FieldEvidence, LoginSession, SchemaVersion, SourceDocument, Throttle, fill_course, purge_expired_source_text
 from security import digest, password_hash
 
@@ -245,7 +245,7 @@ class PortalTests(unittest.TestCase):
         import io
         import logging
 
-        from backend.archive.observe import setup
+        from observe import setup
 
         setup()
         buffer = io.StringIO()
@@ -2101,8 +2101,8 @@ class PortalTests(unittest.TestCase):
             result=self.client.get('/api/v1/admin/integrations')
         self.assertEqual(result.status_code,200,result.text)
         body=result.json()
-        self.assertEqual(body['model_id'], 'Qwen/Qwen3-30B-A3B-Instruct-2507')
-        self.assertEqual(body['model_publisher'], 'Qwen')
+        self.assertEqual(body['model_id'], 'nvidia/nemotron-3-super-120b-a12b')
+        self.assertEqual(body['model_publisher'], 'NVIDIA')
         self.assertEqual(body['model_host'], 'Nebius Token Factory')
         self.assertTrue(body['model_identity_provisional'])
         self.assertTrue(body['model_publisher_provisional'])

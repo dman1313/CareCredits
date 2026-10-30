@@ -18,7 +18,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from main import app
-from backend.database.database import Base, get_db
+from database import Base, get_db
 
 
 class ErrorEnvelopeTests(unittest.TestCase):

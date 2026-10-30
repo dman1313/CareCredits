@@ -221,7 +221,7 @@ def service_environments(
     frontend_env = {
         **common,
         'BACKEND_URL': api,
-        'NEXT_DIST_DIR': str(root / 'frontend' / '.data' / ('next-dev-' + str(frontend_port))),
+        'NEXT_DIST_DIR': '.data/next-dev-' + str(frontend_port),
         # Prefer polling over native FSEvents when the machine hits EMFILE watch limits
         # (common with multiple Next/Turbopack instances). Does not change production builds.
         'WATCHPACK_POLLING': 'true',
@@ -238,7 +238,7 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     owner = {k: v for k, v in dotenv_values(root / '.env').items() if v is not None}
-    settings = apply_provisional_model(dict(owner))
+    settings = dict(owner)
     health_preferred = int(settings.get('SCRAPER_HEALTH_PORT') or os.getenv('SCRAPER_HEALTH_PORT') or 8002)
     ports, held_ports = reserve_local_ports(args.backend_port, args.frontend_port, health_preferred)
     backend_port, frontend_port, health_port = ports
@@ -263,7 +263,7 @@ def main():
         for command, env, cwd in [
             ([sys.executable, '-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', str(backend_port)], backend, root),
             ([sys.executable, '-m', 'scraper.worker'], scraper, root),
-            (['npm', 'run', 'dev', '--', '--hostname', '127.0.0.1', '--port', str(frontend_port)], frontend_env, root / 'frontend'),
+            (['npm.cmd' if os.name == 'nt' else 'npm', 'run', 'dev:demo', '--', '--hostname', '127.0.0.1', '--port', str(frontend_port)], frontend_env, root),
         ]:
             processes.append(subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True))
         live_urls = {
@@ -300,12 +300,12 @@ def main():
     finally:
         for p in processes:
             if p.poll() is None:
-                os.killpg(p.pid, signal.SIGTERM)
+                p.terminate() if os.name == 'nt' else os.killpg(p.pid, signal.SIGTERM)
         for p in processes:
             try:
                 p.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                os.killpg(p.pid, signal.SIGKILL)
+                p.kill() if os.name == 'nt' else os.killpg(p.pid, signal.SIGKILL)
 
 
 if __name__ == '__main__':
