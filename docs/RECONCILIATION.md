@@ -16,4 +16,4 @@ Resolution:
 
 The application service remains a large module; further splitting it into smaller services is an internal cleanup, not a second backend or prerequisite to using this app.
 
-Production stays on the existing daily-gattai/care-credits Vercel project and care-credits-hackathon.vercel.app domain. The Git source should be dman1313/CareCredits main, with Root Directory unset (repository root). Keep all existing private environment variables and the Neon integration.
+Production stays on the existing daily-gattai/care-credits Vercel project and care-credits-hackathon.vercel.app domain. The production Git source remains nahiphog/care-credits, branch codex/v1-integrated-demo, with Root Directory unset (repository root). The integration PR in dman1313/CareCredits remains open for review. Keep all existing private environment variables and the Neon integration.
